@@ -1,67 +1,145 @@
-<section class="summary-grid" aria-label="Service summary">
-    <article class="summary-card summary-card--primary">
-        <span class="summary-label">Pizzas</span>
-        <strong>{{ service.total_pizzas }}</strong>
-        <span>across {{ service.total_orders }} orders</span>
+<form class="operations-grid" method="post" action="{{ url_for('dashboard.update_inventory') }}">
+    <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+    <article class="operations-card operations-card--dough">
+        <div class="operations-card-heading">
+            <div>
+                <span class="summary-label">Dough inventory</span>
+                <strong class="operations-total {% if inventory.dough_remaining < 0 %}number--short{% endif %}">
+                    {{ inventory.dough_remaining }}
+                </strong>
+                <span class="operations-caption">dough balls remaining</span>
+            </div>
+            <label class="number-control">
+                <span>Prepared</span>
+                <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    name="dough_balls_prepared"
+                    value="{{ inventory.dough_prepared }}"
+                    aria-label="Dough balls prepared for service"
+                >
+            </label>
+        </div>
+        <div class="inventory-equation">
+            <span><strong>{{ inventory.dough_prepared }}</strong> prepared</span>
+            <span aria-hidden="true">−</span>
+            <span><strong>{{ inventory.dough_ordered }}</strong> pizzas ordered</span>
+        </div>
     </article>
-    <article class="summary-card">
-        <span class="summary-label">Salads</span>
-        <strong>{{ service.total_salads }}</strong>
-        <span>for today's service</span>
+
+    <article class="operations-card operations-card--salads">
+        <div class="operations-card-title-row">
+            <div>
+                <span class="summary-label">Salads ready</span>
+                <span class="operations-caption">Set prepared quantities for service</span>
+            </div>
+            <button class="save-inventory-button" type="submit">Save inventory</button>
+        </div>
+        <div class="salad-stock-list">
+            {% for salad in inventory.salads %}
+            <div class="salad-stock-row">
+                <strong>{{ salad.name }}</strong>
+                <label class="number-control number-control--compact">
+                    <span>Prepared</span>
+                    <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputmode="numeric"
+                        name="{{ salad.field_name }}"
+                        value="{{ salad.prepared }}"
+                        aria-label="{{ salad.name }} prepared for service"
+                    >
+                </label>
+                <span class="stock-stat"><b>{{ salad.ordered }}</b> ordered</span>
+                <span class="stock-stat stock-stat--remaining {% if salad.remaining < 0 %}number--short{% endif %}">
+                    <b>{{ salad.remaining }}</b> remaining
+                </span>
+            </div>
+            {% endfor %}
+        </div>
     </article>
-    <article class="summary-card">
-        <span class="summary-label">Drinks</span>
-        <strong>{{ service.total_drinks }}</strong>
-        <span>already ordered</span>
-    </article>
-    <article class="summary-card">
+
+    <article class="operations-card operations-card--release">
         <span class="summary-label">Release candidates</span>
-        <strong>{{ service.release_candidates }}</strong>
-        <span>one-pie orders</span>
+        <div class="release-card-heading">
+            <strong class="release-total">{{ service.release_candidates }}</strong>
+            <span>one-pie order{% if service.release_candidates != 1 %}s{% endif %}</span>
+        </div>
+        {% if service.release_candidate_windows %}
+        <div class="release-slot-list" aria-label="Pickup slots with release candidates">
+            {% for window in service.release_candidate_windows %}
+            <div class="release-slot">
+                <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M %p') }}</time>
+                <span>{{ service.open_capacity(window) }} pizza space{% if service.open_capacity(window) != 1 %}s{% endif %} open</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No slots currently have releasable capacity.</p>
+        {% endif %}
     </article>
-</section>
+</form>
 
 <section class="board-section">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Pickup queue</p>
-            <h2>Upcoming windows</h2>
+            <h2>Upcoming orders</h2>
         </div>
         <form method="post" action="{{ url_for('dashboard.sync') }}">
-            <button class="sync-button" type="submit">Sync now</button>
+            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+            <button class="sync-button" type="submit">Sync {{ selected_date.strftime('%b %-d') }}</button>
         </form>
     </div>
 
     <div class="window-list">
         {% for window in service.windows %}
         {% set capacity_percent = ((window.pizza_units / service.pizza_capacity_per_window) * 100) | int %}
-        <article class="pickup-window {% if window.pizza_units > service.pizza_capacity_per_window %}pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %}pickup-window--full{% endif %}">
+        <article class="pickup-window {% if window.pizza_units > service.pizza_capacity_per_window %}pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %}pickup-window--full{% else %}pickup-window--available{% endif %}">
             <div class="window-time">
                 <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M') }}</time>
                 <span>{{ window.pickup_at.strftime('%p') }}</span>
+                <strong class="window-pizza-total">
+                    {{ window.pizza_units }} pizza{% if window.pizza_units != 1 %}s{% endif %}
+                </strong>
             </div>
 
             <div class="window-orders">
                 {% for order in window.orders %}
-                <div class="order-row">
+                {% set release_candidate = service.is_release_candidate(order, window) %}
+                <div class="order-row{% if order.has_salad %} order-row--salad{% endif %}">
                     <div class="order-heading">
-                        <div>
-                            <strong>{{ order.customer_name }}</strong>
-                            <span class="order-id">{{ order.order_id }}</span>
-                        </div>
+                        <strong class="customer-name">{{ order.customer_name }}</strong>
                         <div class="order-badges">
+                            {% if order.has_salad %}
+                            <span class="badge badge--salad">Salad order</span>
+                            {% endif %}
                             {% if order.released %}
                             <span class="badge badge--released">Capacity released</span>
-                            {% elif order.is_release_candidate %}
+                            {% elif release_candidate %}
                             <span class="badge badge--candidate">Release candidate</span>
                             {% endif %}
                         </div>
                     </div>
                     <ul class="item-list">
-                        {% for item in order.items %}
-                        <li>
-                            <span class="item-quantity">{{ item.quantity }}×</span>
-                            <span>{{ item.name }}</span>
+                        {% for item in order.production_items %}
+                        <li class="item-row">
+                            <div class="item-main">
+                                <span class="item-quantity">{{ item.quantity }}×</span>
+                                <span class="item-name">{{ item.name }}</span>
+                            </div>
+                            {% if item.modifiers %}
+                            <ul class="modifier-list" aria-label="Modifiers for {{ item.name }}">
+                                {% for modifier in item.modifiers %}
+                                <li class="{% if modifier.is_salad %}modifier--salad{% endif %}">
+                                    + {% if modifier.is_salad or modifier.quantity > 1 %}{{ modifier.quantity }}× {% endif %}{{ modifier.name }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
                         </li>
                         {% endfor %}
                     </ul>
@@ -71,12 +149,21 @@
 
             <div class="capacity-block">
                 <div class="capacity-copy">
-                    <span>Pizza load</span>
+                    <span>Slot capacity</span>
                     <strong>{{ window.pizza_units }} / {{ service.pizza_capacity_per_window }}</strong>
                 </div>
                 <div class="capacity-track" role="meter" aria-valuemin="0" aria-valuemax="{{ service.pizza_capacity_per_window }}" aria-valuenow="{{ window.pizza_units }}">
                     <span style="width: {{ [capacity_percent, 100] | min }}%"></span>
                 </div>
+                <span class="capacity-status">
+                    {% if window.pizza_units > service.pizza_capacity_per_window %}
+                    Over capacity
+                    {% elif window.pizza_units == service.pizza_capacity_per_window %}
+                    Full
+                    {% else %}
+                    {{ service.pizza_capacity_per_window - window.pizza_units }} pizza space{% if service.pizza_capacity_per_window - window.pizza_units != 1 %}s{% endif %} open
+                    {% endif %}
+                </span>
             </div>
         </article>
         {% endfor %}
@@ -85,5 +172,5 @@
 
 <footer class="board-footer">
     <span>Last synced {{ last_synced.strftime('%-I:%M:%S %p') }}</span>
-    <span>Square integration arrives in Sprint 3</span>
+    <span>Drinks are hidden from the production view</span>
 </footer>
