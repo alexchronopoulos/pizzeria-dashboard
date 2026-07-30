@@ -1,0 +1,89 @@
+<section class="summary-grid" aria-label="Service summary">
+    <article class="summary-card summary-card--primary">
+        <span class="summary-label">Pizzas</span>
+        <strong>{{ service.total_pizzas }}</strong>
+        <span>across {{ service.total_orders }} orders</span>
+    </article>
+    <article class="summary-card">
+        <span class="summary-label">Salads</span>
+        <strong>{{ service.total_salads }}</strong>
+        <span>for today's service</span>
+    </article>
+    <article class="summary-card">
+        <span class="summary-label">Drinks</span>
+        <strong>{{ service.total_drinks }}</strong>
+        <span>already ordered</span>
+    </article>
+    <article class="summary-card">
+        <span class="summary-label">Release candidates</span>
+        <strong>{{ service.release_candidates }}</strong>
+        <span>one-pie orders</span>
+    </article>
+</section>
+
+<section class="board-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">Pickup queue</p>
+            <h2>Upcoming windows</h2>
+        </div>
+        <form method="post" action="{{ url_for('dashboard.sync') }}">
+            <button class="sync-button" type="submit">Sync now</button>
+        </form>
+    </div>
+
+    <div class="window-list">
+        {% for window in service.windows %}
+        {% set capacity_percent = ((window.pizza_units / service.pizza_capacity_per_window) * 100) | int %}
+        <article class="pickup-window {% if window.pizza_units > service.pizza_capacity_per_window %}pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %}pickup-window--full{% endif %}">
+            <div class="window-time">
+                <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M') }}</time>
+                <span>{{ window.pickup_at.strftime('%p') }}</span>
+            </div>
+
+            <div class="window-orders">
+                {% for order in window.orders %}
+                <div class="order-row">
+                    <div class="order-heading">
+                        <div>
+                            <strong>{{ order.customer_name }}</strong>
+                            <span class="order-id">{{ order.order_id }}</span>
+                        </div>
+                        <div class="order-badges">
+                            {% if order.released %}
+                            <span class="badge badge--released">Capacity released</span>
+                            {% elif order.is_release_candidate %}
+                            <span class="badge badge--candidate">Release candidate</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <ul class="item-list">
+                        {% for item in order.items %}
+                        <li>
+                            <span class="item-quantity">{{ item.quantity }}×</span>
+                            <span>{{ item.name }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="capacity-block">
+                <div class="capacity-copy">
+                    <span>Pizza load</span>
+                    <strong>{{ window.pizza_units }} / {{ service.pizza_capacity_per_window }}</strong>
+                </div>
+                <div class="capacity-track" role="meter" aria-valuemin="0" aria-valuemax="{{ service.pizza_capacity_per_window }}" aria-valuenow="{{ window.pizza_units }}">
+                    <span style="width: {{ [capacity_percent, 100] | min }}%"></span>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+
+<footer class="board-footer">
+    <span>Last synced {{ last_synced.strftime('%-I:%M:%S %p') }}</span>
+    <span>Square integration arrives in Sprint 3</span>
+</footer>

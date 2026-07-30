@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+
+# Runtime data
+instance/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Environment files
+.env
+
+# Editors / operating systems
+.vscode/
+.idea/
+.DS_Store

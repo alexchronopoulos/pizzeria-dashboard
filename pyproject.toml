@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pizzeria-dashboard"
+version = "0.1.2"
+description = "A local production dashboard for Pizzeria Mari."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1,<4",
+]
+
+[project.scripts]
+pizzeria-dashboard = "pizzeria_dashboard.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pizzeria_dashboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

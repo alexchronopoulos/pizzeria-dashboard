@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header class="masthead">
+    <div>
+        <p class="eyebrow">Pizzeria Mari</p>
+        <h1>Production board</h1>
+        <p class="service-date">{{ service.service_date.strftime('%A, %B %-d') }}</p>
+    </div>
+    <div class="live-indicator" aria-label="Dashboard status">
+        <span class="live-dot"></span>
+        Sample data
+    </div>
+</header>
+
+<div id="production-board">
+    {% include "_production_board.html" %}
+</div>
+{% endblock %}
