@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 
 import pytest
 
 from pizzeria_dashboard.database import initialize_database, load_orders_for_date
+from pizzeria_dashboard.domain import build_service_board
 from pizzeria_dashboard.square_api import (
     SquareClient,
     SquareConfigurationError,
@@ -281,7 +282,7 @@ def test_square_client_paginates_search_orders() -> None:
     assert "fulfillment_filter" not in filter_payload
 
 
-def test_completed_square_pos_orders_without_fulfillment_become_walk_ins() -> None:
+def test_completed_orders_without_pickup_times_become_walk_ins() -> None:
     raw_orders = (
         {
             "id": "pos-walk-in-1",
@@ -334,17 +335,24 @@ def test_completed_square_pos_orders_without_fulfillment_become_walk_ins() -> No
         rules=ClassificationRules(),
     )
 
-    assert len(orders) == 1
-    order = orders[0]
-    assert order.square_order_id == "pos-walk-in-1"
-    assert order.customer_name == "Ticket 42"
-    assert order.is_walk_in is True
-    assert order.creation_product == "SQUARE_POS"
-    assert order.pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-31 13:07"
-    assert order.pizza_units == 2
+    assert len(orders) == 2
+    by_id = {order.square_order_id: order for order in orders}
+
+    pos_order = by_id["pos-walk-in-1"]
+    assert pos_order.customer_name == "Ticket 42"
+    assert pos_order.is_walk_in is True
+    assert pos_order.creation_product == "SQUARE_POS"
+    assert pos_order.pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-31 13:07"
+    assert pos_order.pizza_units == 2
+
+    # Source labels are intentionally ignored. A completed order with no real
+    # pickup timestamp belongs in the unscheduled lane for that service date.
+    online_order = by_id["online-no-fulfillment"]
+    assert online_order.is_walk_in is True
+    assert online_order.pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-31 13:11"
 
 
-def test_paid_generic_order_source_becomes_walk_in() -> None:
+def test_generic_order_with_receipt_becomes_walk_in() -> None:
     raw_order = {
         "id": "generic-order-tqGG",
         "location_id": "LOCATION-1",
@@ -378,6 +386,106 @@ def test_paid_generic_order_source_becomes_walk_in() -> None:
     assert orders[0].is_walk_in is True
     assert orders[0].receipt_number == "tqGG"
     assert orders[0].pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-24 16:14"
+
+
+def test_generic_completed_order_needs_no_payment_or_source_metadata() -> None:
+    raw_order = {
+        "id": "generic-order-without-payment-metadata",
+        "location_id": "LOCATION-1",
+        "state": "COMPLETED",
+        "created_at": "2026-07-24T20:12:00Z",
+        "closed_at": "2026-07-24T20:14:00Z",
+        "creation_source": {"name": "Order"},
+        "line_items": [
+            {
+                "uid": "line-plain",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            }
+        ],
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=date(2026, 7, 24),
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].is_walk_in is True
+    assert orders[0].receipt_number is None
+    assert orders[0].pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-24 16:14"
+
+
+def test_walk_in_matches_created_date_when_closed_date_is_different() -> None:
+    raw_order = {
+        "id": "created-on-service-date",
+        "state": "COMPLETED",
+        "created_at": "2026-07-24T23:58:00Z",
+        "closed_at": "2026-07-25T04:03:00Z",
+        "line_items": [
+            {
+                "uid": "line-plain",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            }
+        ],
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=date(2026, 7, 24),
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].pickup_at.strftime("%Y-%m-%d %H:%M") == "2026-07-24 19:58"
+
+
+def test_pickup_fulfillment_without_pickup_time_is_unscheduled() -> None:
+    raw_order = {
+        "id": "pickup-without-time",
+        "state": "COMPLETED",
+        "created_at": "2026-07-31T17:05:00Z",
+        "closed_at": "2026-07-31T17:07:00Z",
+        "fulfillments": [
+            {
+                "uid": "pickup-1",
+                "type": "PICKUP",
+                "state": "COMPLETED",
+                "pickup_details": {},
+            }
+        ],
+        "line_items": [
+            {
+                "uid": "line-plain",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            }
+        ],
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].is_walk_in is True
+    assert orders[0].pickup_at.strftime("%-I:%M %p") == "1:07 PM"
 
 
 def test_generic_order_with_delivery_fulfillment_is_not_a_walk_in() -> None:
@@ -816,6 +924,68 @@ def test_square_sync_includes_paid_generic_order_source_walk_in(tmp_path: Path) 
     assert cached[0].pickup_at.strftime("%-I:%M %p") == "2:04 PM"
 
 
+def test_square_sync_includes_completed_order_without_payment_metadata(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+
+        def resolve_location(self):
+            return {
+                "id": "LOCATION-1",
+                "name": "Pizzeria Mari",
+                "timezone": "America/New_York",
+            }
+
+        def search_orders_for_service_date(self, **kwargs):
+            return (
+                {
+                    "id": "generic-order-no-payment",
+                    "location_id": "LOCATION-1",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-31T18:02:00Z",
+                    "closed_at": "2026-07-31T18:04:00Z",
+                    "creation_source": {"name": "Order"},
+                    "line_items": [
+                        {
+                            "uid": "line-plain",
+                            "catalog_object_id": "variation-plain",
+                            "name": "Plain Pie",
+                            "quantity": "1",
+                        }
+                    ],
+                },
+            )
+
+        def batch_retrieve_catalog_objects(
+            self, object_ids, *, include_related_objects=False
+        ):
+            return ()
+
+    result = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        {
+            "ORDER_SOURCE": "square",
+            "SQUARE_ACCESS_TOKEN": "token",
+            "SQUARE_LOCATION_ID": "LOCATION-1",
+            "SERVICE_TIMEZONE": "America/New_York",
+            "SQUARE_ORDER_LOOKBACK_DAYS": 60,
+        },
+        square_client=FakeSquareClient(),
+    )
+
+    assert result.info.order_count == 1
+    cached = load_orders_for_date(database_path, SERVICE_DATE)
+    assert len(cached) == 1
+    assert cached[0].is_walk_in is True
+    assert cached[0].receipt_number is None
+    assert cached[0].pickup_at.strftime("%-I:%M %p") == "2:04 PM"
+
+
 def test_square_location_must_be_selected_when_multiple_are_active() -> None:
     def requester(method, url, headers, payload, timeout):
         return {
@@ -867,3 +1037,116 @@ def test_square_client_retrieves_full_order_and_payment_documents() -> None:
         ("GET", "https://connect.squareup.com/v2/orders/order%2Fwith%20spaces"),
         ("GET", "https://connect.squareup.com/v2/payments/payment%2Fwith%20spaces"),
     ]
+
+
+def test_mixed_walk_in_keeps_whole_pie_and_marks_slice_non_production() -> None:
+    raw_order = {
+        "id": "walk-in-pie-and-slice",
+        "state": "COMPLETED",
+        "created_at": "2026-07-31T20:05:00Z",
+        "closed_at": "2026-07-31T20:07:00Z",
+        "line_items": [
+            {
+                "uid": "line-pie",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            },
+            {
+                "uid": "line-slice",
+                "catalog_object_id": "variation-plain-slice",
+                "name": "Plain Slice",
+                "quantity": "2",
+            },
+        ],
+    }
+    catalog_index = {
+        **_catalog_index(),
+        # Square reporting categories can overlap. The explicit item name and
+        # Slice category must win over a broader pie reporting category.
+        "variation-plain-slice": CatalogItemInfo(
+            "variation-plain-slice",
+            "Plain Slice",
+            "Regular",
+            ("Slices", "Mari Pies"),
+        ),
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=catalog_index,
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.is_walk_in is True
+    assert [item.category for item in order.items] == ["pizza", "slice"]
+    assert [item.name for item in order.production_items] == ["Plain Pie"]
+    assert order.pizza_units == 1
+
+
+def test_slice_name_overrides_shared_pizza_reporting_category() -> None:
+    rules = ClassificationRules()
+
+    assert rules.classify_item("Plain Slice", ("Mari Pies",)) == "slice"
+    assert rules.classify_item("Plain Pie", ("Mari Pies",)) == "pizza"
+
+
+def test_ticket_name_walk_in_uses_eastern_timestamps_and_auto_places_745() -> None:
+    raw_order = {
+        "id": "J73GALemxrWOt5Ehrn7yJHDAjOVZY",
+        "location_id": "LOCATION-1",
+        "state": "COMPLETED",
+        "created_at": "2026-07-24T23:42:00Z",
+        "closed_at": "2026-07-24T23:44:00Z",
+        "updated_at": "2026-07-24T23:44:01Z",
+        "ticket_name": "Sam 7:45 PM",
+        "line_items": [
+            {
+                "uid": "line-plain",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            }
+        ],
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=date(2026, 7, 24),
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.ticket_name == "Sam 7:45 PM"
+    assert order.source_created_at == datetime.fromisoformat(
+        "2026-07-24T19:42:00-04:00"
+    )
+    assert order.source_closed_at == datetime.fromisoformat(
+        "2026-07-24T19:44:00-04:00"
+    )
+    assert order.source_updated_at == datetime.fromisoformat(
+        "2026-07-24T19:44:01-04:00"
+    )
+
+    slots = tuple(
+        datetime(2026, 7, 24, 16, 0) + timedelta(minutes=15 * index)
+        for index in range(16)
+    )
+    board = build_service_board(
+        date(2026, 7, 24),
+        orders,
+        pickup_times=slots,
+    )
+
+    target = next(window for window in board.windows if window.pickup_at.hour == 19 and window.pickup_at.minute == 45)
+    assert target.orders == (order,)
+    assert board.unscheduled_orders == ()

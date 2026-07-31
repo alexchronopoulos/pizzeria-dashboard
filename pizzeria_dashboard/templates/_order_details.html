@@ -1,129 +1,32 @@
 {% if error %}
-<div class="order-details-error" role="alert">
-    <strong>Order details unavailable</strong>
-    <p>{{ error }}</p>
-</div>
+<div class="order-details-error" role="alert"><strong>Order details unavailable</strong><p>{{ error }}</p></div>
 {% elif order %}
 <div class="order-details-content">
+  <div class="order-detail-tabs" role="tablist">
+    <button type="button" class="order-detail-tab is-active" data-order-tab="pickup">Pickup time</button>
+    <button type="button" class="order-detail-tab" data-order-debug-url="{{ url_for('dashboard.order_debug', date=selected_date.isoformat(), order_id=order.order_id) }}">Debug</button>
+  </div>
+  <section class="order-detail-panel" data-order-panel="pickup">
     <header class="order-details-header">
-        <div>
-            <p class="eyebrow">Order details</p>
-            <h2>{{ order.customer_name }}</h2>
-            <p class="order-details-pickup">
-                {% if order.is_walk_in %}
-                Walk-in paid {{ (order.source_closed_at or order.source_created_at or order.pickup_at).strftime('%A, %B %-d at %-I:%M %p') }}
-                {% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}
-                {% else %}
-                Pickup {{ order.pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}
-                {% endif %}
-            </p>
-        </div>
-        <div class="order-details-statuses">
-            {% if order.display_reference %}
-            <span class="detail-pill detail-pill--reference">{{ order.display_reference }}</span>
-            {% endif %}
-            <span class="detail-pill">{{ order.pizza_units }} pizza{% if order.pizza_units != 1 %}s{% endif %}</span>
-            {% if order.released and selected_date >= today %}<span class="detail-pill detail-pill--released">Capacity released</span>{% endif %}
-        </div>
+      <div><p class="eyebrow">Order details</p><h2>{{ order.customer_name }}</h2>
+      <p class="order-details-pickup">{% if order.is_walk_in %}Walk-in paid {{ event_at.strftime('%A, %B %-d at %-I:%M %p %Z') }}{% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}{% else %}Pickup {{ order.pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}{% endif %}</p></div>
     </header>
-
-    <section class="detail-summary-grid" aria-label="Cached order identifiers">
-        <div><span>Cached order ID</span><strong>{{ order.order_id }}</strong></div>
-        <div><span>Square order ID</span><strong>{{ order.square_order_id or 'Not available' }}</strong></div>
-        <div><span>Order version</span><strong>{{ order.square_version if order.square_version is not none else 'Not available' }}</strong></div>
-        <div><span>Fulfillment UID</span><strong>{{ order.fulfillment_uid or 'Not available' }}</strong></div>
-        <div><span>Fulfillment state</span><strong>{{ order.fulfillment_state or 'Not available' }}</strong></div>
-        <div><span>Location ID</span><strong>{{ order.location_id or 'Not available' }}</strong></div>
-        <div><span>Order type</span><strong>{% if order.is_walk_in %}Walk-in POS sale{% else %}Scheduled pickup{% endif %}</strong></div>
-        <div><span>Creation product</span><strong>{{ order.creation_product or 'Not available' }}</strong></div>
-        <div><span>Created</span><strong>{{ order.source_created_at.isoformat() if order.source_created_at else 'Not available' }}</strong></div>
-        <div><span>Closed</span><strong>{{ order.source_closed_at.isoformat() if order.source_closed_at else 'Not available' }}</strong></div>
-    </section>
-
-    <section class="order-details-section">
-        <h3>Kitchen view</h3>
-        <div class="detail-item-list">
-            {% for item in order.items %}
-            <div class="detail-item{% if item.category == 'drink' %} detail-item--hidden{% endif %}">
-                <div class="detail-item-heading">
-                    <strong>{{ item.quantity }}× {{ item.name }}</strong>
-                    <span>{{ item.category }}</span>
-                </div>
-                {% if item.variation_name %}<p>Variation: {{ item.variation_name }}</p>{% endif %}
-                {% if item.catalog_categories %}<p>Categories: {{ item.catalog_categories | join(', ') }}</p>{% endif %}
-                {% if item.catalog_object_id %}<p>Catalog object: <code>{{ item.catalog_object_id }}</code></p>{% endif %}
-                {% if item.modifiers %}
-                <ul>
-                    {% for modifier in item.modifiers %}
-                    <li>{{ modifier.quantity }}× {{ modifier.name }} <small>({{ modifier.category }})</small>{% if modifier.catalog_object_id %} — <code>{{ modifier.catalog_object_id }}</code>{% endif %}</li>
-                    {% endfor %}
-                </ul>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-    </section>
-
-    {% if live_error %}
-    <div class="order-details-warning" role="status">
-        <strong>Live Square details were not available.</strong>
-        <p>{{ live_error }}</p>
-        <p>The cached production document is still shown below.</p>
-    </div>
-    {% endif %}
-
-    {% if raw_square_order %}
-    <section class="order-details-section order-debug-clues">
-        <h3>Guest debugging clues</h3>
-        <div class="detail-summary-grid">
-            <div><span>Square state</span><strong>{{ raw_square_order.get('state', 'Not available') }}</strong></div>
-            <div><span>Customer ID</span><strong>{{ raw_square_order.get('customer_id', 'Not available') }}</strong></div>
-            <div><span>Reference ID</span><strong>{{ raw_square_order.get('reference_id', 'Not available') }}</strong></div>
-            <div><span>Ticket name</span><strong>{{ raw_square_order.get('ticket_name', 'Not available') }}</strong></div>
-            <div><span>Created</span><strong>{{ raw_square_order.get('created_at', 'Not available') }}</strong></div>
-            <div><span>Updated</span><strong>{{ raw_square_order.get('updated_at', 'Not available') }}</strong></div>
-        </div>
-        {% set creation_source = raw_square_order.get('creation_source', {}) %}
-        {% if creation_source %}
-        <p class="debug-source-line"><strong>Creation source:</strong> {{ creation_source.get('name', 'Unknown') }}{% if creation_source.get('product') %} · {{ creation_source.get('product') }}{% endif %}</p>
-        {% endif %}
-        {% set fulfillments = raw_square_order.get('fulfillments', []) %}
-        {% if fulfillments %}
-        <div class="debug-fulfillments">
-            {% for fulfillment in fulfillments %}
-            {% set pickup_details = fulfillment.get('pickup_details', {}) %}
-            {% set recipient = pickup_details.get('recipient', {}) %}
-            <div>
-                <strong>Fulfillment {{ loop.index }}</strong>
-                <span>State: {{ fulfillment.get('state', 'Unknown') }}</span>
-                <span>Pickup: {{ pickup_details.get('pickup_at', 'Unknown') }}</span>
-                <span>Recipient: {{ recipient.get('display_name', 'No display name') }}</span>
-                {% if recipient.get('email_address') %}<span>Email: {{ recipient.get('email_address') }}</span>{% endif %}
-                {% if recipient.get('phone_number') %}<span>Phone: {{ recipient.get('phone_number') }}</span>{% endif %}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
+    {% if order.is_walk_in %}
+    <section class="order-details-section walk-in-slot-editor">
+      <div class="walk-in-slot-editor-heading"><div><h3>Pickup time</h3>
+      {% if assignment_source == 'ticket-name' %}<p>Automatically parsed from the Ticket Name{% if order.ticket_name %}: <strong>{{ order.ticket_name }}</strong>{% endif %}.</p>
+      {% elif assignment_source == 'manual' %}<p>This time is a saved local override.</p>
+      {% elif assignment_source == 'manual-unscheduled' %}<p>This order is explicitly kept unscheduled.</p>
+      {% else %}<p>No configured slot could be parsed from{% if order.ticket_name %} <strong>{{ order.ticket_name }}</strong>{% else %} the Ticket Name{% endif %}.</p>{% endif %}</div></div>
+      <form class="walk-in-slot-form" data-walk-in-assignment-form data-assignment-url="{{ url_for('dashboard.update_walk_in_assignment') }}">
+        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}"><input type="hidden" name="order_id" value="{{ order.order_id }}">
+        <label><span>Dashboard slot</span><select name="pickup_at"><option value=""{% if assigned_pickup_at is none %} selected{% endif %}>Unscheduled</option>{% for slot in pickup_slots %}<option value="{{ slot.isoformat() }}"{% if assigned_pickup_at and assigned_pickup_at.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}>{{ slot.strftime('%-I:%M %p') }}</option>{% endfor %}</select></label>
+        <button type="submit">Save pickup time</button><span class="walk-in-slot-status" data-walk-in-assignment-status aria-live="polite"></span>
+      </form>
     </section>
     {% endif %}
-
-    <details class="raw-details" {% if order.customer_name == 'Guest' %}open{% endif %}>
-        <summary>Cached dashboard document</summary>
-        <pre>{{ cached_payload | tojson(indent=2) }}</pre>
-    </details>
-
-    {% if raw_square_order %}
-    <details class="raw-details" {% if order.customer_name == 'Guest' %}open{% endif %}>
-        <summary>Full live Square order JSON</summary>
-        <pre>{{ raw_square_order | tojson(indent=2) }}</pre>
-    </details>
-    {% endif %}
-
-    {% if payments %}
-    <details class="raw-details" {% if order.customer_name == 'Guest' %}open{% endif %}>
-        <summary>Associated Square payment JSON ({{ payments | length }})</summary>
-        <pre>{{ payments | tojson(indent=2) }}</pre>
-    </details>
-    {% endif %}
+    <section class="order-details-section"><h3>Kitchen view</h3><div class="detail-item-list">{% for item in order.production_items %}<div class="detail-item"><div class="detail-item-heading"><strong>{{ item.quantity }}× {{ item.display_name }}</strong><span>{{ item.category }}</span></div>{% if item.production_modifiers %}<ul>{% for modifier in item.production_modifiers %}<li>{{ modifier.quantity }}× {{ modifier.display_name }}</li>{% endfor %}</ul>{% endif %}</div>{% endfor %}</div></section>
+  </section>
+  <section class="order-detail-panel" data-order-debug-panel hidden><div class="order-details-loading"><strong>Debug data is loaded only when requested.</strong></div></section>
 </div>
 {% endif %}

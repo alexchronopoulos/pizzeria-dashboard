@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact">
+<header class="masthead masthead--compact" data-dashboard-build="3.8.3">
     <div class="masthead-tools masthead-tools--single-row">
+        <h1 class="compact-dashboard-title">Pizzeria Mari Production Dashboard</h1>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
             <form class="date-picker" method="get" action="{{ url_for('dashboard.index') }}">
@@ -187,5 +188,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.3.19') }}" defer></script>
 {% endblock %}

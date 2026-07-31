@@ -10,7 +10,9 @@ from typing import Iterable, Mapping
 from .domain import Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+
+_UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,9 +272,10 @@ def load_sync_info(path: Path, service_date: date) -> SyncInfo | None:
     )
 
 
-def load_order_slot_assignments(
+def load_order_slot_assignment_overrides(
     path: Path, service_date: date
-) -> dict[str, datetime]:
+) -> dict[str, datetime | None]:
+    """Load explicit walk-in slot choices, including forced-unscheduled rows."""
     with _connect(path) as connection:
         rows = connection.execute(
             """
@@ -283,15 +286,36 @@ def load_order_slot_assignments(
             (service_date.isoformat(),),
         ).fetchall()
 
-    assignments: dict[str, datetime] = {}
+    assignments: dict[str, datetime | None] = {}
     for row in rows:
+        order_id = str(row["order_id"])
+        raw_pickup_at = str(row["pickup_at"])
+        if raw_pickup_at == _UNSCHEDULED_ASSIGNMENT:
+            assignments[order_id] = None
+            continue
         try:
-            assignments[str(row["order_id"])] = datetime.fromisoformat(
-                str(row["pickup_at"])
-            )
+            assignments[order_id] = datetime.fromisoformat(raw_pickup_at)
         except ValueError:
             continue
     return assignments
+
+
+def load_order_slot_assignments(
+    path: Path, service_date: date
+) -> dict[str, datetime]:
+    """Load only walk-ins assigned to actual service slots.
+
+    Kept as the public compatibility view used by existing callers and tests.
+    Explicit unscheduled overrides are available through
+    :func:`load_order_slot_assignment_overrides`.
+    """
+    return {
+        order_id: pickup_at
+        for order_id, pickup_at in load_order_slot_assignment_overrides(
+            path, service_date
+        ).items()
+        if pickup_at is not None
+    }
 
 
 def save_order_slot_assignment(
@@ -301,15 +325,9 @@ def save_order_slot_assignment(
     pickup_at: datetime | None,
 ) -> None:
     with _connect(path) as connection:
-        if pickup_at is None:
-            connection.execute(
-                """
-                DELETE FROM order_slot_assignments
-                WHERE service_date = ? AND order_id = ?
-                """,
-                (service_date.isoformat(), order_id),
-            )
-            return
+        serialized_pickup_at = (
+            pickup_at.isoformat() if pickup_at is not None else _UNSCHEDULED_ASSIGNMENT
+        )
         connection.execute(
             """
             INSERT INTO order_slot_assignments (
@@ -322,7 +340,7 @@ def save_order_slot_assignment(
             (
                 service_date.isoformat(),
                 order_id,
-                pickup_at.isoformat(),
+                serialized_pickup_at,
                 _utc_now().isoformat(),
             ),
         )

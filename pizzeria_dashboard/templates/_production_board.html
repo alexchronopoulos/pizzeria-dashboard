@@ -1,6 +1,6 @@
 {% macro render_order(order, window=None, unscheduled=False) -%}
 {% set release_candidate = window and service.is_release_candidate(order, window) %}
-{% set event_at = order.source_closed_at or order.source_created_at or order.pickup_at %}
+{% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}"
     role="button"
@@ -11,6 +11,7 @@
     data-walk-in-order-id="{{ order.order_id }}"
     data-service-date="{{ selected_date.isoformat() }}"
     data-assignment-url="{{ url_for('dashboard.update_walk_in_assignment') }}"
+    data-walk-in-pizza-units="{{ order.pizza_units }}"
     {% endif %}
     aria-label="View all details for {{ order.customer_name }}{% if unscheduled %}, unscheduled walk-in{% elif window %} at {{ window.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
 >
@@ -18,9 +19,15 @@
         <div class="order-identity">
             <strong class="customer-name">{{ order.customer_name }}</strong>
             {% if order.is_walk_in %}
-            <span class="walk-in-paid-time">Paid {{ event_at.strftime('%-I:%M %p') }}</span>
+            <span class="walk-in-paid-time">Paid {{ event_at.strftime('%-I:%M %p %Z') }}</span>
             {% endif %}
-            <span class="order-details-hint">{% if order.is_walk_in %}Drag or view details{% else %}View details{% endif %}</span>
+            <button
+                type="button"
+                class="order-details-trigger"
+                data-order-details-trigger
+                draggable="false"
+                aria-label="View details for {{ order.customer_name }}"
+            >Details</button>
         </div>
         <div class="order-badges">
             {% if order.is_walk_in %}
@@ -135,7 +142,15 @@
             {% if service.two_pie_available_windows %}
             <div class="availability-times" aria-label="Slots available for two-pie orders">
                 {% for window in service.two_pie_available_windows %}
-                <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M') }}</time>
+                <time
+                    class="availability-slot-drop"
+                    datetime="{{ window.pickup_at.isoformat() }}"
+                    data-walk-in-drop-zone
+                    data-capacity-drop-zone
+                    data-open-pizza-spaces="2"
+                    data-capacity-pickup-at="{{ window.pickup_at.isoformat() }}"
+                    title="Drop a walk-in order here to assign {{ window.pickup_at.strftime('%-I:%M %p') }}"
+                >{{ window.pickup_at.strftime('%-I:%M') }}</time>
                 {% endfor %}
             </div>
             {% else %}
@@ -150,7 +165,15 @@
             {% if service.one_pie_available_windows %}
             <div class="availability-times" aria-label="Slots available for one-pie orders">
                 {% for window in service.one_pie_available_windows %}
-                <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M') }}</time>
+                <time
+                    class="availability-slot-drop"
+                    datetime="{{ window.pickup_at.isoformat() }}"
+                    data-walk-in-drop-zone
+                    data-capacity-drop-zone
+                    data-open-pizza-spaces="1"
+                    data-capacity-pickup-at="{{ window.pickup_at.isoformat() }}"
+                    title="Drop a walk-in order here to assign {{ window.pickup_at.strftime('%-I:%M %p') }}"
+                >{{ window.pickup_at.strftime('%-I:%M') }}</time>
                 {% endfor %}
             </div>
             {% else %}

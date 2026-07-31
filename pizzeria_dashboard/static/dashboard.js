@@ -3,7 +3,7 @@
     const body = document.getElementById("order-details-dialog-body");
     const closeButton = dialog?.querySelector("[data-order-details-close]");
 
-    if (!(dialog instanceof HTMLDialogElement) || !body) {
+    if (!dialog || !body) {
         return;
     }
 
@@ -13,7 +13,11 @@
         requestController?.abort();
         requestController = null;
         if (dialog.open) {
-            dialog.close();
+            if (typeof dialog.close === "function") {
+                dialog.close();
+            } else {
+                dialog.removeAttribute("open");
+            }
         }
     };
 
@@ -32,7 +36,11 @@
             </div>
         `;
         if (!dialog.open) {
-            dialog.showModal();
+            if (typeof dialog.showModal === "function") {
+                dialog.showModal();
+            } else {
+                dialog.setAttribute("open", "");
+            }
         }
 
         try {
@@ -57,28 +65,119 @@
     };
 
     document.addEventListener("click", (event) => {
-        if (event.target.closest("[data-bake-timer]")) {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target || target.closest("[data-bake-timer]")) {
             return;
         }
-        const row = event.target.closest("[data-order-details-url]");
+        const trigger = target.closest("[data-order-details-trigger]");
+        const row = (trigger || target).closest("[data-order-details-url]");
         if (row?.dataset.justDragged === "true") {
             return;
         }
         if (row) {
+            event.preventDefault();
             openOrderDetails(row);
         }
     });
 
     document.addEventListener("keydown", (event) => {
-        if (event.target.closest("[data-bake-timer]")) {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target || target.closest("[data-bake-timer]")) {
             return;
         }
-        const row = event.target.closest("[data-order-details-url]");
+        if (target.closest("button, a, input, select, textarea")) {
+            return;
+        }
+        const row = target.closest("[data-order-details-url]");
         if (!row || (event.key !== "Enter" && event.key !== " ")) {
             return;
         }
         event.preventDefault();
         openOrderDetails(row);
+    });
+
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const debugTab = target?.closest("[data-order-debug-url]");
+        if (!debugTab) return;
+        event.preventDefault();
+        const content = debugTab.closest(".order-details-content");
+        const pickupPanel = content?.querySelector('[data-order-panel="pickup"]');
+        const debugPanel = content?.querySelector("[data-order-debug-panel]");
+        content?.querySelectorAll(".order-detail-tab").forEach((tab) => tab.classList.remove("is-active"));
+        debugTab.classList.add("is-active");
+        if (pickupPanel) pickupPanel.hidden = true;
+        if (debugPanel) debugPanel.hidden = false;
+        if (!debugPanel || debugPanel.dataset.loaded === "true") return;
+        debugPanel.innerHTML = '<div class="order-details-loading"><strong>Loading Square debug data…</strong></div>';
+        try {
+            const response = await fetch(debugTab.dataset.orderDebugUrl, {headers: {Accept: "text/html"}});
+            debugPanel.innerHTML = await response.text();
+            debugPanel.dataset.loaded = "true";
+        } catch (error) {
+            debugPanel.innerHTML = `<div class="order-details-error"><strong>Could not load debug data</strong><p>${String(error)}</p></div>`;
+        }
+    });
+
+    document.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const pickupTab = target?.closest('[data-order-tab="pickup"]');
+        if (!pickupTab) return;
+        const content = pickupTab.closest(".order-details-content");
+        content?.querySelectorAll(".order-detail-tab").forEach((tab) => tab.classList.remove("is-active"));
+        pickupTab.classList.add("is-active");
+        const pickupPanel = content?.querySelector('[data-order-panel="pickup"]');
+        const debugPanel = content?.querySelector("[data-order-debug-panel]");
+        if (pickupPanel) pickupPanel.hidden = false;
+        if (debugPanel) debugPanel.hidden = true;
+    });
+
+    document.addEventListener("submit", async (event) => {
+        const form = event.target.closest("[data-walk-in-assignment-form]");
+        if (!form) {
+            return;
+        }
+        event.preventDefault();
+
+        const assignmentUrl = form.dataset.assignmentUrl;
+        const status = form.querySelector("[data-walk-in-assignment-status]");
+        const submitButton = form.querySelector('button[type="submit"]');
+        const formData = new FormData(form);
+        if (!assignmentUrl) {
+            return;
+        }
+
+        submitButton.disabled = true;
+        if (status) {
+            status.textContent = "Saving…";
+        }
+        try {
+            const response = await fetch(assignmentUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: formData.get("service_date"),
+                    order_id: formData.get("order_id"),
+                    pickup_at: formData.get("pickup_at"),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The pickup time could not be saved.");
+            }
+            if (status) {
+                status.textContent = "Saved";
+            }
+            window.location.reload();
+        } catch (error) {
+            submitButton.disabled = false;
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
     });
 
     closeButton?.addEventListener("click", closeDialog);
@@ -104,7 +203,19 @@
     let activeRow = null;
 
     const clearDropStates = () => {
-        dropZones.forEach((zone) => zone.classList.remove("walk-in-drop-zone--active"));
+        dropZones.forEach((zone) => {
+            zone.classList.remove("walk-in-drop-zone--active");
+            zone.classList.remove("walk-in-drop-zone--unavailable");
+        });
+    };
+
+    const zoneAcceptsOrder = (zone, row) => {
+        if (!zone.hasAttribute("data-capacity-drop-zone")) {
+            return true;
+        }
+        const openSpaces = Number.parseInt(zone.dataset.openPizzaSpaces || "0", 10);
+        const pizzaUnits = Number.parseInt(row.dataset.walkInPizzaUnits || "0", 10);
+        return Number.isFinite(openSpaces) && Number.isFinite(pizzaUnits) && openSpaces >= pizzaUnits;
     };
 
     walkIns.forEach((row) => {
@@ -113,6 +224,11 @@
             row.classList.add("order-row--dragging");
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/plain", row.dataset.walkInOrderId || "");
+            dropZones.forEach((zone) => {
+                if (!zoneAcceptsOrder(zone, row)) {
+                    zone.classList.add("walk-in-drop-zone--unavailable");
+                }
+            });
         });
 
         row.addEventListener("dragend", () => {
@@ -126,7 +242,7 @@
 
     dropZones.forEach((zone) => {
         zone.addEventListener("dragover", (event) => {
-            if (!activeRow) {
+            if (!activeRow || !zoneAcceptsOrder(zone, activeRow)) {
                 return;
             }
             event.preventDefault();
@@ -144,7 +260,7 @@
             event.preventDefault();
             const row = activeRow;
             clearDropStates();
-            if (!row) {
+            if (!row || !zoneAcceptsOrder(zone, row)) {
                 return;
             }
 
@@ -166,7 +282,7 @@
                     body: JSON.stringify({
                         service_date: serviceDate,
                         order_id: orderId,
-                        pickup_at: zone.dataset.pickupAt || "",
+                        pickup_at: zone.dataset.capacityPickupAt || zone.dataset.pickupAt || "",
                     }),
                 });
                 const result = await response.json();

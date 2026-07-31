@@ -1,0 +1,6 @@
+{% if error %}<div class="order-details-error" role="alert"><strong>Debug details unavailable</strong><p>{{ error }}</p></div>{% else %}
+{% if live_error %}<div class="order-details-warning"><strong>Live Square details were not available.</strong><p>{{ live_error }}</p></div>{% endif %}
+<section class="order-details-section"><h3>Cached dashboard document</h3><pre>{{ cached_payload | tojson(indent=2) }}</pre></section>
+{% if raw_square_order %}<section class="order-details-section"><h3>Live Square order JSON — Eastern Time</h3><pre>{{ raw_square_order | tojson(indent=2) }}</pre></section>{% endif %}
+{% if payments %}<section class="order-details-section"><h3>Associated payments — Eastern Time</h3><pre>{{ payments | tojson(indent=2) }}</pre></section>{% endif %}
+{% endif %}

@@ -111,7 +111,7 @@ class SquareClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Square-Version": self.settings.api_version,
-            "User-Agent": "pizzeria-mari-dashboard/0.3.10",
+            "User-Agent": "pizzeria-mari-dashboard/0.3.12",
         }
 
     def _request(

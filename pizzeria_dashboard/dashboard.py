@@ -18,13 +18,13 @@ from flask import (
 
 from .database import (
     has_orders_for_date,
-    load_order_slot_assignments,
+    load_order_slot_assignment_overrides,
     load_order_for_date,
     load_orders_for_date,
     load_sync_info,
     save_order_slot_assignment,
 )
-from .domain import build_service_board, order_to_payload
+from .domain import Order, build_service_board, order_to_payload, parse_ticket_pickup_time
 from .service_config import (
     configuration_from_form,
     load_configuration,
@@ -91,7 +91,7 @@ def index() -> str:
             current_app.config["PIZZA_CAPACITY_PER_WINDOW"]
         ),
         pickup_times=service_configuration.pickup_times(selected_date),
-        walk_in_assignments=load_order_slot_assignments(
+        walk_in_assignments=load_order_slot_assignment_overrides(
             database_path, selected_date
         ),
     )
@@ -129,6 +129,7 @@ def index() -> str:
         square_configured=bool(
             str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
         ),
+        service_timezone=ZoneInfo(current_app.config["SERVICE_TIMEZONE"]),
         last_synced=(
             sync_info.synced_at.astimezone(
                 ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
@@ -184,48 +185,111 @@ def _redact_sensitive(value: object) -> object:
     return value
 
 
+
+
+def _localize_square_timestamps(value: object) -> object:
+    """Convert Square RFC 3339 timestamp fields to the service timezone.
+
+    Square commonly returns timestamps with a trailing ``Z`` (UTC). Keep the
+    exact instant, but present and inspect it in the configured local timezone.
+    July dates in New York are EDT (UTC-04:00); winter dates are EST (UTC-05:00).
+    """
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+
+    def convert(item: object, key: str | None = None) -> object:
+        if isinstance(item, Mapping):
+            return {str(child_key): convert(child, str(child_key)) for child_key, child in item.items()}
+        if isinstance(item, list):
+            return [convert(child) for child in item]
+        if isinstance(item, tuple):
+            return [convert(child) for child in item]
+        if isinstance(item, str) and key and (key.endswith("_at") or key.endswith("_time")):
+            text = item.strip()
+            normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                return item
+            if parsed.tzinfo is None:
+                return item
+            return parsed.astimezone(timezone).isoformat()
+        return item
+
+    return convert(value)
+
+def _effective_walk_in_assignment(
+    order: Order,
+    selected_date: date,
+    pickup_slots: tuple[datetime, ...],
+    overrides: Mapping[str, datetime | None],
+) -> tuple[datetime | None, str | None]:
+    if order.order_id in overrides:
+        assigned = overrides[order.order_id]
+        return assigned, "manual" if assigned is not None else "manual-unscheduled"
+
+    parsed = parse_ticket_pickup_time(
+        order.ticket_name or order.customer_name,
+        selected_date,
+        pickup_slots,
+        reference_at=(
+            order.source_closed_at or order.source_created_at or order.pickup_at
+        ),
+    )
+    return parsed, "ticket-name" if parsed is not None else None
+
+
 @blueprint.get("/order-details")
 def order_details():
     selected_date = _parse_service_date(request.args.get("date"))
     order_id = str(request.args.get("order_id", "")).strip()
     if not order_id:
-        return render_template(
-            "_order_details.html",
-            order=None,
-            error="No cached order ID was supplied.",
-        ), 400
+        return render_template("_order_details.html", order=None, error="No cached order ID was supplied."), 400
 
     order = load_order_for_date(_database_path(), selected_date, order_id)
     if order is None:
-        return render_template(
-            "_order_details.html",
-            order=None,
-            error="This order is no longer present in the selected date cache.",
-        ), 404
+        return render_template("_order_details.html", order=None, error="This order is no longer present in the selected date cache."), 404
+
+    configuration = load_configuration(_database_path())
+    pickup_slots = configuration.pickup_times(selected_date)
+    assignment_overrides = load_order_slot_assignment_overrides(_database_path(), selected_date)
+    assigned_pickup_at, assignment_source = _effective_walk_in_assignment(
+        order, selected_date, pickup_slots, assignment_overrides
+    )
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    event_at = order.source_closed_at or order.source_created_at or order.pickup_at
+    if event_at.tzinfo is not None:
+        event_at = event_at.astimezone(timezone)
+
+    return render_template(
+        "_order_details.html",
+        order=order, assigned_pickup_at=assigned_pickup_at,
+        assignment_source=assignment_source, pickup_slots=pickup_slots,
+        selected_date=selected_date, today=_now().date(), event_at=event_at,
+    )
+
+
+@blueprint.get("/order-debug")
+def order_debug():
+    selected_date = _parse_service_date(request.args.get("date"))
+    order_id = str(request.args.get("order_id", "")).strip()
+    order = load_order_for_date(_database_path(), selected_date, order_id)
+    if order is None:
+        return render_template("_order_debug.html", order=None, error="This order is no longer present in the selected date cache."), 404
 
     raw_square_order: object | None = None
     payments: tuple[object, ...] = ()
     live_error: str | None = None
-
     if order.square_order_id:
         try:
             client = SquareClient(SquareSettings.from_mapping(current_app.config))
             retrieved_order = client.retrieve_order(order.square_order_id)
-            raw_square_order = _redact_sensitive(retrieved_order)
-
+            raw_square_order = _localize_square_timestamps(_redact_sensitive(retrieved_order))
             retrieved_payments: list[object] = []
             for payment_id in _payment_ids(retrieved_order):
                 try:
-                    retrieved_payments.append(
-                        _redact_sensitive(client.get_payment(payment_id))
-                    )
+                    retrieved_payments.append(_localize_square_timestamps(_redact_sensitive(client.get_payment(payment_id))))
                 except SquareError as exc:
-                    retrieved_payments.append(
-                        {
-                            "payment_id": payment_id,
-                            "dashboard_error": str(exc),
-                        }
-                    )
+                    retrieved_payments.append({"payment_id": payment_id, "dashboard_error": str(exc)})
             payments = tuple(retrieved_payments)
         except SquareError as exc:
             live_error = str(exc)
@@ -233,17 +297,9 @@ def order_details():
         live_error = "This is sample data and has no live Square order document."
 
     return render_template(
-        "_order_details.html",
-        order=order,
-        assigned_pickup_at=load_order_slot_assignments(
-            _database_path(), selected_date
-        ).get(order.order_id),
-        cached_payload=order_to_payload(order),
-        raw_square_order=raw_square_order,
-        payments=payments,
-        live_error=live_error,
-        selected_date=selected_date,
-        today=_now().date(),
+        "_order_debug.html", order=order, cached_payload=order_to_payload(order),
+        raw_square_order=raw_square_order, payments=payments, live_error=live_error,
+        error=None,
     )
 
 

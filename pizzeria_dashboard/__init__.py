@@ -56,6 +56,12 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         SQUARE_PIZZA_ITEM_KEYWORDS=os.getenv(
             "SQUARE_PIZZA_ITEM_KEYWORDS", "pizza,pie"
         ),
+        SQUARE_SLICE_CATEGORY_NAMES=os.getenv(
+            "SQUARE_SLICE_CATEGORY_NAMES", "Slice,Slices"
+        ),
+        SQUARE_SLICE_ITEM_KEYWORDS=os.getenv(
+            "SQUARE_SLICE_ITEM_KEYWORDS", "slice,slices"
+        ),
         SQUARE_HIDDEN_ITEM_KEYWORDS=os.getenv(
             "SQUARE_HIDDEN_ITEM_KEYWORDS", "drink,beverage,coke,soda,water"
         ),

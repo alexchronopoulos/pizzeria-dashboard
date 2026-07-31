@@ -19,6 +19,84 @@ def production_display_name(name: str) -> str:
     return compact or value
 
 
+_TICKET_TIME = r"(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)(?:\s*(?P<meridiem>[ap])\.?m\.?)?"
+_TICKET_TIME_TOKEN = re.compile(
+    rf"(?<!\d){_TICKET_TIME}(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def parse_ticket_pickup_time(
+    ticket_name: str | None,
+    service_date: date,
+    pickup_times: Iterable[datetime],
+    *,
+    reference_at: datetime | None = None,
+) -> datetime | None:
+    """Parse a leading or trailing ticket-name time into a configured slot.
+
+    Counter staff can enter names such as ``Sam 7:30`` or ``5:45 Peter``. A
+    time without AM/PM is resolved only against the configured slots for that
+    service date. This avoids guessing that dinner times are AM and prevents an
+    arbitrary number elsewhere in a ticket name from becoming a pickup time.
+    """
+    value = str(ticket_name or "").strip()
+    if not value:
+        return None
+
+    # Square ticket names can contain non-breaking spaces or full-width colons
+    # depending on the device/keyboard used at the counter.
+    value = value.replace("\u00a0", " ").replace("：", ":")
+    match = _TICKET_TIME_TOKEN.search(value)
+    if match is None:
+        return None
+
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    meridiem = (match.group("meridiem") or "").casefold()
+
+    if meridiem:
+        if not 1 <= hour <= 12:
+            return None
+        converted_hour = (
+            0
+            if hour == 12 and meridiem == "a"
+            else 12
+            if hour == 12 and meridiem == "p"
+            else hour + 12
+            if meridiem == "p"
+            else hour
+        )
+        candidate_hours = (converted_hour,)
+    elif hour == 0 or hour > 12:
+        candidate_hours = (hour,)
+    elif hour == 12:
+        candidate_hours = (0, 12)
+    else:
+        candidate_hours = (hour, hour + 12)
+
+    configured_slots = tuple(
+        slot
+        for slot in pickup_times
+        if _service_wall_time(slot).date() == service_date
+        and _service_wall_time(slot).minute == minute
+        and _service_wall_time(slot).hour in candidate_hours
+    )
+    if not configured_slots:
+        return None
+    if len(configured_slots) == 1 or reference_at is None:
+        return configured_slots[0]
+
+    reference = _service_wall_time(reference_at)
+    return min(
+        configured_slots,
+        key=lambda slot: (
+            0 if _service_wall_time(slot) >= reference else 1,
+            abs((_service_wall_time(slot) - reference).total_seconds()),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Modifier:
     name: str
@@ -144,8 +222,16 @@ class Order:
 
     @property
     def production_items(self) -> tuple[Item, ...]:
-        """Items that require attention on the production dashboard."""
-        return tuple(item for item in self.items if item.category != "drink")
+        """Items that require attention on the production dashboard.
+
+        Drinks and individual slices stay in the cached Square order and order
+        inspector, but do not belong on the whole-pie production board. A mixed
+        walk-in therefore remains visible when it includes a pie, while its slice
+        line items are omitted.
+        """
+        return tuple(
+            item for item in self.items if item.category not in {"drink", "slice"}
+        )
 
     @property
     def pizza_units(self) -> int:
@@ -154,7 +240,8 @@ class Order:
     @property
     def cookie_count(self) -> int:
         return sum(
-            item.cookie_units + item.modifier_cookie_units for item in self.items
+            item.cookie_units + item.modifier_cookie_units
+            for item in self.production_items
         )
 
     @property
@@ -164,7 +251,7 @@ class Order:
     @property
     def salad_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
-        for item in self.items:
+        for item in self.production_items:
             counts.update(item.salad_counts)
         return counts
 
@@ -186,7 +273,7 @@ class Order:
     @property
     def side_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
-        for item in self.items:
+        for item in self.production_items:
             counts.update(item.side_counts)
         return counts
 
@@ -342,18 +429,31 @@ def build_service_board(
     orders: Iterable[Order],
     pizza_capacity_per_window: int = 3,
     pickup_times: Iterable[datetime] = (),
-    walk_in_assignments: Mapping[str, datetime] | None = None,
+    walk_in_assignments: Mapping[str, datetime | None] | None = None,
 ) -> ServiceBoard:
     walk_in_assignments = walk_in_assignments or {}
+    configured_pickup_times = tuple(pickup_times)
     grouped: dict[datetime, list[Order]] = defaultdict(list)
     unscheduled: list[Order] = []
-    for pickup_at in pickup_times:
+    for pickup_at in configured_pickup_times:
         grouped[_service_wall_time(pickup_at)]
     for order in orders:
         if not order.production_items:
             continue
         if order.is_walk_in:
-            assigned_pickup_at = walk_in_assignments.get(order.order_id)
+            if order.order_id in walk_in_assignments:
+                assigned_pickup_at = walk_in_assignments[order.order_id]
+            else:
+                assigned_pickup_at = parse_ticket_pickup_time(
+                    order.ticket_name or order.customer_name,
+                    service_date,
+                    configured_pickup_times,
+                    reference_at=(
+                        order.source_closed_at
+                        or order.source_created_at
+                        or order.pickup_at
+                    ),
+                )
             if assigned_pickup_at is None:
                 unscheduled.append(order)
                 continue

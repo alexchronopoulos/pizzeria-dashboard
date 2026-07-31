@@ -6,6 +6,7 @@ from pizzeria_dashboard.domain import (
     Modifier,
     Order,
     build_service_board,
+    parse_ticket_pickup_time,
     production_display_name,
 )
 
@@ -138,3 +139,87 @@ def test_walk_ins_stay_unscheduled_until_locally_assigned() -> None:
     assert assigned.unscheduled_orders == ()
     assert assigned.windows[0].orders == (walk_in,)
     assert assigned.windows[0].pizza_units == 2
+
+
+def test_slice_only_walk_in_is_hidden_but_mixed_walk_in_remains() -> None:
+    service_date = date(2026, 7, 31)
+    event_at = datetime(2026, 7, 31, 13, 15, tzinfo=ZoneInfo("America/New_York"))
+    slice_only = Order(
+        "slice-only",
+        "Counter 1",
+        event_at,
+        (Item("Plain Slice", 2, "slice"),),
+        is_walk_in=True,
+    )
+    mixed = Order(
+        "mixed",
+        "Counter 2",
+        event_at,
+        (
+            Item("Plain Pie", 1, "pizza"),
+            Item("Plain Slice", 1, "slice"),
+        ),
+        is_walk_in=True,
+    )
+
+    board = build_service_board(service_date, (slice_only, mixed))
+
+    assert board.unscheduled_orders == (mixed,)
+    assert mixed.production_items == (mixed.items[0],)
+    assert slice_only.production_items == ()
+
+
+def test_ticket_name_times_resolve_against_configured_slots() -> None:
+    service_date = date(2026, 7, 31)
+    slots = (
+        datetime(2026, 7, 31, 11, 30),
+        datetime(2026, 7, 31, 17, 45),
+        datetime(2026, 7, 31, 19, 30),
+    )
+
+    assert parse_ticket_pickup_time("Sam 7:30", service_date, slots) == slots[2]
+    assert parse_ticket_pickup_time("5:45 Peter", service_date, slots) == slots[1]
+    assert parse_ticket_pickup_time("11:30 AM Jamie", service_date, slots) == slots[0]
+    assert parse_ticket_pickup_time("Sam order 42", service_date, slots) is None
+    assert parse_ticket_pickup_time("Sam 7:32", service_date, slots) is None
+    assert parse_ticket_pickup_time("Sam — pickup 7:30 PM please", service_date, slots) == slots[2]
+    assert parse_ticket_pickup_time("Sam 7：30", service_date, slots) == slots[2]
+
+
+def test_ticket_name_auto_assigns_walk_in_but_manual_override_wins() -> None:
+    service_date = date(2026, 7, 31)
+    parsed_slot = datetime(2026, 7, 31, 19, 30)
+    manual_slot = datetime(2026, 7, 31, 18, 0)
+    walk_in = Order(
+        "walk-in-ticket-time",
+        "Sam 7:30",
+        datetime(2026, 7, 31, 13, 7),
+        (Item("Plain Pie", 1, "pizza"),),
+        is_walk_in=True,
+        ticket_name="Sam 7:30",
+    )
+
+    automatic = build_service_board(
+        service_date,
+        (walk_in,),
+        pickup_times=(manual_slot, parsed_slot),
+    )
+    assert automatic.unscheduled_orders == ()
+    assert automatic.windows[1].orders == (walk_in,)
+
+    overridden = build_service_board(
+        service_date,
+        (walk_in,),
+        pickup_times=(manual_slot, parsed_slot),
+        walk_in_assignments={walk_in.order_id: manual_slot},
+    )
+    assert overridden.windows[0].orders == (walk_in,)
+    assert overridden.windows[1].orders == ()
+
+    forced_unscheduled = build_service_board(
+        service_date,
+        (walk_in,),
+        pickup_times=(manual_slot, parsed_slot),
+        walk_in_assignments={walk_in.order_id: None},
+    )
+    assert forced_unscheduled.unscheduled_orders == (walk_in,)

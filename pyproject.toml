@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pizzeria-dashboard"
-version = "0.3.11"
+version = "0.3.19"
 description = "A local production dashboard for Pizzeria Mari."
 readme = "README.md"
 requires-python = ">=3.13"

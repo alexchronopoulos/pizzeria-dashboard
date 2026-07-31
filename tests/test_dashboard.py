@@ -48,6 +48,8 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert "Friday, July 31, 2026" not in visible_text
     assert b"Sample + SQLite" in response.data
     assert b'class="masthead-tools masthead-tools--single-row"' in response.data
+    assert b"Pizzeria Mari Production Dashboard" in response.data
+    assert response.data.index(b"Pizzeria Mari Production Dashboard") < response.data.index(b'id="service-date"')
     assert b"Tomato Pie" in response.data
     assert b"Receipt FCMu" not in response.data
     assert b"3 pizzas" in response.data
@@ -84,8 +86,12 @@ def test_open_capacity_card_lists_one_and_two_pie_slots(tmp_path: Path) -> None:
     assert b"2-pie orders" in response.data
     assert b"1-pie orders" in response.data
     assert b'aria-label="Slots available for one-pie orders"' in response.data
-    assert b'datetime="2026-07-31T16:30:00"' in response.data
-    assert b'datetime="2026-07-31T17:30:00"' in response.data
+    assert b'data-capacity-drop-zone' in response.data
+    assert b'data-open-pizza-spaces="2"' in response.data
+    assert b'data-open-pizza-spaces="1"' in response.data
+    assert b'data-pickup-at="2026-07-31T16:30:00"' in response.data
+    assert b'data-pickup-at="2026-07-31T17:30:00"' in response.data
+    assert b'Drop a walk-in order here to assign' in response.data
 
 
 def test_modifiers_and_salads_render_from_cached_documents(tmp_path: Path) -> None:
@@ -198,7 +204,7 @@ def test_order_cards_open_the_details_dialog(tmp_path: Path) -> None:
     assert b'dashboard.js' in response.data
 
 
-def test_sample_order_details_include_hidden_items_and_cached_json(tmp_path: Path) -> None:
+def test_sample_order_details_load_debug_data_separately(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     client = app.test_client()
     client.get("/?date=2026-07-31")
@@ -213,10 +219,22 @@ def test_sample_order_details_include_hidden_items_and_cached_json(tmp_path: Pat
 
     assert response.status_code == 200
     assert b"Alex R." in response.data
-    assert b"Receipt FCMu" in response.data
-    assert b"Mexican Coke" in response.data
-    assert b"Cached dashboard document" in response.data
-    assert b"sample data" in response.data
+    assert b"Pickup time" in response.data
+    assert b"Debug" in response.data
+    assert b"Mexican Coke" not in response.data
+    assert b"Cached dashboard document" not in response.data
+
+    debug = client.get(
+        "/order-debug",
+        query_string={
+            "date": "2026-07-31",
+            "order_id": "sample-2026-07-31-PM-1042",
+        },
+    )
+    assert debug.status_code == 200
+    assert b"Mexican Coke" in debug.data
+    assert b"Cached dashboard document" in debug.data
+    assert b"sample data" in debug.data
 
 
 def test_guest_order_details_fetch_live_square_order_and_payment(
@@ -291,14 +309,20 @@ def test_guest_order_details_fetch_live_square_order_and_payment(
         source="square",
     )
 
-    response = app.test_client().get(
+    client = app.test_client()
+    details = client.get(
         "/order-details",
+        query_string={"date": "2026-07-31", "order_id": "cache-guest"},
+    )
+    assert details.status_code == 200
+    assert b"SQUARE_ONLINE" not in details.data
+
+    response = client.get(
+        "/order-debug",
         query_string={"date": "2026-07-31", "order_id": "cache-guest"},
     )
 
     assert response.status_code == 200
-    assert b"Guest debugging clues" in response.data
-    assert b"No display name" in response.data
     assert b"SQUARE_ONLINE" in response.data
     assert b"CUSTOMER-1" in response.data
     assert b"payment-1" in response.data
@@ -537,7 +561,9 @@ def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
     assert "Ticket 42" in visible_text
     assert "Paid 1:07 PM" in visible_text
     assert b'data-walk-in-order-id="walk-in-square-1"' in response.data
+    assert b'data-walk-in-pizza-units="2"' in response.data
     assert b'data-walk-in-drop-zone' in response.data
+    assert b'data-capacity-drop-zone' in response.data
 
     assigned = client.post(
         "/walk-in-assignment",
@@ -606,3 +632,70 @@ def test_walk_in_assignment_rejects_non_service_slot(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "Choose one of the configured service slots."
+
+
+def test_ticket_name_auto_assigns_walk_in_and_modal_can_override_slot(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    from pizzeria_dashboard.database import (
+        load_order_slot_assignment_overrides,
+        replace_orders_for_date,
+    )
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    walk_in = Order(
+        order_id="walk-in-ticket-time",
+        customer_name="Sam 7:30",
+        pickup_at=datetime.fromisoformat("2026-07-31T13:07:00-04:00"),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="walk-in-ticket-time",
+        is_walk_in=True,
+        source_created_at=datetime.fromisoformat("2026-07-31T13:05:00-04:00"),
+        source_closed_at=datetime.fromisoformat("2026-07-31T13:07:00-04:00"),
+        ticket_name="Sam 7:30",
+    )
+    replace_orders_for_date(database_path, selected, (walk_in,), source="square")
+
+    client = app.test_client()
+    response = client.get("/?date=2026-07-31")
+    html = response.get_data(as_text=True)
+    slot_start = html.index('data-pickup-at="2026-07-31T19:30:00"')
+    slot_end = html.find('class="pickup-window', slot_start + 1)
+    slot_html = html[slot_start : slot_end if slot_end != -1 else None]
+    assert 'data-walk-in-order-id="walk-in-ticket-time"' in slot_html
+    assert 'data-order-details-trigger' in slot_html
+    assert "0 waiting" in _visible_text(response)
+
+    details = client.get(
+        "/order-details",
+        query_string={"date": "2026-07-31", "order_id": walk_in.order_id},
+    )
+    details_html = details.get_data(as_text=True)
+    assert details.status_code == 200
+    assert 'data-walk-in-assignment-form' in details_html
+    assert 'value="2026-07-31T19:30:00"' in details_html
+    assert "Automatically parsed from the Ticket Name" in details_html
+    assert ">7:30 PM</option>" in details_html
+
+    unassigned = client.post(
+        "/walk-in-assignment",
+        json={
+            "service_date": "2026-07-31",
+            "order_id": walk_in.order_id,
+            "pickup_at": "",
+        },
+    )
+    assert unassigned.status_code == 200
+    assert load_order_slot_assignment_overrides(database_path, selected) == {
+        walk_in.order_id: None
+    }
+
+    after = client.get("/?date=2026-07-31")
+    after_text = _visible_text(after)
+    assert "1 waiting" in after_text
+    assert "Sam 7:30" in after_text

@@ -21,6 +21,8 @@ class ClassificationRules:
         "beverages",
     )
     pizza_item_keywords: tuple[str, ...] = ("pizza", "pie")
+    slice_category_names: tuple[str, ...] = ("slice", "slices")
+    slice_item_keywords: tuple[str, ...] = ("slice", "slices")
     hidden_item_keywords: tuple[str, ...] = (
         "drink",
         "beverage",
@@ -46,6 +48,12 @@ class ClassificationRules:
             ),
             pizza_item_keywords=_csv(
                 values.get("SQUARE_PIZZA_ITEM_KEYWORDS"), ("pizza", "pie")
+            ),
+            slice_category_names=_csv(
+                values.get("SQUARE_SLICE_CATEGORY_NAMES"), ("Slice", "Slices")
+            ),
+            slice_item_keywords=_csv(
+                values.get("SQUARE_SLICE_ITEM_KEYWORDS"), ("slice", "slices")
             ),
             hidden_item_keywords=_csv(
                 values.get("SQUARE_HIDDEN_ITEM_KEYWORDS"),
@@ -73,10 +81,20 @@ class ClassificationRules:
         normalized_categories = tuple(_normalize(value) for value in category_names)
         hidden_categories = tuple(_normalize(value) for value in self.hidden_category_names)
         pizza_categories = tuple(_normalize(value) for value in self.pizza_category_names)
+        slice_categories = tuple(_normalize(value) for value in self.slice_category_names)
         cookie_categories = tuple(_normalize(value) for value in self.cookie_category_names)
+        normalized_name = _normalize(name)
 
         if _contains_configured_value(normalized_categories, hidden_categories):
             return "drink"
+        # POS slice items can share reporting categories with whole pies. Check
+        # both the explicit slice category and the item name before pizza
+        # categories so mixed pie-and-slice orders keep the pie but suppress the
+        # slice from the production dashboard.
+        if _contains_configured_value(normalized_categories, slice_categories):
+            return "slice"
+        if _matches_configured_keyword(normalized_name, self.slice_item_keywords):
+            return "slice"
         if _contains_configured_value(normalized_categories, pizza_categories):
             return "pizza"
         if _contains_configured_value(normalized_categories, cookie_categories):
@@ -95,6 +113,12 @@ class ClassificationRules:
         if any(
             _normalize(keyword) in category_name
             for category_name in normalized_categories
+            for keyword in self.slice_item_keywords
+        ):
+            return "slice"
+        if any(
+            _normalize(keyword) in category_name
+            for category_name in normalized_categories
             for keyword in self.pizza_item_keywords
         ):
             return "pizza"
@@ -105,7 +129,6 @@ class ClassificationRules:
         ):
             return "cookie"
 
-        normalized_name = _normalize(name)
         if any(_normalize(keyword) in normalized_name for keyword in self.hidden_item_keywords):
             return "drink"
         if any(_normalize(keyword) in normalized_name for keyword in self.pizza_item_keywords):
@@ -199,6 +222,34 @@ def pull_square_orders_for_date(
     )
 
     warnings: list[str] = []
+    # SearchOrders can omit ticket_name for completed counter orders even though
+    # RetrieveOrder returns it. Enrich only likely walk-ins that are missing the
+    # field so Ticket Names such as "Sam 7:45" can drive automatic placement.
+    retrieve_order = getattr(client, "retrieve_order", None)
+    if callable(retrieve_order):
+        enriched_orders: list[Mapping[str, object]] = []
+        for raw_order in raw_orders:
+            state = str(raw_order.get("state", "")).upper()
+            has_ticket_name = bool(str(raw_order.get("ticket_name", "")).strip())
+            fulfillments = _mapping_list(raw_order.get("fulfillments"))
+            has_pickup_at = any(
+                isinstance(f.get("pickup_details"), Mapping)
+                and bool(str(f["pickup_details"].get("pickup_at", "")).strip())
+                for f in fulfillments
+            )
+            if state == "COMPLETED" and not has_ticket_name and not has_pickup_at:
+                order_id = _optional_string(raw_order.get("id"))
+                if order_id:
+                    try:
+                        raw_order = retrieve_order(order_id)
+                    except SquareAPIError as exc:
+                        warnings.append(
+                            f"Could not retrieve full walk-in order {order_id}; "
+                            f"Ticket Name parsing may be unavailable. Square said: {exc}"
+                        )
+            enriched_orders.append(raw_order)
+        raw_orders = tuple(enriched_orders)
+
     try:
         catalog_index = build_catalog_index(client, raw_orders)
         modifier_index = build_modifier_index(client, raw_orders)
@@ -505,11 +556,12 @@ def convert_square_orders(
 
         raw_fulfillments = _mapping_list(raw_order.get("fulfillments"))
         matching_fulfillments: list[tuple[Mapping[str, object], datetime]] = []
-        has_pickup_fulfillment = False
+        has_pickup_time = False
+        has_non_pickup_fulfillment = False
         for fulfillment in raw_fulfillments:
             if str(fulfillment.get("type", "")) != "PICKUP":
+                has_non_pickup_fulfillment = True
                 continue
-            has_pickup_fulfillment = True
             state = str(fulfillment.get("state", ""))
             if state in {"CANCELED", "FAILED"}:
                 continue
@@ -519,12 +571,17 @@ def convert_square_orders(
             pickup_at = _parse_square_datetime(pickup_details.get("pickup_at"))
             if pickup_at is None:
                 continue
+            has_pickup_time = True
             local_pickup_at = pickup_at.astimezone(timezone)
             if local_pickup_at.date() == service_date:
                 matching_fulfillments.append((fulfillment, local_pickup_at))
 
-        source_created_at = _parse_square_datetime(raw_order.get("created_at"))
-        source_closed_at = _parse_square_datetime(raw_order.get("closed_at"))
+        source_created_at = _parse_square_datetime(
+            raw_order.get("created_at"), timezone=timezone
+        )
+        source_closed_at = _parse_square_datetime(
+            raw_order.get("closed_at"), timezone=timezone
+        )
         creation_product = _creation_product(raw_order)
         ticket_name = _optional_string(raw_order.get("ticket_name"))
 
@@ -577,7 +634,7 @@ def convert_square_orders(
                     fulfillment_uid=uid,
                     fulfillment_state=fulfillment_state,
                     source_updated_at=_parse_square_datetime(
-                        raw_order.get("updated_at")
+                        raw_order.get("updated_at"), timezone=timezone
                     ),
                     source_created_at=source_created_at,
                     source_closed_at=source_closed_at,
@@ -586,7 +643,11 @@ def convert_square_orders(
                 )
             )
 
-        if matching_fulfillments or has_pickup_fulfillment:
+        # Any order with a real pickup timestamp belongs to the scheduled
+        # fulfillment path, even when that pickup is for another service date.
+        # A completed order whose pickup fulfillment exists but has no pickup_at
+        # is intentionally treated as unscheduled so it can be assigned locally.
+        if matching_fulfillments or has_pickup_time:
             continue
 
         walk_in_at = _walk_in_event_at(
@@ -597,17 +658,7 @@ def convert_square_orders(
         receipt_number = _receipt_number_for_order(
             raw_order, square_order_id, receipt_numbers_by_order_id
         )
-        if (
-            walk_in_at is None
-            or raw_fulfillments
-            or not _is_walk_in_order(
-                raw_order,
-                square_order_id=square_order_id,
-                paid_order_ids=paid_order_ids,
-                payment_product=payment_products_by_order_id.get(square_order_id),
-                has_receipt=receipt_number is not None,
-            )
-        ):
+        if walk_in_at is None or has_non_pickup_fulfillment:
             continue
 
         items = _convert_line_items(
@@ -630,7 +681,9 @@ def convert_square_orders(
                 location_id=_optional_string(raw_order.get("location_id")),
                 fulfillment_uid=None,
                 fulfillment_state=None,
-                source_updated_at=_parse_square_datetime(raw_order.get("updated_at")),
+                source_updated_at=_parse_square_datetime(
+                    raw_order.get("updated_at"), timezone=timezone
+                ),
                 is_walk_in=True,
                 source_created_at=source_created_at,
                 source_closed_at=source_closed_at,
@@ -721,87 +774,6 @@ def _creation_product(raw_order: Mapping[str, object]) -> str | None:
     return None
 
 
-_NON_WALK_IN_PRODUCTS = {
-    "APPOINTMENTS",
-    "BILLING",
-    "EXTERNAL_API",
-    "INVOICES",
-    "ONLINE_STORE",
-    "PAYROLL",
-}
-
-
-def _is_walk_in_order(
-    raw_order: Mapping[str, object],
-    *,
-    square_order_id: str,
-    paid_order_ids: set[str],
-    payment_product: str | None,
-    has_receipt: bool,
-) -> bool:
-    """Identify paid counter orders even when Square omits a product enum.
-
-    Some Square POS orders expose only a generic creation source name of
-    ``Order``. A completed order with no fulfillment is therefore treated as a
-    walk-in when it has payment evidence, unless Square explicitly identifies
-    an online, invoice, appointment, or other non-counter source.
-    """
-    creation_product = (_creation_product(raw_order) or "").upper()
-    latest_product = _source_product(raw_order, "source")
-    normalized_payment_product = (payment_product or "").upper()
-
-    if "SQUARE_POS" in {creation_product, latest_product, normalized_payment_product}:
-        return True
-    if creation_product in _NON_WALK_IN_PRODUCTS:
-        return False
-
-    source_names: list[str] = []
-    for key in ("creation_source", "source"):
-        source = raw_order.get(key)
-        if not isinstance(source, Mapping):
-            continue
-        source_name = _normalize(str(source.get("name", "")))
-        if source_name:
-            source_names.append(source_name)
-
-    explicit_non_counter_markers = (
-        "square online",
-        "online store",
-        "invoice",
-        "appointment",
-        "payment link",
-        "checkout api",
-    )
-    if any(
-        marker in source_name
-        for source_name in source_names
-        for marker in explicit_non_counter_markers
-    ):
-        return False
-
-    if any(
-        marker in source_name
-        for source_name in source_names
-        for marker in ("square point of sale", "square pos", "register")
-    ):
-        return True
-
-    has_tender = bool(_mapping_list(raw_order.get("tenders")))
-    has_payment_evidence = (
-        square_order_id in paid_order_ids or has_receipt or has_tender
-    )
-    generic_order_source = any(name == "order" for name in source_names)
-    return has_payment_evidence and (generic_order_source or not creation_product)
-
-
-def _source_product(
-    raw_order: Mapping[str, object], key: str
-) -> str:
-    source = raw_order.get(key)
-    if not isinstance(source, Mapping):
-        return ""
-    return (_optional_string(source.get("product")) or "").upper()
-
 
 def _walk_in_event_at(
     raw_order: Mapping[str, object],
@@ -809,15 +781,42 @@ def _walk_in_event_at(
     service_date: date,
     timezone: ZoneInfo,
 ) -> datetime | None:
+    """Return the local event time for an unscheduled completed order.
+
+    Counter orders are not required to expose a useful source label, payment
+    association, receipt number, or pickup fulfillment. The operational signal
+    is simply that the order is completed, has no actual pickup timestamp, and
+    was either created or closed on the selected local service date.
+
+    Prefer ``closed_at`` for display because it is closest to the payment time.
+    When it belongs to another day, still accept ``created_at`` if that timestamp
+    falls on the selected service date.
+    """
     if str(raw_order.get("state", "")).upper() != "COMPLETED":
         return None
-    event_at = _parse_square_datetime(raw_order.get("closed_at"))
-    if event_at is None:
-        event_at = _parse_square_datetime(raw_order.get("created_at"))
-    if event_at is None:
-        return None
-    local_event_at = event_at.astimezone(timezone)
-    return local_event_at if local_event_at.date() == service_date else None
+
+    local_closed_at = _parse_square_datetime(
+        raw_order.get("closed_at"), timezone=timezone
+    )
+    if local_closed_at is not None and local_closed_at.date() == service_date:
+        return local_closed_at
+
+    local_created_at = _parse_square_datetime(
+        raw_order.get("created_at"), timezone=timezone
+    )
+    if local_created_at is not None and local_created_at.date() == service_date:
+        return local_created_at
+
+    return None
+
+
+def _matches_configured_keyword(value: str, keywords: Sequence[str]) -> bool:
+    """Return whether a normalized value contains a configured whole phrase."""
+    return any(
+        bool(re.search(rf"\b{re.escape(normalized)}\b", value))
+        for keyword in keywords
+        if (normalized := _normalize(keyword))
+    )
 
 
 def _csv(value: object, default: Sequence[str]) -> tuple[str, ...]:
@@ -874,7 +873,9 @@ def _quantity(value: object) -> int:
     return max(int(quantity), 1)
 
 
-def _parse_square_datetime(value: object) -> datetime | None:
+def _parse_square_datetime(
+    value: object, *, timezone: ZoneInfo | None = None
+) -> datetime | None:
     if not value:
         return None
     text = str(value)
@@ -886,6 +887,8 @@ def _parse_square_datetime(value: object) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
+    if timezone is not None:
+        return parsed.astimezone(timezone)
     return parsed
 
 

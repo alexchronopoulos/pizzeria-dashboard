@@ -1895,6 +1895,13 @@ h2 {
     gap: 8px;
 }
 
+.compact-dashboard-title {
+    margin: 0 auto 0 0;
+    font-size: clamp(1rem, 1.8vw, 1.35rem);
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
 .masthead-tools--single-row .date-navigation {
     align-items: center;
 }
@@ -1911,6 +1918,11 @@ h2 {
     .masthead-tools--single-row {
         display: flex;
         justify-content: flex-start;
+    }
+
+    .compact-dashboard-title {
+        flex: 1 1 100%;
+        white-space: normal;
     }
 
     .masthead-tools--single-row .date-navigation {
@@ -2055,4 +2067,152 @@ h2 {
         border-top: 2px solid var(--black);
         border-left: 7px solid var(--brand-orange);
     }
+}
+
+/* Sprint 3.8: ticket-name pickup parsing and modal slot editor. */
+.walk-in-slot-editor {
+    background: var(--brand-cream);
+}
+
+.walk-in-slot-editor-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.walk-in-slot-editor-heading h3,
+.walk-in-slot-editor-heading p {
+    margin: 0;
+}
+
+.walk-in-slot-editor-heading p {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.ticket-name-preview {
+    max-width: 42%;
+    padding: 6px 9px;
+    border: 2px solid var(--black);
+    border-radius: 999px;
+    background: var(--brand-yellow);
+    font-size: 0.76rem;
+    font-weight: 900;
+    overflow-wrap: anywhere;
+}
+
+.walk-in-slot-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto minmax(80px, auto);
+    align-items: end;
+    gap: 10px;
+}
+
+.walk-in-slot-form label {
+    display: grid;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.walk-in-slot-form select,
+.walk-in-slot-form button {
+    min-height: 42px;
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 900;
+}
+
+.walk-in-slot-form select {
+    width: 100%;
+    padding: 7px 10px;
+    background: white;
+}
+
+.walk-in-slot-form button {
+    padding: 7px 13px;
+    background: var(--brand-blue);
+    color: white;
+    cursor: pointer;
+}
+
+.walk-in-slot-form button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.walk-in-slot-status {
+    align-self: center;
+    color: var(--brand-blue);
+    font-size: 0.78rem;
+    font-weight: 900;
+}
+
+@media (max-width: 760px) {
+    .walk-in-slot-editor-heading {
+        display: grid;
+    }
+
+    .ticket-name-preview {
+        max-width: none;
+        width: fit-content;
+    }
+
+    .walk-in-slot-form {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+}
+
+/* Sprint 3.8.1: reliable order inspector trigger. */
+.order-details-trigger {
+    border: 0;
+    border-bottom: 1px solid currentColor;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.order-details-trigger:hover,
+.order-details-trigger:focus-visible {
+    opacity: 0.72;
+}
+
+.order-detail-tabs { display:flex; gap:.5rem; margin-bottom:1rem; border-bottom:1px solid var(--line, #d7d0c7); }
+.order-detail-tab { border:0; background:transparent; padding:.7rem .9rem; font-weight:700; cursor:pointer; }
+.order-detail-tab.is-active { border-bottom:3px solid currentColor; }
+.order-detail-panel[hidden] { display:none !important; }
+.order-detail-panel pre { max-height:65vh; overflow:auto; white-space:pre-wrap; }
+
+/* Sprint 3.8.4: assign walk-ins from the compact capacity card. */
+.availability-slot-drop {
+    cursor: copy;
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+
+.availability-slot-drop.walk-in-drop-zone--active {
+    outline: 4px solid var(--brand-orange);
+    outline-offset: 1px;
+    box-shadow: 0 0 0 4px rgba(244, 135, 54, 0.25);
+    transform: translateY(-2px) scale(1.06);
+}
+
+.availability-slot-drop.walk-in-drop-zone--unavailable {
+    cursor: not-allowed;
+    opacity: 0.35;
+    filter: grayscale(0.8);
 }

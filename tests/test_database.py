@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pizzeria_dashboard.database import (
     initialize_database,
+    load_order_slot_assignment_overrides,
     load_order_slot_assignments,
     load_order_for_date,
     load_orders_for_date,
@@ -166,3 +167,16 @@ def test_legacy_date_based_json_state_migrates_once(tmp_path: Path) -> None:
     payload = load_service_state_payload(database_path, date(2026, 7, 31))
     assert payload is not None
     assert payload["dough_balls_prepared"] == 30
+
+
+def test_explicit_unscheduled_override_is_preserved_separately(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 7, 31)
+    initialize_database(database_path)
+
+    save_order_slot_assignment(database_path, service_date, "walk-in-1", None)
+
+    assert load_order_slot_assignments(database_path, service_date) == {}
+    assert load_order_slot_assignment_overrides(database_path, service_date) == {
+        "walk-in-1": None
+    }
