@@ -55,7 +55,21 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b'class="masthead-tools masthead-tools--single-row"' in response.data
     assert b"Pizzeria Mari Production Dashboard" in response.data
     assert response.data.index(b"Pizzeria Mari Production Dashboard") < response.data.index(b'id="service-date"')
-    assert b"Tomato Pie" in response.data
+    assert "Tomato Pie" in visible_text
+    assert "Pie breakdown" in visible_text
+    assert "16 total" in visible_text
+    assert b'class="pizza-summary-card"' not in response.data
+    dough_card_start = response.data.index(b'class="operations-card operations-card--dough"')
+    dough_card_end = response.data.index(b'class="operations-card operations-card--salads"')
+    dough_card_html = response.data[dough_card_start:dough_card_end]
+    assert "5× Plain Pie".encode() in dough_card_html
+    assert "5× Plain Pie" in visible_text
+    assert "4× Tomato Pie" in visible_text
+    assert "4× Weekly Special" in visible_text
+    assert "3× White Pie" in visible_text
+    assert dough_card_html.index("5× Plain Pie".encode()) < dough_card_html.index("4× Tomato Pie".encode())
+    assert dough_card_html.index("4× Tomato Pie".encode()) < dough_card_html.index("4× Weekly Special".encode())
+    assert dough_card_html.index("4× Weekly Special".encode()) < dough_card_html.index("3× White Pie".encode())
     assert b"Receipt FCMu" not in response.data
     assert b"3 pizzas" in response.data
     assert response.data.count(b'class="pickup-window') == 16

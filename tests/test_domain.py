@@ -246,3 +246,73 @@ def test_walk_in_display_name_keeps_ticket_name_unchanged() -> None:
     )
 
     assert order.display_customer_name == "Sam 7:45"
+
+
+def test_pizza_summary_aggregates_whole_pies_across_all_orders() -> None:
+    service_date = date(2026, 7, 31)
+    scheduled_slot = datetime(2026, 7, 31, 16, 0)
+    orders = (
+        Order(
+            "scheduled-1",
+            "Alex",
+            scheduled_slot,
+            (
+                Item("Collar City", 2, "pizza"),
+                Item("Plain Slice", 3, "slice"),
+            ),
+        ),
+        Order(
+            "scheduled-2",
+            "Tim",
+            scheduled_slot,
+            (Item("Cherry Tomato (local tomatoes)", 1, "pizza"),),
+        ),
+        Order(
+            "walk-in-1",
+            "Sam 7:30",
+            datetime(2026, 7, 31, 13, 0),
+            (
+                Item("Collar City", 1, "pizza"),
+                Item("Cookie", 2, "cookie"),
+            ),
+            is_walk_in=True,
+            ticket_name="Sam 7:30",
+        ),
+    )
+
+    board = build_service_board(
+        service_date,
+        orders,
+        pickup_times=(scheduled_slot, datetime(2026, 7, 31, 19, 30)),
+    )
+
+    assert board.total_pizzas == 4
+    assert board.pizza_summary == (
+        ("Collar City", 3),
+        ("Cherry Tomato", 1),
+    )
+
+
+def test_pizza_summary_breaks_quantity_ties_by_item_name() -> None:
+    service_date = date(2026, 7, 31)
+    slot = datetime(2026, 7, 31, 16, 0)
+    orders = (
+        Order(
+            "summary-sort",
+            "Alex",
+            slot,
+            (
+                Item("Plain Pie", 2, "pizza"),
+                Item("Cherry Tomato", 2, "pizza"),
+                Item("Collar City", 3, "pizza"),
+            ),
+        ),
+    )
+
+    board = build_service_board(service_date, orders, pickup_times=(slot,))
+
+    assert board.pizza_summary == (
+        ("Collar City", 3),
+        ("Cherry Tomato", 2),
+        ("Plain Pie", 2),
+    )

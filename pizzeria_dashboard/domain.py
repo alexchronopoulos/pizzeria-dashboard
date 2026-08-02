@@ -395,6 +395,35 @@ class ServiceBoard:
         return sum(order.pizza_units for order in self.all_orders)
 
     @property
+    def pizza_counts(self) -> Counter[str]:
+        """Whole-pie quantities grouped by their compact kitchen name.
+
+        Include scheduled and unscheduled production orders for the selected
+        service date. Individual slices and non-pizza items are excluded by the
+        item category, while trailing parenthetical descriptions are collapsed
+        through ``production_display_name``.
+        """
+        counts: Counter[str] = Counter()
+        for order in self.all_orders:
+            for item in order.production_items:
+                if item.category == "pizza":
+                    counts[item.display_name] += item.quantity
+        return counts
+
+    @property
+    def pizza_summary(self) -> tuple[tuple[str, int], ...]:
+        """Pizza totals ordered by quantity, then alphabetically.
+
+        Apply the two criteria as explicit stable sorts: item name first as the
+        tie-breaker, then quantity descending as the primary key. This keeps the
+        highest-demand pies at the top while ordering equal counts by name.
+        """
+        summary = list(self.pizza_counts.items())
+        summary.sort(key=lambda entry: entry[0].casefold())
+        summary.sort(key=lambda entry: entry[1], reverse=True)
+        return tuple(summary)
+
+    @property
     def salad_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
         for order in self.all_orders:

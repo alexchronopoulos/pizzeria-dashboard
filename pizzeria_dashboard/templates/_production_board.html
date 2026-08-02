@@ -127,6 +127,21 @@
             <span aria-hidden="true">−</span>
             <span><strong>{{ inventory.dough_ordered }}</strong> pizzas ordered</span>
         </div>
+        <div class="dough-pizza-breakdown" aria-labelledby="dough-pizza-breakdown-heading">
+            <div class="dough-pizza-breakdown-heading">
+                <strong id="dough-pizza-breakdown-heading">Pie breakdown</strong>
+                <span>{{ service.total_pizzas }} total</span>
+            </div>
+            {% if service.pizza_summary %}
+            <ul class="dough-pizza-list">
+                {% for pizza_name, pizza_count in service.pizza_summary %}
+                <li>{{ pizza_count }}× {{ pizza_name }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="dough-pizza-empty">No whole pies ordered.</p>
+            {% endif %}
+        </div>
     </article>
 
     <article class="operations-card operations-card--salads">

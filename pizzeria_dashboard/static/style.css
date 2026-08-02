@@ -2357,3 +2357,63 @@ h2 {
     transform: none;
     box-shadow: none;
 }
+
+
+
+
+/* v0.4.11: compact whole-pie breakdown inside Dough Inventory. */
+.dough-pizza-breakdown {
+    margin-top: 14px;
+    padding-top: 11px;
+    border-top: 2px solid rgba(17, 17, 17, 0.3);
+}
+
+.dough-pizza-breakdown-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.dough-pizza-breakdown-heading strong {
+    color: var(--brand-blue);
+    font-size: 0.82rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.dough-pizza-breakdown-heading span {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 900;
+}
+
+.dough-pizza-list {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.dough-pizza-list li {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(17, 17, 17, 0.16);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 900;
+    line-height: 1.15;
+}
+
+.dough-pizza-list li:last-child {
+    border-bottom: 0;
+}
+
+.dough-pizza-empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
