@@ -1761,12 +1761,78 @@ h2 {
     gap: 7px;
 }
 
+.pizza-bake-controls {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.oven-position-selector {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: repeat(2, 28px);
+    grid-template-rows: repeat(2, 28px);
+    gap: 4px;
+    padding: 4px;
+    border: 2px solid var(--black);
+    border-radius: 9px;
+    background: var(--brand-cream);
+}
+
+.oven-position-selector button {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    padding: 0;
+    border: 2px solid var(--black);
+    border-radius: 5px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.58rem;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    touch-action: manipulation;
+}
+
+.oven-position-selector button:hover {
+    background: var(--brand-yellow);
+}
+
+.oven-position-selector button.is-occupied {
+    background: #8d989d;
+    color: white;
+    opacity: 0.7;
+}
+
+.oven-position-selector button.is-selected {
+    background: var(--brand-orange);
+    color: var(--black);
+    opacity: 1;
+    box-shadow: inset 0 0 0 2px white;
+}
+
+.oven-position-selector button:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 4px solid var(--brand-yellow);
+    outline-offset: 2px;
+}
+
+.oven-position-selector--assigned {
+    background: var(--soft-orange);
+}
+
 .bake-timer {
     display: inline-flex;
     flex: 0 0 auto;
     align-items: stretch;
     gap: 5px;
-    margin-left: auto;
+    margin-left: 0;
 }
 
 .bake-timer-button,
@@ -1861,6 +1927,20 @@ h2 {
 @media (max-width: 720px) {
     .item-main {
         align-items: flex-start;
+    }
+
+    .pizza-bake-controls {
+        gap: 6px;
+    }
+
+    .oven-position-selector {
+        grid-template-columns: repeat(2, 26px);
+        grid-template-rows: repeat(2, 26px);
+    }
+
+    .oven-position-selector button {
+        width: 26px;
+        height: 26px;
     }
 
     .bake-timer-button {

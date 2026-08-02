@@ -69,6 +69,7 @@
         if (
             !target
             || target.closest("[data-bake-timer]")
+            || target.closest("[data-oven-position]")
             || target.closest("[data-order-complete-button]")
         ) {
             return;
@@ -86,7 +87,7 @@
 
     document.addEventListener("keydown", (event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (!target || target.closest("[data-bake-timer]")) {
+        if (!target || target.closest("[data-bake-timer]") || target.closest("[data-oven-position]")) {
             return;
         }
         if (target.closest("button, a, input, select, textarea")) {
@@ -367,6 +368,133 @@
     });
 })();
 
+
+(() => {
+    const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
+    if (!selectors.length) {
+        return;
+    }
+
+    const STORAGE_PREFIX = "pizzeria-dashboard:oven-position:";
+    const POSITION_LABELS = {
+        "top-left": "Top left",
+        "top-right": "Top right",
+        "bottom-left": "Bottom left",
+        "bottom-right": "Bottom right",
+    };
+
+    const selectorsByDate = new Map();
+    selectors.forEach((selector) => {
+        const serviceDate = selector.dataset.serviceDate || "unknown";
+        if (!selectorsByDate.has(serviceDate)) {
+            selectorsByDate.set(serviceDate, []);
+        }
+        selectorsByDate.get(serviceDate).push(selector);
+    });
+
+    const storageKeyFor = (serviceDate) => `${STORAGE_PREFIX}${serviceDate}`;
+
+    const readState = (serviceDate) => {
+        try {
+            const raw = window.localStorage.getItem(storageKeyFor(serviceDate));
+            const parsed = raw ? JSON.parse(raw) : {};
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch (_error) {
+            return {};
+        }
+    };
+
+    const writeState = (serviceDate, state) => {
+        try {
+            if (Object.keys(state).length) {
+                window.localStorage.setItem(storageKeyFor(serviceDate), JSON.stringify(state));
+            } else {
+                window.localStorage.removeItem(storageKeyFor(serviceDate));
+            }
+        } catch (_error) {
+            // Oven tracking still works for the current page when storage is unavailable.
+        }
+    };
+
+    const states = new Map();
+
+    const renderDate = (serviceDate) => {
+        const dateSelectors = selectorsByDate.get(serviceDate) || [];
+        const state = states.get(serviceDate) || {};
+
+        dateSelectors.forEach((selector) => {
+            const pieKey = selector.dataset.ovenPositionKey;
+            let selectedPosition = null;
+
+            selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
+                const position = button.dataset.ovenPositionChoice;
+                const occupant = state[position];
+                const selected = occupant === pieKey;
+                const occupiedByAnother = Boolean(occupant) && !selected;
+                const label = POSITION_LABELS[position] || position;
+
+                if (selected) {
+                    selectedPosition = position;
+                }
+                button.classList.toggle("is-selected", selected);
+                button.classList.toggle("is-occupied", occupiedByAnother);
+                button.setAttribute("aria-pressed", selected ? "true" : "false");
+                button.dataset.occupied = occupant ? "true" : "false";
+                button.title = selected
+                    ? `${label} · this pie`
+                    : occupiedByAnother
+                        ? `${label} · occupied by another pie`
+                        : `${label} · available`;
+            });
+
+            selector.classList.toggle("oven-position-selector--assigned", Boolean(selectedPosition));
+            selector.dataset.selectedOvenPosition = selectedPosition || "";
+        });
+    };
+
+    selectorsByDate.forEach((dateSelectors, serviceDate) => {
+        const knownPieKeys = new Set(dateSelectors.map((selector) => selector.dataset.ovenPositionKey));
+        const state = readState(serviceDate);
+        Object.keys(state).forEach((position) => {
+            if (!knownPieKeys.has(state[position])) {
+                delete state[position];
+            }
+        });
+        states.set(serviceDate, state);
+        writeState(serviceDate, state);
+        renderDate(serviceDate);
+    });
+
+    selectors.forEach((selector) => {
+        selector.addEventListener("dragstart", (event) => event.preventDefault());
+        selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const serviceDate = selector.dataset.serviceDate || "unknown";
+                const pieKey = selector.dataset.ovenPositionKey;
+                const position = button.dataset.ovenPositionChoice;
+                const state = states.get(serviceDate) || {};
+
+                if (state[position] === pieKey) {
+                    delete state[position];
+                } else {
+                    Object.keys(state).forEach((candidate) => {
+                        if (state[candidate] === pieKey) {
+                            delete state[candidate];
+                        }
+                    });
+                    state[position] = pieKey;
+                }
+
+                states.set(serviceDate, state);
+                writeState(serviceDate, state);
+                renderDate(serviceDate);
+            });
+        });
+    });
+})();
 
 (() => {
     const timers = Array.from(document.querySelectorAll("[data-bake-timer]"));

@@ -505,6 +505,11 @@ def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path:
 
     assert response.status_code == 200
     assert response.data.count(b"data-bake-timer-key=") == pizza_line_items
+    assert response.data.count(b"data-oven-position-key=") == pizza_line_items
+    assert response.data.count(b'data-oven-position-choice="top-left"') == pizza_line_items
+    assert response.data.count(b'data-oven-position-choice="top-right"') == pizza_line_items
+    assert response.data.count(b'data-oven-position-choice="bottom-left"') == pizza_line_items
+    assert response.data.count(b'data-oven-position-choice="bottom-right"') == pizza_line_items
     assert response.data.count(b'data-bake-duration-seconds="480"') == pizza_line_items
     assert b"data-bake-timer-toggle" in response.data
     assert b"data-bake-timer-reset" in response.data
@@ -521,6 +526,7 @@ def test_future_dates_show_bake_timers(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert b"data-bake-timer" in response.data
+    assert b"data-oven-position" in response.data
     assert b"data-bake-timer-toggle" in response.data
 
 
@@ -531,6 +537,7 @@ def test_past_dates_hide_bake_timers(tmp_path: Path) -> None:
     assert b"data-bake-timer" not in response.data
     assert b"data-bake-timer-toggle" not in response.data
     assert b"data-bake-timer-reset" not in response.data
+    assert b"data-oven-position" not in response.data
 
 
 def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(

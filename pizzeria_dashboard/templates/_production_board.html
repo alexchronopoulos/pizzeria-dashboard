@@ -83,28 +83,43 @@
                     <span class="item-name">{{ item.display_name }}</span>
                 </div>
                 {% if item.category == "pizza" and selected_date >= today %}
-                <div
-                    class="bake-timer"
-                    data-bake-timer
-                    data-bake-duration-seconds="480"
-                    data-bake-timer-key="{{ selected_date.isoformat() }}|{{ order.square_order_id or order.order_id }}|{{ item.catalog_object_id or item.name }}|{{ loop.index0 }}"
-                >
-                    <button
-                        class="bake-timer-button"
-                        type="button"
-                        data-bake-timer-toggle
-                        aria-label="Start an eight-minute bake timer for {{ item.quantity }} {{ item.display_name }}"
+                <div class="pizza-bake-controls">
+                    <div
+                        class="oven-position-selector"
+                        data-oven-position
+                        data-service-date="{{ selected_date.isoformat() }}"
+                        data-oven-position-key="{{ selected_date.isoformat() }}|{{ order.square_order_id or order.order_id }}|{{ item.catalog_object_id or item.name }}|{{ loop.index0 }}"
+                        role="group"
+                        aria-label="Oven position for {{ item.quantity }} {{ item.display_name }}"
                     >
-                        <span data-bake-timer-action>Start</span>
-                        <strong data-bake-timer-display aria-live="polite">8:00</strong>
-                    </button>
-                    <button
-                        class="bake-timer-reset"
-                        type="button"
-                        data-bake-timer-reset
-                        aria-label="Reset bake timer for {{ item.quantity }} {{ item.display_name }}"
-                        title="Reset timer"
-                    >↺</button>
+                        <button type="button" draggable="false" data-oven-position-choice="top-left" aria-label="Assign {{ item.display_name }} to the top-left oven position" title="Top left">TL</button>
+                        <button type="button" draggable="false" data-oven-position-choice="top-right" aria-label="Assign {{ item.display_name }} to the top-right oven position" title="Top right">TR</button>
+                        <button type="button" draggable="false" data-oven-position-choice="bottom-left" aria-label="Assign {{ item.display_name }} to the bottom-left oven position" title="Bottom left">BL</button>
+                        <button type="button" draggable="false" data-oven-position-choice="bottom-right" aria-label="Assign {{ item.display_name }} to the bottom-right oven position" title="Bottom right">BR</button>
+                    </div>
+                    <div
+                        class="bake-timer"
+                        data-bake-timer
+                        data-bake-duration-seconds="480"
+                        data-bake-timer-key="{{ selected_date.isoformat() }}|{{ order.square_order_id or order.order_id }}|{{ item.catalog_object_id or item.name }}|{{ loop.index0 }}"
+                    >
+                        <button
+                            class="bake-timer-button"
+                            type="button"
+                            data-bake-timer-toggle
+                            aria-label="Start an eight-minute bake timer for {{ item.quantity }} {{ item.display_name }}"
+                        >
+                            <span data-bake-timer-action>Start</span>
+                            <strong data-bake-timer-display aria-live="polite">8:00</strong>
+                        </button>
+                        <button
+                            class="bake-timer-reset"
+                            type="button"
+                            data-bake-timer-reset
+                            aria-label="Reset bake timer for {{ item.quantity }} {{ item.display_name }}"
+                            title="Reset timer"
+                        >↺</button>
+                    </div>
                 </div>
                 {% endif %}
             </div>
