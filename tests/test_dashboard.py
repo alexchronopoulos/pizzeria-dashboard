@@ -53,8 +53,13 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert "Friday, July 31, 2026" not in visible_text
     assert b"Sample + SQLite" in response.data
     assert b'class="masthead-tools masthead-tools--single-row"' in response.data
-    assert b"Pizzeria Mari Production Dashboard" in response.data
-    assert response.data.index(b"Pizzeria Mari Production Dashboard") < response.data.index(b'id="service-date"')
+    assert b"Pizzeria Mari Production Dashboard" not in response.data
+    assert b'class="pizzeria-mari-logo"' in response.data
+    assert b'pizzeria-mari-logo.png' in response.data
+    assert b'data-service-setup-open' in response.data
+    assert response.data.index(b'data-service-setup-open') < response.data.index(b'id="service-date"')
+    assert b'id="service-setup-dialog"' in response.data
+    assert b'Weekly pickup hours' in response.data
     assert "Tomato Pie" in visible_text
     assert "Pie breakdown" in visible_text
     assert "16 total" in visible_text
@@ -306,7 +311,7 @@ def test_sample_order_details_are_privacy_preserving_without_debug_data(tmp_path
     ).status_code == 404
 
 
-def test_customer_names_are_reduced_to_first_name_and_last_initial(tmp_path: Path) -> None:
+def test_customer_names_are_compact_on_board_and_full_in_order_modal(tmp_path: Path) -> None:
     from datetime import datetime
     from pizzeria_dashboard.database import replace_orders_for_date
     from pizzeria_dashboard.domain import Item, Order
@@ -336,8 +341,7 @@ def test_customer_names_are_reduced_to_first_name_and_last_initial(tmp_path: Pat
         "/order-details",
         query_string={"date": "2026-07-31", "order_id": "private-name"},
     )
-    assert b"Alex C." in details.data
-    assert b"Alex Christopher" not in details.data
+    assert b"Alex Christopher" in details.data
 
 
 def test_drinks_and_order_numbers_are_hidden(tmp_path: Path) -> None:
@@ -844,6 +848,12 @@ def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
     dashboard = client.get("/?date=2026-07-31")
     assert dashboard.status_code == 200
     assert "Regular · 5 orders".encode() in dashboard.data
+    assert b"Customer visits" in dashboard.data
+    assert b"14 online orders" in dashboard.data
+    assert b"1 with history" in dashboard.data
+    assert b"First timers" in dashboard.data
+    assert "2nd–4th orders".encode() in dashboard.data
+    assert b"History unavailable" in dashboard.data
     assert b"Build customer history" not in dashboard.data  # sample mode
 
     details = client.get(

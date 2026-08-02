@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Iterable, Mapping
 
-from .domain import Item
+from .domain import Item, Order
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,66 @@ class CustomerSummary:
         if self.order_count < 5:
             return "returning"
         return "regular"
+
+
+@dataclass(frozen=True, slots=True)
+class CustomerVisitSummary:
+    """One-day mix of scheduled customers by visit number."""
+
+    total_orders: int
+    first_timers: int
+    returning: int
+    regulars: int
+    unavailable: int
+
+    @property
+    def matched_orders(self) -> int:
+        return self.total_orders - self.unavailable
+
+    def percent(self, value: int) -> int:
+        if self.total_orders <= 0:
+            return 0
+        return round((value / self.total_orders) * 100)
+
+
+def build_customer_visit_summary(
+    orders: Iterable[Order],
+    summaries: Mapping[str, CustomerSummary],
+) -> CustomerVisitSummary:
+    """Classify scheduled orders using their visit count at that order.
+
+    Walk-ins are intentionally excluded because the production workflow does not
+    reliably identify those customers. Orders without a Square customer link are
+    shown as unavailable so the card also communicates history coverage.
+    """
+    total_orders = 0
+    first_timers = 0
+    returning = 0
+    regulars = 0
+    unavailable = 0
+
+    for order in orders:
+        if order.is_walk_in:
+            continue
+        total_orders += 1
+        key = order.square_order_id or order.order_id
+        summary = summaries.get(key)
+        if summary is None:
+            unavailable += 1
+        elif summary.order_count <= 1:
+            first_timers += 1
+        elif summary.order_count < 5:
+            returning += 1
+        else:
+            regulars += 1
+
+    return CustomerVisitSummary(
+        total_orders=total_orders,
+        first_timers=first_timers,
+        returning=returning,
+        regulars=regulars,
+        unavailable=unavailable,
+    )
 
 
 @dataclass(frozen=True, slots=True)

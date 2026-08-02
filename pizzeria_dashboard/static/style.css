@@ -2597,3 +2597,213 @@ h2 {
     font-weight: 900;
     cursor: pointer;
 }
+
+/* Sprint 8: compact branding, modal service setup, and daily customer mix. */
+.pizzeria-mari-logo {
+    display: block;
+    width: clamp(210px, 24vw, 315px);
+    height: auto;
+    margin-right: auto;
+    object-fit: contain;
+}
+
+.service-setup-button {
+    min-height: 42px;
+    padding: 8px 13px;
+    border: 2px solid var(--brand-yellow);
+    border-radius: 8px;
+    background: var(--brand-yellow);
+    color: var(--text);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.service-setup-button:hover,
+.service-setup-button:focus-visible {
+    background: white;
+    outline: 3px solid rgba(246, 224, 87, 0.35);
+    outline-offset: 2px;
+}
+
+.service-setup-dialog {
+    width: min(1080px, calc(100vw - 28px));
+    max-height: calc(100vh - 28px);
+    padding: 0;
+    overflow: hidden;
+    border: 4px solid var(--black);
+    border-radius: var(--radius);
+    background: var(--brand-cream);
+    box-shadow: 0 24px 70px rgba(0, 20, 32, 0.45);
+}
+
+.service-setup-dialog::backdrop {
+    background: rgba(0, 35, 56, 0.72);
+}
+
+.service-setup-dialog-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    max-height: calc(100vh - 36px);
+}
+
+.service-setup-dialog-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 14px 18px;
+    border-bottom: 3px solid var(--black);
+    background: var(--brand-yellow);
+}
+
+.service-setup-dialog-toolbar > div {
+    display: grid;
+    gap: 2px;
+}
+
+.service-setup-dialog-toolbar strong {
+    font-size: 1.2rem;
+}
+
+.service-setup-dialog-toolbar span {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.service-setup-close {
+    padding: 7px 12px;
+    border: 2px solid var(--black);
+    border-radius: 7px;
+    background: white;
+    color: var(--text);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.service-setup-dialog-body {
+    overflow: auto;
+    padding: 18px;
+}
+
+.customer-visit-summary {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(0, 2.4fr);
+    align-items: stretch;
+    gap: 14px;
+    margin: -6px 0 20px;
+    padding: 12px 14px;
+    border: 3px solid var(--black);
+    border-radius: var(--radius);
+    background: white;
+    box-shadow: var(--shadow);
+}
+
+.customer-visit-summary-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-right: 14px;
+    border-right: 2px solid rgba(17, 17, 17, 0.2);
+}
+
+.customer-visit-summary-heading > div {
+    display: grid;
+    gap: 3px;
+}
+
+.customer-visit-summary-heading > div > strong {
+    color: var(--brand-blue);
+    font-size: 1rem;
+}
+
+.customer-visit-summary-heading > span {
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 850;
+    white-space: nowrap;
+}
+
+.customer-visit-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.customer-visit-metric {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--soft-blue);
+}
+
+.customer-visit-metric > strong {
+    color: var(--brand-blue);
+    font-size: 1.35rem;
+    line-height: 1;
+}
+
+.customer-visit-metric > span {
+    overflow: hidden;
+    font-size: 0.76rem;
+    font-weight: 900;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.customer-visit-metric > small {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+}
+
+.customer-visit-metric--first { background: #eef4ff; }
+.customer-visit-metric--returning { background: #f4efff; }
+.customer-visit-metric--regular { background: var(--soft-green); }
+.customer-visit-metric--unknown { background: #f2f2f2; }
+
+@media (max-width: 900px) {
+    .customer-visit-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .customer-visit-summary-heading {
+        padding-right: 0;
+        padding-bottom: 8px;
+        border-right: 0;
+        border-bottom: 2px solid rgba(17, 17, 17, 0.2);
+    }
+
+    .customer-visit-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .pizzeria-mari-logo {
+        width: min(100%, 300px);
+        margin-right: 0;
+    }
+
+    .service-setup-button {
+        order: 2;
+    }
+
+    .masthead-tools--single-row .date-navigation {
+        order: 3;
+    }
+
+    .masthead-tools--single-row .today-link,
+    .masthead-tools--single-row .live-indicator {
+        order: 4;
+    }
+
+    .customer-visit-metrics {
+        grid-template-columns: 1fr;
+    }
+}

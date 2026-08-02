@@ -928,6 +928,7 @@ def load_customer_summaries_for_orders(
             FROM customer_history_orders AS current
             JOIN customer_history_orders AS history
               ON history.customer_id = current.customer_id
+             AND history.ordered_at <= current.ordered_at
             WHERE current.order_id IN ({placeholders})
             GROUP BY current.order_id, current.customer_id
             """,

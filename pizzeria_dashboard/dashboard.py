@@ -32,6 +32,7 @@ from .database import (
     save_order_slot_assignment,
 )
 from .domain import Order, build_service_board, parse_ticket_pickup_time
+from .customer_history import build_customer_visit_summary
 from .customer_history_sync import sync_customer_history
 from .service_config import (
     configuration_from_form,
@@ -143,10 +144,14 @@ def index() -> str:
         inventory_side_types,
     )
     sync_info = load_sync_info(database_path, selected_date)
+    # Customer visit reporting covers every cached online order for the selected
+    # date, including orders that contain only non-production items. The kitchen
+    # board still filters those orders out of ``service.all_orders``.
     customer_summaries = load_customer_summaries_for_orders(
         database_path,
-        (order.square_order_id or order.order_id for order in service.all_orders),
+        (order.square_order_id or order.order_id for order in orders),
     )
+    customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
     square_refresh_controls_visible = (
@@ -186,6 +191,7 @@ def index() -> str:
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
         customer_summaries=customer_summaries,
+        customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
     )
 
@@ -240,10 +246,16 @@ def order_details():
     event_at = order.source_closed_at or order.source_created_at or order.pickup_at
     if event_at.tzinfo is not None:
         event_at = event_at.astimezone(timezone)
+    modal_customer_name = (
+        order.display_customer_name
+        if is_walk_in
+        else (str(order.customer_name or "").strip() or "Guest")
+    )
 
     return render_template(
         "_order_details.html",
         order=order,
+        modal_customer_name=modal_customer_name,
         is_walk_in=is_walk_in,
         assigned_pickup_at=assigned_pickup_at,
         assignment_source=assignment_source,

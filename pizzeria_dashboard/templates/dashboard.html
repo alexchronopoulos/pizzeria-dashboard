@@ -1,9 +1,16 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.0">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.2">
     <div class="masthead-tools masthead-tools--single-row">
-        <h1 class="compact-dashboard-title">Pizzeria Mari Production Dashboard</h1>
+        <img
+            class="pizzeria-mari-logo"
+            src="{{ url_for('static', filename='pizzeria-mari-logo.png') }}"
+            alt="Pizzeria Mari"
+            width="1200"
+            height="225"
+        >
+        <button class="service-setup-button" type="button" data-service-setup-open>Service setup</button>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
             <form class="date-picker" method="get" action="{{ url_for('dashboard.index') }}">
@@ -38,136 +45,20 @@
 </section>
 {% endif %}
 
-<details class="setup-panel">
-    <summary>
-        <span>
-            <strong>Service setup</strong>
-            <small>Weekly hours, menu modifiers, and prepared counts</small>
-        </span>
-        <span class="setup-summary-hours">
-            {% if selected_day_hours.enabled %}
-            {{ selected_day_hours.start.strftime('%-I:%M %p') }}–{{ selected_day_hours.end.strftime('%-I:%M %p') }}
-            {% else %}
-            Closed
-            {% endif %}
-        </span>
-    </summary>
-
-    <div class="setup-content">
-        <form class="setup-form" method="post" action="{{ url_for('dashboard.update_settings') }}">
-            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-            <div class="setup-section">
-                <div class="setup-section-heading">
-                    <strong>Weekly pickup hours</strong>
-                    <span>Pickup slots are generated every 15 minutes; closing time is not offered as a pickup slot.</span>
-                </div>
-                <div class="hours-grid">
-                    {% for day in service_configuration.days %}
-                    <div class="hours-row">
-                        <label class="day-toggle">
-                            <input
-                                type="checkbox"
-                                name="day_{{ day.weekday }}_enabled"
-                                {% if day.enabled %}checked{% endif %}
-                            >
-                            <span>{{ day.name }}</span>
-                        </label>
-                        <label>
-                            <span>Start</span>
-                            <input type="time" name="day_{{ day.weekday }}_start" value="{{ day.start_value }}">
-                        </label>
-                        <label>
-                            <span>End</span>
-                            <input type="time" name="day_{{ day.weekday }}_end" value="{{ day.end_value }}">
-                        </label>
-                    </div>
-                    {% endfor %}
-                </div>
+<dialog id="service-setup-dialog" class="service-setup-dialog" aria-labelledby="service-setup-dialog-title">
+    <div class="service-setup-dialog-shell">
+        <div class="service-setup-dialog-toolbar">
+            <div>
+                <strong id="service-setup-dialog-title">Service setup</strong>
+                <span>Weekly hours, menu modifiers, and prepared counts</span>
             </div>
-
-            <div class="setup-menu-grid">
-                <div class="setup-section setup-section--salads">
-                    <div class="setup-section-heading">
-                        <strong>Available salads</strong>
-                        <span>Enter one Square kitchen modifier name per line.</span>
-                    </div>
-                    <textarea name="salad_types" rows="5" aria-label="Available salad names">{{ service_configuration.salad_types | join('\n') }}</textarea>
-                </div>
-                <div class="setup-section setup-section--sides">
-                    <div class="setup-section-heading">
-                        <strong>Prepared sides</strong>
-                        <span>Enter one modifier containing “Side” per line.</span>
-                    </div>
-                    <textarea name="side_types" rows="5" aria-label="Available side names">{{ service_configuration.side_types | join('\n') }}</textarea>
-                </div>
-            </div>
-            <button class="save-settings-button" type="submit">Save hours and menu</button>
-        </form>
-
-        <form class="prep-form" method="post" action="{{ url_for('dashboard.update_inventory') }}">
-            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-            <div class="setup-section-heading">
-                <strong>Prepared for {{ selected_date.strftime('%A, %B %-d') }}</strong>
-                <span>These counts apply only to the selected service date.</span>
-            </div>
-            <div class="prep-grid">
-                <label class="prep-input prep-input--dough">
-                    <span>Dough balls</span>
-                    <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputmode="numeric"
-                        name="dough_balls_prepared"
-                        value="{{ inventory.dough_prepared }}"
-                    >
-                </label>
-                {% for salad in inventory.salads %}
-                <input type="hidden" name="salad_name" value="{{ salad.name }}">
-                <label class="prep-input prep-input--salad">
-                    <span>{{ salad.display_name }}</span>
-                    <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputmode="numeric"
-                        name="{{ salad.field_name }}"
-                        value="{{ salad.prepared }}"
-                    >
-                </label>
-                {% endfor %}
-                {% for side in inventory.sides %}
-                <input type="hidden" name="side_name" value="{{ side.name }}">
-                <label class="prep-input prep-input--side">
-                    <span>{{ side.display_name }}</span>
-                    <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputmode="numeric"
-                        name="{{ side.field_name }}"
-                        value="{{ side.prepared }}"
-                    >
-                </label>
-                {% endfor %}
-                {% for cookie in inventory.cookies %}
-                <label class="prep-input prep-input--cookie">
-                    <span>{{ cookie.display_name }}</span>
-                    <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputmode="numeric"
-                        name="{{ cookie.field_name }}"
-                        value="{{ cookie.prepared }}"
-                    >
-                </label>
-                {% endfor %}
-            </div>
-            <button class="save-inventory-button" type="submit">Save prepared counts</button>
-        </form>
+            <button type="button" class="service-setup-close" data-service-setup-close aria-label="Close service setup">Close</button>
+        </div>
+        <div class="service-setup-dialog-body">
+            {% include "_service_setup.html" %}
+        </div>
     </div>
-</details>
+</dialog>
 
 <div
     id="production-board"
@@ -195,5 +86,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.0') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.2') }}" defer></script>
 {% endblock %}

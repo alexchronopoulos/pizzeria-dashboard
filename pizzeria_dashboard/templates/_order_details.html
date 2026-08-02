@@ -17,7 +17,7 @@
     <header class="order-details-header">
       <div>
         <p class="eyebrow">Order details</p>
-        <h2>{{ order.display_customer_name }}</h2>
+        <h2>{{ modal_customer_name }}</h2>
         <p class="order-details-pickup">
           {% if is_walk_in %}
           Walk-in paid {{ event_at.strftime('%A, %B %-d at %-I:%M %p %Z') }}{% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}

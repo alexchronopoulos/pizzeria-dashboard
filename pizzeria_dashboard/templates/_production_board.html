@@ -223,6 +223,40 @@
     </article>
 </div>
 
+{% if customer_visit_summary.total_orders %}
+<article class="customer-visit-summary" aria-label="Online customer visit summary">
+    <div class="customer-visit-summary-heading">
+        <div>
+            <span class="summary-label">Customer visits</span>
+            <strong>{{ customer_visit_summary.total_orders }} online order{% if customer_visit_summary.total_orders != 1 %}s{% endif %}</strong>
+        </div>
+        <span>{{ customer_visit_summary.matched_orders }} with history</span>
+    </div>
+    <div class="customer-visit-metrics">
+        <div class="customer-visit-metric customer-visit-metric--first">
+            <strong>{{ customer_visit_summary.first_timers }}</strong>
+            <span>First timers</span>
+            <small>{{ customer_visit_summary.percent(customer_visit_summary.first_timers) }}%</small>
+        </div>
+        <div class="customer-visit-metric customer-visit-metric--returning">
+            <strong>{{ customer_visit_summary.returning }}</strong>
+            <span>2nd–4th orders</span>
+            <small>{{ customer_visit_summary.percent(customer_visit_summary.returning) }}%</small>
+        </div>
+        <div class="customer-visit-metric customer-visit-metric--regular">
+            <strong>{{ customer_visit_summary.regulars }}</strong>
+            <span>Regulars</span>
+            <small>{{ customer_visit_summary.percent(customer_visit_summary.regulars) }}%</small>
+        </div>
+        <div class="customer-visit-metric customer-visit-metric--unknown">
+            <strong>{{ customer_visit_summary.unavailable }}</strong>
+            <span>History unavailable</span>
+            <small>{{ customer_visit_summary.percent(customer_visit_summary.unavailable) }}%</small>
+        </div>
+    </div>
+</article>
+{% endif %}
+
 <section class="board-section">
     <div class="section-heading">
         <div>

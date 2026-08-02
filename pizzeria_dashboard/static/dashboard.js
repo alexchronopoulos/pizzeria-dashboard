@@ -740,3 +740,43 @@
         });
     });
 })();
+
+(() => {
+    const dialog = document.querySelector("#service-setup-dialog");
+    const openButton = document.querySelector("[data-service-setup-open]");
+    const closeButton = dialog?.querySelector("[data-service-setup-close]");
+    if (!dialog || !openButton) {
+        return;
+    }
+
+    const openDialog = () => {
+        if (typeof dialog.showModal === "function") {
+            dialog.showModal();
+        } else {
+            dialog.setAttribute("open", "");
+        }
+        const firstInput = dialog.querySelector("input, textarea, select, button");
+        firstInput?.focus();
+    };
+
+    const closeDialog = () => {
+        if (typeof dialog.close === "function") {
+            dialog.close();
+        } else {
+            dialog.removeAttribute("open");
+        }
+        openButton.focus();
+    };
+
+    openButton.addEventListener("click", openDialog);
+    closeButton?.addEventListener("click", closeDialog);
+    dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeDialog();
+    });
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+            closeDialog();
+        }
+    });
+})();

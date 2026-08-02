@@ -64,7 +64,10 @@ def test_customer_history_round_trips_and_maps_current_order(tmp_path: Path) -> 
         payment_count=6,
     )
 
-    summaries = load_customer_summaries_for_orders(database_path, ("order-6",))
+    summaries = load_customer_summaries_for_orders(
+        database_path, ("order-2", "order-6")
+    )
+    assert summaries["order-2"].tag_label == "2nd Order"
     assert summaries["order-6"].tag_label == "Regular · 6 orders"
 
     history = load_customer_history_for_order(database_path, "order-6")
