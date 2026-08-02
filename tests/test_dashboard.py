@@ -797,3 +797,122 @@ def test_open_square_order_can_be_marked_completed(tmp_path: Path, monkeypatch) 
     refreshed = client.get("/?date=2026-07-31")
     assert b'data-order-complete-button' not in refreshed.data
     assert b"Capacity released" in refreshed.data
+
+
+def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from pizzeria_dashboard.customer_history import CustomerHistoryOrder
+    from pizzeria_dashboard.database import replace_customer_history
+    from pizzeria_dashboard.domain import Item, Modifier
+
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected_date = date(2026, 7, 31)
+    # Seed the normal sample order cache first.
+    assert client.get("/?date=2026-07-31").status_code == 200
+
+    current_order_id = "sample-2026-07-31-PM-1042"
+    history_orders = []
+    for number in range(1, 6):
+        order_id = current_order_id if number == 5 else f"historical-{number}"
+        history_orders.append(
+            CustomerHistoryOrder(
+                customer_id="customer-alex",
+                order_id=order_id,
+                ordered_at=datetime(2026, 7, number, 20, 0, tzinfo=UTC),
+                service_date=date(2026, 7, number),
+                source="Square Online",
+                items=(
+                    Item(
+                        "Collar City" if number == 4 else "Plain Pie",
+                        1,
+                        "pizza",
+                        modifiers=(Modifier("Spring Beet Salad", "salad"),),
+                    ),
+                ),
+            )
+        )
+    replace_customer_history(
+        Path(app.config["DATABASE_PATH"]),
+        history_orders,
+        synced_at=datetime(2026, 8, 2, tzinfo=UTC),
+        start_at=datetime(2025, 1, 1, tzinfo=UTC),
+        payment_count=5,
+    )
+
+    dashboard = client.get("/?date=2026-07-31")
+    assert dashboard.status_code == 200
+    assert "Regular · 5 orders".encode() in dashboard.data
+    assert b"Build customer history" not in dashboard.data  # sample mode
+
+    details = client.get(
+        "/order-details?date=2026-07-31&order_id=sample-2026-07-31-PM-1042"
+    )
+    assert details.status_code == 200
+    assert b"Customer history" in details.data
+    assert b"data-customer-history-url" in details.data
+    assert b"Collar City" not in details.data  # history remains lazy-loaded
+
+    history = client.get(
+        "/customer-history?date=2026-07-31&order_id=sample-2026-07-31-PM-1042"
+    )
+    assert history.status_code == 200
+    assert "Regular · 5 orders".encode() in history.data
+    assert b"Collar City" in history.data
+    assert b"Spring Beet Salad" in history.data
+    assert b"Current order" in history.data
+    assert b"customer-alex" not in history.data
+
+
+def test_walk_in_orders_do_not_show_customer_history_tags(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from pizzeria_dashboard.customer_history import CustomerHistoryOrder
+    from pizzeria_dashboard.database import replace_customer_history, replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    walk_in = Order(
+        order_id="walk-in-with-history",
+        customer_name="Sam 7:45",
+        pickup_at=datetime.fromisoformat("2026-07-31T19:45:00-04:00"),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="walk-in-with-history",
+        is_walk_in=True,
+        source_created_at=datetime.fromisoformat("2026-07-31T19:35:00-04:00"),
+        source_closed_at=datetime.fromisoformat("2026-07-31T19:37:00-04:00"),
+        ticket_name="Sam 7:45",
+    )
+    replace_orders_for_date(database_path, selected, (walk_in,), source="square")
+    replace_customer_history(
+        database_path,
+        tuple(
+            CustomerHistoryOrder(
+                customer_id="customer-sam",
+                order_id=(
+                    walk_in.square_order_id
+                    if number == 5
+                    else f"historical-walk-in-{number}"
+                ),
+                ordered_at=datetime(2026, 7, number, 20, 0, tzinfo=UTC),
+                service_date=date(2026, 7, number),
+                source="Square POS",
+                items=(Item("Plain Pie", 1, "pizza"),),
+            )
+            for number in range(1, 6)
+        ),
+        synced_at=datetime(2026, 8, 2, tzinfo=UTC),
+        start_at=datetime(2025, 1, 1, tzinfo=UTC),
+        payment_count=5,
+    )
+
+    response = app.test_client().get("/?date=2026-07-31")
+
+    assert response.status_code == 200
+    assert b"Sam 7:45" in response.data
+    assert b"Regular" not in response.data
+    assert b"First Timer" not in response.data
+    assert b"badge--customer" not in response.data

@@ -437,20 +437,36 @@ class SquareClient:
         self,
         *,
         location_id: str,
-        begin_time: str,
-        end_time: str,
+        begin_time: str | None = None,
+        end_time: str | None = None,
+        updated_at_begin_time: str | None = None,
+        updated_at_end_time: str | None = None,
     ) -> tuple[Mapping[str, object], ...]:
-        """List payments in the order lookback window for receipt-number lookup."""
+        """List payments for customer-history and receipt association.
+
+        Full history builds use the payment ``created_at`` range. Incremental
+        history updates use the ``updated_at`` range so a customer profile that
+        Square associates asynchronously can be picked up later.
+        """
         payments: list[Mapping[str, object]] = []
         cursor: str | None = None
         while True:
-            query = {
+            query: dict[str, object] = {
                 "location_id": location_id,
-                "begin_time": begin_time,
-                "end_time": end_time,
                 "sort_order": "ASC",
                 "limit": 100,
             }
+            if updated_at_begin_time or updated_at_end_time:
+                if updated_at_begin_time:
+                    query["updated_at_begin_time"] = updated_at_begin_time
+                if updated_at_end_time:
+                    query["updated_at_end_time"] = updated_at_end_time
+                query["sort_field"] = "UPDATED_AT"
+            else:
+                if begin_time:
+                    query["begin_time"] = begin_time
+                if end_time:
+                    query["end_time"] = end_time
             if cursor:
                 query["cursor"] = cursor
             response = self._request(
@@ -467,6 +483,7 @@ class SquareClient:
             if not cursor:
                 break
         return tuple(payments)
+
 
     def batch_retrieve_catalog_objects(
         self,

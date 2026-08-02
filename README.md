@@ -270,3 +270,32 @@ orders do not show the button because they already arrive from Square in the
 SQLite is used as a rebuildable local cache for fast rendering, incremental sync
 cursors, same-day prepared counts, and dashboard preferences. Square remains the
 source of truth for orders, and a full Square refresh can rebuild the order cache.
+
+## Customer history
+
+The dashboard can build a rebuildable customer-history index from Square Payments and Orders.
+Square remains the source of truth; the local SQLite tables contain only opaque Square customer
+IDs, order IDs, timestamps, source labels, and summarized food items. They do not store customer
+email addresses, phone numbers, card details, or Customer Directory profiles.
+
+1. Set the earliest history date in `.env` if needed:
+
+   ```dotenv
+   CUSTOMER_HISTORY_START_DATE=2025-01-01
+   CUSTOMER_HISTORY_REFRESH_SECONDS=60
+   CUSTOMER_HISTORY_OVERLAP_HOURS=48
+   ```
+
+2. Ensure the Square token has `PAYMENTS_READ`, `ORDERS_READ`, and catalog read access.
+3. Press **Build customer history** once from the dashboard.
+4. Normal Square refreshes then merge payment updates into the index automatically.
+
+Customer tags use linked Square payments:
+
+- First linked order: **First Timer**
+- Orders 2–4: **2nd Order**, **3rd Order**, or **4th Order**
+- Orders 5+: **Regular · N orders**
+
+Open an order and select **Customer history** to see the five most recent linked orders. Older
+orders are available in an expandable section. Orders without a reliable `Payment.customer_id`
+show **History unavailable** rather than being matched by name.

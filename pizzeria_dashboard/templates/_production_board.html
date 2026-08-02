@@ -2,6 +2,8 @@
 {% set release_candidate = window and service.is_release_candidate(order, window) %}
 {% set customer_label = order.display_customer_name %}
 {% set can_complete = order.square_order_id and order.square_version is not none and order.fulfillment_uid and not order.is_walk_in and not order.released and order.fulfillment_state != "COMPLETED" %}
+{% set customer_order_key = order.square_order_id or order.order_id %}
+{% set customer_summary = customer_summaries.get(customer_order_key) if customer_summaries else none %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}"
@@ -32,6 +34,12 @@
             >Details</button>
         </div>
         <div class="order-badges">
+            {% if customer_summary and not order.is_walk_in %}
+            <span
+                class="badge badge--customer badge--customer-{{ customer_summary.tag_kind }}"
+                title="Customer history includes {{ customer_summary.order_count }} linked order{% if customer_summary.order_count != 1 %}s{% endif %}"
+            >{{ customer_summary.tag_label }}</span>
+            {% endif %}
             {% if order.is_walk_in %}
             <span class="badge badge--walk-in">{% if unscheduled %}Unscheduled {% endif %}Walk-in</span>
             {% endif %}
@@ -255,6 +263,14 @@
                 <span class="auto-refresh-scope-note">Today only</span>
                 {% endif %}
             </div>
+            {% endif %}
+            {% if square_refresh_controls_visible %}
+            <form method="post" action="{{ url_for('dashboard.rebuild_customer_history') }}" data-customer-history-form>
+                <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+                <button class="customer-history-sync-button" type="submit" data-customer-history-button>
+                    {% if customer_history_info %}Rebuild customer history{% else %}Build customer history{% endif %}
+                </button>
+            </form>
             {% endif %}
             <form method="post" action="{{ url_for('dashboard.sync') }}" data-full-sync-form>
                 <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">

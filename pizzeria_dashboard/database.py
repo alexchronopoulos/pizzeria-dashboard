@@ -7,10 +7,16 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from .domain import Order, order_from_payload, order_to_payload
+from .customer_history import (
+    CustomerHistory,
+    CustomerHistoryOrder,
+    CustomerHistorySyncInfo,
+    CustomerSummary,
+)
+from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -89,6 +95,27 @@ def initialize_database(path: Path) -> None:
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS customer_history_orders (
+                order_id TEXT PRIMARY KEY,
+                customer_id TEXT NOT NULL,
+                ordered_at TEXT NOT NULL,
+                service_date TEXT NOT NULL,
+                source TEXT,
+                items_json TEXT NOT NULL,
+                cached_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_customer_history_customer_ordered
+                ON customer_history_orders (customer_id, ordered_at DESC);
+
+            CREATE TABLE IF NOT EXISTS customer_history_sync (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                synced_at TEXT NOT NULL,
+                start_at TEXT NOT NULL,
+                payment_count INTEGER NOT NULL,
+                order_count INTEGER NOT NULL
             );
             """
         )
@@ -601,3 +628,364 @@ def save_app_metadata(path: Path, key: str, value: str) -> None:
             """,
             (key, value),
         )
+
+
+def _history_items_to_json(items: Iterable[Item]) -> str:
+    return json.dumps(
+        [
+            {
+                "name": item.name,
+                "quantity": item.quantity,
+                "category": item.category,
+                "catalog_object_id": item.catalog_object_id,
+                "variation_name": item.variation_name,
+                "catalog_categories": list(item.catalog_categories),
+                "modifiers": [
+                    {
+                        "name": modifier.name,
+                        "category": modifier.category,
+                        "quantity": modifier.quantity,
+                        "catalog_object_id": modifier.catalog_object_id,
+                    }
+                    for modifier in item.modifiers
+                ],
+            }
+            for item in items
+        ],
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _history_items_from_json(value: str) -> tuple[Item, ...]:
+    try:
+        raw_items = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return ()
+    if not isinstance(raw_items, list):
+        return ()
+
+    items: list[Item] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            continue
+        modifiers: list[Modifier] = []
+        raw_modifiers = raw_item.get("modifiers", [])
+        if isinstance(raw_modifiers, list):
+            for raw_modifier in raw_modifiers:
+                if not isinstance(raw_modifier, Mapping):
+                    continue
+                try:
+                    quantity = max(int(raw_modifier.get("quantity", 1)), 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                modifiers.append(
+                    Modifier(
+                        name=str(raw_modifier.get("name", "Modifier")),
+                        category=str(raw_modifier.get("category", "topping")),
+                        quantity=quantity,
+                        catalog_object_id=(
+                            str(raw_modifier["catalog_object_id"])
+                            if raw_modifier.get("catalog_object_id")
+                            else None
+                        ),
+                    )
+                )
+        raw_categories = raw_item.get("catalog_categories", [])
+        categories = (
+            tuple(str(entry) for entry in raw_categories)
+            if isinstance(raw_categories, list)
+            else ()
+        )
+        try:
+            quantity = max(int(raw_item.get("quantity", 1)), 1)
+        except (TypeError, ValueError):
+            quantity = 1
+        items.append(
+            Item(
+                name=str(raw_item.get("name", "Item")),
+                quantity=quantity,
+                category=str(raw_item.get("category", "other")),
+                modifiers=tuple(modifiers),
+                catalog_object_id=(
+                    str(raw_item["catalog_object_id"])
+                    if raw_item.get("catalog_object_id")
+                    else None
+                ),
+                variation_name=(
+                    str(raw_item["variation_name"])
+                    if raw_item.get("variation_name")
+                    else None
+                ),
+                catalog_categories=categories,
+            )
+        )
+    return tuple(items)
+
+
+def replace_customer_history(
+    path: Path,
+    orders: Iterable[CustomerHistoryOrder],
+    *,
+    synced_at: datetime,
+    start_at: datetime,
+    payment_count: int,
+) -> CustomerHistorySyncInfo:
+    """Replace the rebuildable customer-history index atomically."""
+    order_list = tuple(orders)
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DELETE FROM customer_history_orders")
+        for order in order_list:
+            connection.execute(
+                """
+                INSERT INTO customer_history_orders (
+                    order_id, customer_id, ordered_at, service_date,
+                    source, items_json, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    order.order_id,
+                    order.customer_id,
+                    order.ordered_at.isoformat(),
+                    order.service_date.isoformat(),
+                    order.source,
+                    _history_items_to_json(order.items),
+                    synced_at.isoformat(),
+                ),
+            )
+        connection.execute(
+            """
+            INSERT INTO customer_history_sync (
+                id, synced_at, start_at, payment_count, order_count
+            ) VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                synced_at = excluded.synced_at,
+                start_at = excluded.start_at,
+                payment_count = excluded.payment_count,
+                order_count = excluded.order_count
+            """,
+            (
+                synced_at.isoformat(),
+                start_at.isoformat(),
+                payment_count,
+                len(order_list),
+            ),
+        )
+    return CustomerHistorySyncInfo(
+        synced_at=synced_at,
+        start_at=start_at,
+        payment_count=payment_count,
+        order_count=len(order_list),
+    )
+
+
+def merge_customer_history(
+    path: Path,
+    orders: Iterable[CustomerHistoryOrder],
+    *,
+    synced_at: datetime,
+    start_at: datetime,
+    payment_count: int,
+) -> tuple[CustomerHistorySyncInfo, int]:
+    """Merge a narrow payment window into the customer-history cache."""
+    order_list = tuple(orders)
+    changed_count = 0
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = {
+            str(row["order_id"]): (
+                str(row["customer_id"]),
+                str(row["ordered_at"]),
+                str(row["service_date"]),
+                row["source"],
+                str(row["items_json"]),
+            )
+            for row in connection.execute(
+                """
+                SELECT order_id, customer_id, ordered_at, service_date, source, items_json
+                FROM customer_history_orders
+                """
+            ).fetchall()
+        }
+        for order in order_list:
+            items_json = _history_items_to_json(order.items)
+            serialized = (
+                order.customer_id,
+                order.ordered_at.isoformat(),
+                order.service_date.isoformat(),
+                order.source,
+                items_json,
+            )
+            if existing.get(order.order_id) != serialized:
+                changed_count += 1
+            connection.execute(
+                """
+                INSERT INTO customer_history_orders (
+                    order_id, customer_id, ordered_at, service_date,
+                    source, items_json, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    customer_id = excluded.customer_id,
+                    ordered_at = excluded.ordered_at,
+                    service_date = excluded.service_date,
+                    source = excluded.source,
+                    items_json = excluded.items_json,
+                    cached_at = excluded.cached_at
+                """,
+                (
+                    order.order_id,
+                    order.customer_id,
+                    order.ordered_at.isoformat(),
+                    order.service_date.isoformat(),
+                    order.source,
+                    items_json,
+                    synced_at.isoformat(),
+                ),
+            )
+        total_orders = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM customer_history_orders"
+            ).fetchone()["total"]
+        )
+        previous = connection.execute(
+            "SELECT start_at, payment_count FROM customer_history_sync WHERE id = 1"
+        ).fetchone()
+        effective_start = (
+            min(datetime.fromisoformat(str(previous["start_at"])), start_at)
+            if previous is not None
+            else start_at
+        )
+        cumulative_payment_count = (
+            max(int(previous["payment_count"]), payment_count)
+            if previous is not None
+            else payment_count
+        )
+        connection.execute(
+            """
+            INSERT INTO customer_history_sync (
+                id, synced_at, start_at, payment_count, order_count
+            ) VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                synced_at = excluded.synced_at,
+                start_at = excluded.start_at,
+                payment_count = excluded.payment_count,
+                order_count = excluded.order_count
+            """,
+            (
+                synced_at.isoformat(),
+                effective_start.isoformat(),
+                cumulative_payment_count,
+                total_orders,
+            ),
+        )
+    return (
+        CustomerHistorySyncInfo(
+            synced_at=synced_at,
+            start_at=effective_start,
+            payment_count=cumulative_payment_count,
+            order_count=total_orders,
+        ),
+        changed_count,
+    )
+
+
+def load_customer_history_sync_info(path: Path) -> CustomerHistorySyncInfo | None:
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT synced_at, start_at, payment_count, order_count
+            FROM customer_history_sync
+            WHERE id = 1
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    return CustomerHistorySyncInfo(
+        synced_at=datetime.fromisoformat(str(row["synced_at"])),
+        start_at=datetime.fromisoformat(str(row["start_at"])),
+        payment_count=int(row["payment_count"]),
+        order_count=int(row["order_count"]),
+    )
+
+
+def load_customer_summaries_for_orders(
+    path: Path, order_ids: Iterable[str]
+) -> dict[str, CustomerSummary]:
+    unique_ids = tuple(dict.fromkeys(value for value in order_ids if value))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    with _connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                current.order_id AS current_order_id,
+                current.customer_id AS customer_id,
+                COUNT(history.order_id) AS order_count,
+                MIN(history.ordered_at) AS first_order_at,
+                MAX(history.ordered_at) AS last_order_at
+            FROM customer_history_orders AS current
+            JOIN customer_history_orders AS history
+              ON history.customer_id = current.customer_id
+            WHERE current.order_id IN ({placeholders})
+            GROUP BY current.order_id, current.customer_id
+            """,
+            unique_ids,
+        ).fetchall()
+    return {
+        str(row["current_order_id"]): CustomerSummary(
+            customer_id=str(row["customer_id"]),
+            order_count=int(row["order_count"]),
+            first_order_at=datetime.fromisoformat(str(row["first_order_at"])),
+            last_order_at=datetime.fromisoformat(str(row["last_order_at"])),
+        )
+        for row in rows
+    }
+
+
+def load_customer_history_for_order(
+    path: Path, order_id: str
+) -> CustomerHistory | None:
+    with _connect(path) as connection:
+        current = connection.execute(
+            """
+            SELECT customer_id
+            FROM customer_history_orders
+            WHERE order_id = ?
+            """,
+            (order_id,),
+        ).fetchone()
+        if current is None:
+            return None
+        customer_id = str(current["customer_id"])
+        rows = connection.execute(
+            """
+            SELECT order_id, ordered_at, service_date, source, items_json
+            FROM customer_history_orders
+            WHERE customer_id = ?
+            ORDER BY ordered_at DESC, order_id DESC
+            """,
+            (customer_id,),
+        ).fetchall()
+
+    orders = tuple(
+        CustomerHistoryOrder(
+            customer_id=customer_id,
+            order_id=str(row["order_id"]),
+            ordered_at=datetime.fromisoformat(str(row["ordered_at"])),
+            service_date=date.fromisoformat(str(row["service_date"])),
+            source=str(row["source"]) if row["source"] is not None else None,
+            items=_history_items_from_json(str(row["items_json"])),
+        )
+        for row in rows
+    )
+    if not orders:
+        return None
+    summary = CustomerSummary(
+        customer_id=customer_id,
+        order_count=len(orders),
+        first_order_at=min(order.ordered_at for order in orders),
+        last_order_at=max(order.ordered_at for order in orders),
+    )
+    return CustomerHistory(summary=summary, orders=orders)

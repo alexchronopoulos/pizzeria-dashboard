@@ -2417,3 +2417,183 @@ h2 {
     font-size: 0.78rem;
     font-weight: 800;
 }
+
+/* Sprint 7: rebuildable Square customer history. */
+.badge--customer {
+    border: 1px solid var(--black);
+    color: var(--black);
+    font-weight: 950;
+}
+
+.badge--customer-first-timer {
+    background: var(--brand-yellow);
+}
+
+.badge--customer-returning {
+    background: var(--brand-lavender);
+}
+
+.badge--customer-regular {
+    background: #b9dfbc;
+}
+
+.customer-history-sync-button {
+    min-height: 38px;
+    padding: 7px 11px;
+    border: 2px solid var(--brand-blue);
+    border-radius: 7px;
+    background: white;
+    color: var(--brand-blue);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.customer-history-sync-button:hover,
+.customer-history-sync-button:focus-visible {
+    background: #eaf5fb;
+}
+
+.customer-history-sync-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.order-details-tabs {
+    display: flex;
+    gap: 4px;
+    margin: -2px 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid rgba(17, 17, 17, 0.18);
+}
+
+.order-details-tab {
+    padding: 8px 12px;
+    border: 2px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.order-details-tab.is-active {
+    border-color: var(--brand-blue);
+    background: var(--brand-blue);
+    color: white;
+}
+
+.customer-history-loading,
+.customer-history-empty {
+    padding: 22px;
+    border: 2px dashed rgba(17, 17, 17, 0.28);
+    border-radius: 8px;
+    color: var(--muted);
+}
+
+.customer-history-loading p,
+.customer-history-empty p {
+    margin: 5px 0 0;
+}
+
+.customer-history-content {
+    display: grid;
+    gap: 14px;
+}
+
+.customer-history-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    background: #f8f5e9;
+}
+
+.customer-history-header > div {
+    display: grid;
+    gap: 2px;
+}
+
+.customer-history-header span:not(.badge) {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+.customer-history-list {
+    display: grid;
+    gap: 10px;
+}
+
+.customer-history-order {
+    padding: 12px;
+    border: 2px solid rgba(17, 17, 17, 0.25);
+    border-radius: 8px;
+    background: white;
+}
+
+.customer-history-order--current {
+    border-color: var(--brand-blue);
+    box-shadow: inset 4px 0 0 var(--brand-blue);
+}
+
+.customer-history-order > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.customer-history-order > header > div {
+    display: grid;
+    gap: 2px;
+}
+
+.customer-history-order header span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.history-current-label {
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: var(--brand-blue);
+    color: white !important;
+    font-size: 0.68rem !important;
+    text-transform: uppercase;
+}
+
+.customer-history-order ul {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.customer-history-order li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(17, 17, 17, 0.13);
+    font-size: 0.84rem;
+}
+
+.customer-history-order li span {
+    color: var(--muted);
+    font-weight: 750;
+}
+
+.customer-history-older summary {
+    padding: 9px 0;
+    color: var(--brand-blue);
+    font-weight: 900;
+    cursor: pointer;
+}

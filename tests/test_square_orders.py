@@ -1319,3 +1319,26 @@ def test_square_client_completes_pickup_fulfillment_and_order() -> None:
     assert calls[0][0] == "GET"
     assert calls[1][0] == "PUT"
     assert calls[1][1].endswith("/v2/orders/order-1")
+
+
+def test_square_client_can_list_payments_by_updated_time_for_customer_history() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        return {"payments": []}
+
+    client = SquareClient(
+        SquareSettings(access_token="token", location_id="LOCATION-1"),
+        requester=requester,
+    )
+    client.list_payments(
+        location_id="LOCATION-1",
+        updated_at_begin_time="2026-08-02T12:00:00Z",
+        updated_at_end_time="2026-08-02T13:00:00Z",
+    )
+
+    assert calls[0][0] == "GET"
+    assert "updated_at_begin_time=2026-08-02T12%3A00%3A00Z" in calls[0][1]
+    assert "updated_at_end_time=2026-08-02T13%3A00%3A00Z" in calls[0][1]
+    assert "sort_field=UPDATED_AT" in calls[0][1]

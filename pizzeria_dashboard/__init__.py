@@ -50,6 +50,15 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         SQUARE_INCREMENTAL_OVERLAP_SECONDS=_env_int(
             "SQUARE_INCREMENTAL_OVERLAP_SECONDS", 120
         ),
+        CUSTOMER_HISTORY_START_DATE=os.getenv(
+            "CUSTOMER_HISTORY_START_DATE", "2025-01-01"
+        ),
+        CUSTOMER_HISTORY_REFRESH_SECONDS=_env_int(
+            "CUSTOMER_HISTORY_REFRESH_SECONDS", 60
+        ),
+        CUSTOMER_HISTORY_OVERLAP_HOURS=_env_int(
+            "CUSTOMER_HISTORY_OVERLAP_HOURS", 48
+        ),
         SQUARE_PIZZA_CATEGORY_NAMES=os.getenv(
             "SQUARE_PIZZA_CATEGORY_NAMES",
             "Traditional Pies,Mari Pies,Seasonal Special Pies,Pizza,Pizzas",

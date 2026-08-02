@@ -783,6 +783,28 @@ def convert_square_orders(
     return tuple(sorted(converted, key=lambda order: (order.pickup_at, order.order_id)))
 
 
+def convert_square_order_items(
+    raw_order: Mapping[str, object],
+    *,
+    catalog_index: Mapping[str, CatalogItemInfo],
+    modifier_index: Mapping[str, CatalogModifierInfo] | None = None,
+    rules: ClassificationRules,
+) -> tuple[Item, ...]:
+    """Convert all Square line items for history and reporting views.
+
+    Unlike the production-order adapter, this helper is not tied to a service
+    date or fulfillment. The existing classification rules still hide drinks
+    and individual slices from downstream kitchen/history views.
+    """
+    return _convert_line_items(
+        raw_order,
+        None,
+        catalog_index=catalog_index,
+        modifier_index=modifier_index or {},
+        rules=rules,
+    )
+
+
 def _convert_line_items(
     raw_order: Mapping[str, object],
     fulfillment: Mapping[str, object] | None,

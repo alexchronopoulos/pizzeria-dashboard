@@ -1,0 +1,75 @@
+{% if error %}
+<div class="customer-history-empty" role="alert">
+  <strong>Customer history unavailable</strong>
+  <p>{{ error }}</p>
+</div>
+{% elif not history %}
+<div class="customer-history-empty">
+  <strong>History unavailable</strong>
+  <p>Square did not provide a reliable customer profile for this payment, or the history index has not been built yet.</p>
+</div>
+{% else %}
+<div class="customer-history-content">
+  <header class="customer-history-header">
+    <span class="badge badge--customer badge--customer-{{ history.summary.tag_kind }}">{{ history.summary.tag_label }}</span>
+    <div>
+      <strong>{{ history.summary.order_count }} linked order{% if history.summary.order_count != 1 %}s{% endif %}</strong>
+      <span>First visit {{ history.summary.first_order_at.astimezone(service_timezone).strftime('%B %-d, %Y') }}</span>
+    </div>
+  </header>
+
+  <div class="customer-history-list">
+    {% for history_order in history.recent_orders %}
+    <article class="customer-history-order{% if history_order.order_id == selected_order_id %} customer-history-order--current{% endif %}">
+      <header>
+        <div>
+          <strong>{{ history_order.ordered_at.astimezone(service_timezone).strftime('%A, %B %-d') }}</strong>
+          <span>{{ history_order.ordered_at.astimezone(service_timezone).strftime('%-I:%M %p') }}{% if history_order.source %} · {{ history_order.source }}{% endif %}</span>
+        </div>
+        {% if history_order.order_id == selected_order_id %}<span class="history-current-label">Current order</span>{% endif %}
+      </header>
+      <ul>
+        {% for item in history_order.display_items %}
+        <li>
+          <strong>{{ item.quantity }}× {{ item.display_name }}</strong>
+          {% if item.production_modifiers %}
+          <span>{% for modifier in item.production_modifiers %}{{ modifier.quantity }}× {{ modifier.display_name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+          {% endif %}
+          {% for salad_name, salad_count in item.salad_counts.items() %}<span>{{ salad_count }}× {{ salad_name }}</span>{% endfor %}
+          {% for side_name, side_count in item.side_counts.items() %}<span>{{ side_count }}× {{ side_name }}</span>{% endfor %}
+          {% if item.modifier_cookie_units %}<span>{{ item.modifier_cookie_units }}× Cookie</span>{% endif %}
+        </li>
+        {% else %}
+        <li><span>No food items recorded for this order.</span></li>
+        {% endfor %}
+      </ul>
+    </article>
+    {% endfor %}
+  </div>
+
+  {% if history.older_orders %}
+  <details class="customer-history-older">
+    <summary>Show {{ history.older_orders | length }} older order{% if history.older_orders | length != 1 %}s{% endif %}</summary>
+    <div class="customer-history-list">
+      {% for history_order in history.older_orders %}
+      <article class="customer-history-order">
+        <header>
+          <div>
+            <strong>{{ history_order.ordered_at.astimezone(service_timezone).strftime('%A, %B %-d, %Y') }}</strong>
+            <span>{{ history_order.ordered_at.astimezone(service_timezone).strftime('%-I:%M %p') }}{% if history_order.source %} · {{ history_order.source }}{% endif %}</span>
+          </div>
+        </header>
+        <ul>
+          {% for item in history_order.display_items %}
+          <li><strong>{{ item.quantity }}× {{ item.display_name }}</strong></li>
+          {% else %}
+          <li><span>No food items recorded for this order.</span></li>
+          {% endfor %}
+        </ul>
+      </article>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</div>
+{% endif %}

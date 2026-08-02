@@ -101,6 +101,56 @@
     });
 
 
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const tab = target?.closest("[data-order-details-tab]");
+        if (!tab || !body.contains(tab)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+
+        const tabName = tab.dataset.orderDetailsTab;
+        body.querySelectorAll("[data-order-details-tab]").forEach((candidate) => {
+            const active = candidate === tab;
+            candidate.classList.toggle("is-active", active);
+            candidate.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        body.querySelectorAll("[data-order-details-panel]").forEach((panel) => {
+            panel.hidden = panel.dataset.orderDetailsPanel !== tabName;
+        });
+
+        if (tabName !== "history") {
+            return;
+        }
+        const historyBody = body.querySelector("[data-customer-history-body]");
+        const historyUrl = tab.dataset.customerHistoryUrl;
+        if (!historyBody || !historyUrl || historyBody.dataset.loaded === "true") {
+            return;
+        }
+
+        historyBody.innerHTML = `
+            <div class="order-details-loading" role="status">
+                <strong>Loading customer history…</strong>
+                <span>Looking up linked Square orders in the local history index.</span>
+            </div>
+        `;
+        try {
+            const response = await fetch(historyUrl, {headers: {"Accept": "text/html"}});
+            const html = await response.text();
+            historyBody.innerHTML = html;
+            historyBody.dataset.loaded = "true";
+        } catch (error) {
+            historyBody.innerHTML = `
+                <div class="order-details-error" role="alert">
+                    <strong>Could not load customer history</strong>
+                    <p>${String(error)}</p>
+                </div>
+            `;
+        }
+    });
+
+
     document.addEventListener("submit", async (event) => {
         const form = event.target.closest("[data-walk-in-assignment-form]");
         if (!form) {
@@ -604,9 +654,11 @@
                 throw new Error(result.error || "Square refresh failed.");
             }
 
-            const changes = Number(result.changed_count || 0) + Number(result.removed_count || 0);
+            const orderChanges = Number(result.changed_count || 0) + Number(result.removed_count || 0);
+            const historyChanges = Number(result.customer_history_changed || 0);
+            const changes = orderChanges + historyChanges;
             if (changes > 0) {
-                setStatus(`${changes} order change${changes === 1 ? "" : "s"} found—updating…`);
+                setStatus(`${changes} dashboard change${changes === 1 ? "" : "s"} found—updating…`);
                 window.location.reload();
                 return;
             }
@@ -671,6 +723,20 @@
             }
             button.disabled = true;
             button.textContent = "Full refresh running…";
+        });
+    });
+})();
+
+
+(() => {
+    document.querySelectorAll("[data-customer-history-form]").forEach((form) => {
+        form.addEventListener("submit", () => {
+            const button = form.querySelector("[data-customer-history-button]");
+            if (!button) {
+                return;
+            }
+            button.disabled = true;
+            button.textContent = "Building history…";
         });
     });
 })();

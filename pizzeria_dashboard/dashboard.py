@@ -20,6 +20,9 @@ from flask import (
 from .database import (
     has_orders_for_date,
     load_app_metadata,
+    load_customer_history_for_order,
+    load_customer_history_sync_info,
+    load_customer_summaries_for_orders,
     load_order_slot_assignment_overrides,
     load_order_for_date,
     load_orders_for_date,
@@ -29,6 +32,7 @@ from .database import (
     save_order_slot_assignment,
 )
 from .domain import Order, build_service_board, parse_ticket_pickup_time
+from .customer_history_sync import sync_customer_history
 from .service_config import (
     configuration_from_form,
     load_configuration,
@@ -139,6 +143,11 @@ def index() -> str:
         inventory_side_types,
     )
     sync_info = load_sync_info(database_path, selected_date)
+    customer_summaries = load_customer_summaries_for_orders(
+        database_path,
+        (order.square_order_id or order.order_id for order in service.all_orders),
+    )
+    customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
     square_refresh_controls_visible = (
         source == "square"
@@ -176,6 +185,8 @@ def index() -> str:
         auto_sync_available=auto_sync_available,
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
+        customer_summaries=customer_summaries,
+        customer_history_info=customer_history_info,
     )
 
 
@@ -241,6 +252,59 @@ def order_details():
         today=_now().date(),
         event_at=event_at,
     )
+
+
+@blueprint.get("/customer-history")
+def customer_history_details():
+    selected_date = _parse_service_date(request.args.get("date"))
+    order_id = str(request.args.get("order_id", "")).strip()
+    if not order_id:
+        return render_template(
+            "_customer_history.html",
+            history=None,
+            error="No cached order ID was supplied.",
+        ), 400
+
+    order = load_order_for_date(_database_path(), selected_date, order_id)
+    if order is None:
+        return render_template(
+            "_customer_history.html",
+            history=None,
+            error="This order is no longer present in the selected date cache.",
+        ), 404
+
+    square_order_id = order.square_order_id or order.order_id
+    history = load_customer_history_for_order(_database_path(), square_order_id)
+    return render_template(
+        "_customer_history.html",
+        history=history,
+        selected_order_id=square_order_id,
+        service_timezone=ZoneInfo(current_app.config["SERVICE_TIMEZONE"]),
+        error=None,
+    )
+
+
+@blueprint.post("/customer-history/rebuild")
+def rebuild_customer_history():
+    try:
+        result = sync_customer_history(
+            _database_path(),
+            current_app.config,
+            full=True,
+            force=True,
+        )
+    except SquareError as exc:
+        flash(f"Customer history rebuild failed: {exc}", "error")
+    else:
+        if result is not None:
+            flash(
+                f"Built customer history from {result.info.order_count} linked orders.",
+                "success",
+            )
+            for warning in result.warnings:
+                flash(warning, "warning")
+    selected_date = _parse_service_date(request.form.get("service_date"))
+    return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
 
 
 @blueprint.post("/inventory")
@@ -405,6 +469,21 @@ def update_walk_in_assignment():
     return jsonify(ok=True)
 
 
+def _refresh_customer_history_after_order_sync(*, force: bool = False):
+    """Refresh customer tags without making order sync depend on this cache."""
+    try:
+        return sync_customer_history(
+            _database_path(),
+            current_app.config,
+            full=False,
+            force=force,
+        )
+    except SquareError:
+        # Customer history is a secondary, rebuildable feature. A temporary
+        # Payments API failure must not stop the production order board.
+        return None
+
+
 @blueprint.post("/sync/quick")
 def quick_sync():
     payload = request.get_json(silent=True)
@@ -427,6 +506,7 @@ def quick_sync():
     except SquareError as exc:
         return jsonify(ok=False, error=str(exc)), 502
 
+    history_result = _refresh_customer_history_after_order_sync()
     return jsonify(
         ok=True,
         incremental=result.incremental,
@@ -436,6 +516,9 @@ def quick_sync():
         candidates_scanned=result.candidates_scanned or 0,
         synced_at=result.info.synced_at.isoformat(),
         warnings=list(result.warnings),
+        customer_history_changed=(
+            history_result.changed_count if history_result is not None else 0
+        ),
     )
 
 
@@ -473,6 +556,11 @@ def sync():
     except SquareError as exc:
         flash(f"Square sync failed: {exc}", "error")
     else:
+        history_result = (
+            _refresh_customer_history_after_order_sync(force=True)
+            if result.info.source == "square"
+            else None
+        )
         if result.info.source == "square":
             scanned = (
                 f" from {result.candidates_scanned} Square order candidates"
@@ -493,6 +581,9 @@ def sync():
             )
         for warning in result.warnings:
             flash(warning, "warning")
+        if history_result is not None:
+            for warning in history_result.warnings:
+                flash(warning, "warning")
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
 
 

@@ -2,7 +2,18 @@
 <div class="order-details-error" role="alert"><strong>Order details unavailable</strong><p>{{ error }}</p></div>
 {% elif order %}
 <div class="order-details-content">
-  <section class="order-detail-panel" data-order-panel="pickup">
+  <nav class="order-details-tabs" aria-label="Order details sections">
+    <button class="order-details-tab is-active" type="button" data-order-details-tab="order" aria-selected="true">Order</button>
+    <button
+      class="order-details-tab"
+      type="button"
+      data-order-details-tab="history"
+      data-customer-history-url="{{ url_for('dashboard.customer_history_details', date=selected_date.isoformat(), order_id=order.order_id) }}"
+      aria-selected="false"
+    >Customer history</button>
+  </nav>
+
+  <section class="order-detail-panel" data-order-details-panel="order">
     <header class="order-details-header">
       <div>
         <p class="eyebrow">Order details</p>
@@ -62,6 +73,12 @@
         {% endfor %}
       </div>
     </section>
+  </section>
+
+  <section class="order-detail-panel" data-order-details-panel="history" hidden>
+    <div class="customer-history-loading" data-customer-history-body>
+      <p>Select Customer history to load this customer’s previous orders.</p>
+    </div>
   </section>
 </div>
 {% endif %}
