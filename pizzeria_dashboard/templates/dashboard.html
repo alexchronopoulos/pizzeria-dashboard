@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="3.8.3">
+<header class="masthead masthead--compact" data-dashboard-build="4.0.0">
     <div class="masthead-tools masthead-tools--single-row">
         <h1 class="compact-dashboard-title">Pizzeria Mari Production Dashboard</h1>
         <nav class="date-navigation" aria-label="Service date navigation">
@@ -169,7 +169,14 @@
     </div>
 </details>
 
-<div id="production-board">
+<div
+    id="production-board"
+    data-auto-sync-available="{{ 'true' if auto_sync_available else 'false' }}"
+    data-auto-sync-enabled="{{ 'true' if auto_sync_enabled else 'false' }}"
+    data-auto-sync-url="{{ url_for('dashboard.quick_sync') }}"
+    data-service-date="{{ selected_date.isoformat() }}"
+    data-auto-sync-seconds="{{ auto_sync_seconds }}"
+>
     {% include "_production_board.html" %}
 </div>
 
@@ -177,7 +184,7 @@
 <dialog id="order-details-dialog" class="order-details-dialog" aria-labelledby="order-details-dialog-title">
     <div class="order-details-dialog-shell">
         <div class="order-details-dialog-toolbar">
-            <strong id="order-details-dialog-title">Square order inspector</strong>
+            <strong id="order-details-dialog-title">Order details</strong>
             <button type="button" class="order-details-close" data-order-details-close aria-label="Close order details">Close</button>
         </div>
         <div id="order-details-dialog-body" class="order-details-dialog-body" aria-live="polite">
@@ -188,5 +195,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.3.19') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.4.5') }}" defer></script>
 {% endblock %}

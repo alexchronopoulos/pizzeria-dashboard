@@ -1,5 +1,7 @@
 {% macro render_order(order, window=None, unscheduled=False) -%}
 {% set release_candidate = window and service.is_release_candidate(order, window) %}
+{% set customer_label = order.display_customer_name %}
+{% set can_complete = order.square_order_id and order.square_version is not none and order.fulfillment_uid and not order.is_walk_in and not order.released and order.fulfillment_state != "COMPLETED" %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}"
@@ -13,11 +15,11 @@
     data-assignment-url="{{ url_for('dashboard.update_walk_in_assignment') }}"
     data-walk-in-pizza-units="{{ order.pizza_units }}"
     {% endif %}
-    aria-label="View all details for {{ order.customer_name }}{% if unscheduled %}, unscheduled walk-in{% elif window %} at {{ window.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
+    aria-label="View all details for {{ customer_label }}{% if unscheduled %}, unscheduled walk-in{% elif window %} at {{ window.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
 >
     <div class="order-heading">
         <div class="order-identity">
-            <strong class="customer-name">{{ order.customer_name }}</strong>
+            <strong class="customer-name">{{ customer_label }}</strong>
             {% if order.is_walk_in %}
             <span class="walk-in-paid-time">Paid {{ event_at.strftime('%-I:%M %p %Z') }}</span>
             {% endif %}
@@ -26,7 +28,7 @@
                 class="order-details-trigger"
                 data-order-details-trigger
                 draggable="false"
-                aria-label="View details for {{ order.customer_name }}"
+                aria-label="View details for {{ customer_label }}"
             >Details</button>
         </div>
         <div class="order-badges">
@@ -45,7 +47,22 @@
             {% if order.released and selected_date >= today %}
             <span class="badge badge--released">Capacity released</span>
             {% elif release_candidate %}
-            <span class="badge badge--candidate">Release candidate</span>
+                {% if can_complete %}
+                <button
+                    type="button"
+                    class="badge badge--candidate badge--candidate-action"
+                    data-order-complete-button
+                    data-order-complete-url="{{ url_for('dashboard.complete_square_order') }}"
+                    data-service-date="{{ selected_date.isoformat() }}"
+                    data-order-id="{{ order.order_id }}"
+                    data-order-label="{{ customer_label }} at {{ order.pickup_at.strftime('%-I:%M %p') }}"
+                    draggable="false"
+                    aria-label="Mark {{ customer_label }} completed in Square"
+                    title="Mark this order completed in Square"
+                >Release candidate</button>
+                {% else %}
+                <span class="badge badge--candidate">Release candidate</span>
+                {% endif %}
             {% endif %}
         </div>
     </div>
@@ -189,13 +206,49 @@
             <p class="eyebrow">Pickup queue</p>
             <h2>Service slots</h2>
         </div>
-        <form method="post" action="{{ url_for('dashboard.sync') }}">
-            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-            <button class="sync-button" type="submit">
-                {% if order_source == 'square' %}Pull from Square{% else %}Load sample data{% endif %}
-                — {{ selected_date.strftime('%b %-d') }}
-            </button>
-        </form>
+        <div class="sync-controls">
+            {% if square_refresh_controls_visible %}
+            <button
+                class="incremental-sync-button"
+                type="button"
+                data-incremental-sync-button
+                {% if not auto_sync_available %}disabled title="Incremental updates are available while viewing today."{% endif %}
+            >Incremental update</button>
+            <div
+                class="auto-refresh-control{% if not auto_sync_available %} auto-refresh-control--unavailable{% endif %}"
+                data-auto-refresh-controls
+                data-settings-url="{{ url_for('dashboard.update_auto_refresh_settings') }}"
+            >
+                <label class="auto-refresh-toggle">
+                    <input
+                        type="checkbox"
+                        data-auto-sync-toggle
+                        {% if auto_sync_enabled %}checked{% endif %}
+                        {% if not auto_sync_available %}disabled{% endif %}
+                    >
+                    <span>Auto refresh</span>
+                </label>
+                <label class="auto-refresh-interval">
+                    <span>Every</span>
+                    <select data-auto-sync-interval aria-label="Automatic refresh interval" {% if not auto_sync_available %}disabled{% endif %}>
+                        {% for seconds, label in ((15, '15 sec'), (30, '30 sec'), (60, '1 min'), (120, '2 min'), (300, '5 min')) %}
+                        <option value="{{ seconds }}" {% if auto_sync_seconds == seconds %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                {% if not auto_sync_available %}
+                <span class="auto-refresh-scope-note">Today only</span>
+                {% endif %}
+            </div>
+            {% endif %}
+            <form method="post" action="{{ url_for('dashboard.sync') }}" data-full-sync-form>
+                <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+                <button class="sync-button" type="submit" data-full-sync-button>
+                    {% if order_source == 'square' %}Full refresh from Square{% else %}Load sample data{% endif %}
+                    — {{ selected_date.strftime('%b %-d') }}
+                </button>
+            </form>
+        </div>
     </div>
 
     {% if service.walk_in_orders %}
@@ -297,5 +350,15 @@
         This date has not been synced
         {% endif %}
     </span>
-    <span>Drinks are hidden from the production view</span>
+    <span>
+        {% if auto_sync_available %}
+        <span class="auto-sync-status" data-auto-sync-status>
+            {% if auto_sync_enabled %}Live refresh every {{ auto_sync_seconds }}s{% else %}Auto refresh stopped{% endif %}
+        </span>
+        {% elif square_refresh_controls_visible %}
+        <span class="auto-sync-status">Live refresh is available on today’s dashboard</span>
+        {% else %}
+        Drinks are hidden from the production view
+        {% endif %}
+    </span>
 </footer>

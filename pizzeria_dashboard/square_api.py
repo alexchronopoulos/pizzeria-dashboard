@@ -4,6 +4,7 @@ import json
 import socket
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -111,7 +112,7 @@ class SquareClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Square-Version": self.settings.api_version,
-            "User-Agent": "pizzeria-mari-dashboard/0.3.12",
+            "User-Agent": "pizzeria-mari-dashboard/0.4.1",
         }
 
     def _request(
@@ -211,6 +212,120 @@ class SquareClient:
             raise SquareAPIError("Square did not return an order document.")
         return order
 
+    def complete_order(
+        self,
+        order_id: str,
+        *,
+        fulfillment_uid: str | None,
+    ) -> Mapping[str, object]:
+        """Complete one pickup fulfillment and the order when possible.
+
+        Square requires the latest order version for updates. The dashboard
+        retrieves the order immediately before writing so a stale cached version
+        cannot overwrite a newer change made in Square.
+        """
+        current = self.retrieve_order(order_id)
+        order_state = str(current.get("state", "")).upper()
+        if order_state == "COMPLETED":
+            return current
+        if order_state != "OPEN":
+            raise SquareAPIError(
+                f"Square order {order_id} is {order_state or 'not open'} and cannot be completed."
+            )
+
+        raw_version = current.get("version")
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError) as exc:
+            raise SquareAPIError(
+                "Square did not provide an order version. Orders without a version "
+                "cannot be updated through the Orders API."
+            ) from exc
+
+        raw_fulfillments = current.get("fulfillments", [])
+        fulfillments = (
+            [value for value in raw_fulfillments if isinstance(value, Mapping)]
+            if isinstance(raw_fulfillments, list)
+            else []
+        )
+        terminal_states = {"COMPLETED", "CANCELED", "FAILED"}
+        fulfillment_updates: list[dict[str, str]] = []
+        target_found = fulfillment_uid is None and not fulfillments
+        all_terminal_after_update = True
+
+        for fulfillment in fulfillments:
+            uid = str(fulfillment.get("uid", "")).strip()
+            state = str(fulfillment.get("state", "PROPOSED")).upper()
+            is_target = bool(fulfillment_uid and uid == fulfillment_uid)
+            if is_target:
+                target_found = True
+                if state not in terminal_states:
+                    fulfillment_updates.append({"uid": uid, "state": "COMPLETED"})
+                state = "COMPLETED"
+            if state not in terminal_states:
+                all_terminal_after_update = False
+
+        if fulfillment_uid and not target_found:
+            raise SquareAPIError(
+                "The pickup fulfillment is no longer present on the Square order. "
+                "Refresh the dashboard and try again."
+            )
+        if fulfillments and not fulfillment_uid:
+            raise SquareAPIError(
+                "The cached order does not identify which fulfillment should be completed. "
+                "Run a full refresh and try again."
+            )
+
+        sparse_order: dict[str, object] = {"version": version}
+        if fulfillment_updates:
+            sparse_order["fulfillments"] = fulfillment_updates
+        if all_terminal_after_update:
+            sparse_order["state"] = "COMPLETED"
+
+        if len(sparse_order) == 1:
+            raise SquareAPIError(
+                "This fulfillment is already terminal, but another fulfillment is still open."
+            )
+
+        response = self._request(
+            "PUT",
+            f"/v2/orders/{quote(order_id, safe='')}",
+            {
+                "idempotency_key": str(uuid4()),
+                "order": sparse_order,
+            },
+        )
+        updated = response.get("order")
+        if not isinstance(updated, Mapping):
+            raise SquareAPIError("Square did not return the updated order document.")
+        return updated
+
+    def batch_retrieve_orders(
+        self,
+        order_ids: Sequence[str],
+        *,
+        location_id: str | None = None,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Retrieve complete order documents in batches of up to 100."""
+        unique_ids = tuple(dict.fromkeys(value for value in order_ids if value))
+        if not unique_ids:
+            return ()
+
+        orders: list[Mapping[str, object]] = []
+        for offset in range(0, len(unique_ids), 100):
+            payload: dict[str, object] = {
+                "order_ids": list(unique_ids[offset : offset + 100])
+            }
+            if location_id:
+                payload["location_id"] = location_id
+            response = self._request("POST", "/v2/orders/batch-retrieve", payload)
+            raw_orders = response.get("orders", [])
+            if isinstance(raw_orders, list):
+                orders.extend(
+                    order for order in raw_orders if isinstance(order, Mapping)
+                )
+        return tuple(orders)
+
     def get_payment(self, payment_id: str) -> Mapping[str, object]:
         """Retrieve one payment associated with an order tender."""
         response = self._request(
@@ -221,28 +336,15 @@ class SquareClient:
             raise SquareAPIError("Square did not return a payment document.")
         return payment
 
-    def search_orders_for_service_date(
+    def _search_orders(
         self,
         *,
         location_id: str,
-        created_start_at: str,
-        created_end_at: str,
+        query: Mapping[str, object],
     ) -> tuple[Mapping[str, object], ...]:
-        query: dict[str, object] = {
-            "filter": {
-                "state_filter": {"states": ["OPEN", "COMPLETED"]},
-                "date_time_filter": {
-                    "created_at": {
-                        "start_at": created_start_at,
-                        "end_at": created_end_at,
-                    }
-                },
-            },
-            "sort": {"sort_field": "CREATED_AT", "sort_order": "ASC"},
-        }
         base_payload: dict[str, object] = {
             "location_ids": [location_id],
-            "query": query,
+            "query": dict(query),
             "limit": 1000,
             "return_entries": False,
         }
@@ -264,6 +366,57 @@ class SquareClient:
             if not cursor:
                 break
         return tuple(orders)
+
+    def search_orders_for_service_date(
+        self,
+        *,
+        location_id: str,
+        created_start_at: str,
+        created_end_at: str,
+    ) -> tuple[Mapping[str, object], ...]:
+        return self._search_orders(
+            location_id=location_id,
+            query={
+                "filter": {
+                    "state_filter": {"states": ["OPEN", "COMPLETED"]},
+                    "date_time_filter": {
+                        "created_at": {
+                            "start_at": created_start_at,
+                            "end_at": created_end_at,
+                        }
+                    },
+                },
+                "sort": {"sort_field": "CREATED_AT", "sort_order": "ASC"},
+            },
+        )
+
+    def search_orders_updated_since(
+        self,
+        *,
+        location_id: str,
+        updated_start_at: str,
+        updated_end_at: str,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Return all orders changed in a narrow time window.
+
+        State filtering is intentionally omitted. Incremental refreshes need to
+        see canceled or otherwise ineligible orders so stale cached rows can be
+        removed from the production board.
+        """
+        return self._search_orders(
+            location_id=location_id,
+            query={
+                "filter": {
+                    "date_time_filter": {
+                        "updated_at": {
+                            "start_at": updated_start_at,
+                            "end_at": updated_end_at,
+                        }
+                    }
+                },
+                "sort": {"sort_field": "UPDATED_AT", "sort_order": "ASC"},
+            },
+        )
 
     def search_pickup_orders(
         self,

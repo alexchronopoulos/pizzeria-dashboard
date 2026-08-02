@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 from zoneinfo import ZoneInfo
@@ -18,13 +19,16 @@ from flask import (
 
 from .database import (
     has_orders_for_date,
+    load_app_metadata,
     load_order_slot_assignment_overrides,
     load_order_for_date,
     load_orders_for_date,
     load_sync_info,
+    merge_orders_for_date,
+    save_app_metadata,
     save_order_slot_assignment,
 )
-from .domain import Order, build_service_board, order_to_payload, parse_ticket_pickup_time
+from .domain import Order, build_service_board, parse_ticket_pickup_time
 from .service_config import (
     configuration_from_form,
     load_configuration,
@@ -35,6 +39,10 @@ from .square_api import SquareClient, SquareError, SquareSettings
 from .sync_service import configured_order_source, sync_orders_for_date, sync_sample_orders
 
 blueprint = Blueprint("dashboard", __name__)
+
+AUTO_REFRESH_ENABLED_KEY = "square_auto_refresh_enabled"
+AUTO_REFRESH_SECONDS_KEY = "square_auto_refresh_seconds"
+AUTO_REFRESH_INTERVALS = (15, 30, 60, 120, 300)
 
 
 def _now() -> datetime:
@@ -71,9 +79,27 @@ def _ensure_cached_orders(service_date: date, source: str) -> None:
         sync_sample_orders(database_path, service_date)
 
 
+def _auto_refresh_preferences() -> tuple[bool, int]:
+    database_path = _database_path()
+    configured_seconds = int(current_app.config.get("SQUARE_AUTO_REFRESH_SECONDS", 30))
+    if configured_seconds not in AUTO_REFRESH_INTERVALS:
+        configured_seconds = 30
+    stored_enabled = load_app_metadata(database_path, AUTO_REFRESH_ENABLED_KEY)
+    stored_seconds = load_app_metadata(database_path, AUTO_REFRESH_SECONDS_KEY)
+    enabled = stored_enabled != "false"
+    try:
+        seconds = int(stored_seconds) if stored_seconds is not None else configured_seconds
+    except ValueError:
+        seconds = configured_seconds
+    if seconds not in AUTO_REFRESH_INTERVALS:
+        seconds = configured_seconds
+    return enabled, seconds
+
+
 @blueprint.get("/")
 def index() -> str:
     selected_date = _requested_service_date()
+    now = _now()
     try:
         source = _order_source()
     except SquareError as exc:
@@ -113,6 +139,15 @@ def index() -> str:
         inventory_side_types,
     )
     sync_info = load_sync_info(database_path, selected_date)
+    auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
+    square_refresh_controls_visible = (
+        source == "square"
+        and bool(str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip())
+    )
+    auto_sync_available = (
+        square_refresh_controls_visible
+        and selected_date == now.date()
+    )
 
     return render_template(
         "dashboard.html",
@@ -121,7 +156,7 @@ def index() -> str:
         selected_date=selected_date,
         previous_service_date=selected_date - timedelta(days=1),
         next_service_date=selected_date + timedelta(days=1),
-        today=_now().date(),
+        today=now.date(),
         sync_info=sync_info,
         order_source=source,
         service_configuration=service_configuration,
@@ -137,85 +172,12 @@ def index() -> str:
             if sync_info
             else None
         ),
+        square_refresh_controls_visible=square_refresh_controls_visible,
+        auto_sync_available=auto_sync_available,
+        auto_sync_enabled=auto_sync_available and auto_refresh_preference,
+        auto_sync_seconds=auto_sync_seconds,
     )
 
-
-def _payment_ids(raw_order: Mapping[str, object]) -> tuple[str, ...]:
-    raw_tenders = raw_order.get("tenders", [])
-    if not isinstance(raw_tenders, list):
-        return ()
-
-    payment_ids: list[str] = []
-    for tender in raw_tenders:
-        if not isinstance(tender, Mapping):
-            continue
-        for key in ("payment_id", "id"):
-            value = tender.get(key)
-            if value:
-                payment_id = str(value)
-                if payment_id not in payment_ids:
-                    payment_ids.append(payment_id)
-                break
-    return tuple(payment_ids)
-
-
-def _redact_sensitive(value: object) -> object:
-    """Redact credentials and stable card fingerprints from debug payloads."""
-    sensitive_keys = {
-        "access_token",
-        "card_nonce",
-        "cvv",
-        "fingerprint",
-        "nonce",
-        "verification_token",
-    }
-    if isinstance(value, Mapping):
-        return {
-            str(key): (
-                "[redacted]"
-                if str(key).casefold() in sensitive_keys
-                else _redact_sensitive(item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_sensitive(item) for item in value]
-    if isinstance(value, tuple):
-        return [_redact_sensitive(item) for item in value]
-    return value
-
-
-
-
-def _localize_square_timestamps(value: object) -> object:
-    """Convert Square RFC 3339 timestamp fields to the service timezone.
-
-    Square commonly returns timestamps with a trailing ``Z`` (UTC). Keep the
-    exact instant, but present and inspect it in the configured local timezone.
-    July dates in New York are EDT (UTC-04:00); winter dates are EST (UTC-05:00).
-    """
-    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
-
-    def convert(item: object, key: str | None = None) -> object:
-        if isinstance(item, Mapping):
-            return {str(child_key): convert(child, str(child_key)) for child_key, child in item.items()}
-        if isinstance(item, list):
-            return [convert(child) for child in item]
-        if isinstance(item, tuple):
-            return [convert(child) for child in item]
-        if isinstance(item, str) and key and (key.endswith("_at") or key.endswith("_time")):
-            text = item.strip()
-            normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
-            try:
-                parsed = datetime.fromisoformat(normalized)
-            except ValueError:
-                return item
-            if parsed.tzinfo is None:
-                return item
-            return parsed.astimezone(timezone).isoformat()
-        return item
-
-    return convert(value)
 
 def _effective_walk_in_assignment(
     order: Order,
@@ -252,6 +214,14 @@ def order_details():
     configuration = load_configuration(_database_path())
     pickup_slots = configuration.pickup_times(selected_date)
     assignment_overrides = load_order_slot_assignment_overrides(_database_path(), selected_date)
+    # Older disposable cache rows may predate the explicit is_walk_in field. A
+    # completed fulfillment-free order with a Ticket Name is still a walk-in and
+    # should retain its pickup editor after a software update.
+    is_walk_in = order.is_walk_in or bool(
+        order.ticket_name
+        and order.source_closed_at
+        and order.fulfillment_uid is None
+    )
     assigned_pickup_at, assignment_source = _effective_walk_in_assignment(
         order, selected_date, pickup_slots, assignment_overrides
     )
@@ -262,44 +232,14 @@ def order_details():
 
     return render_template(
         "_order_details.html",
-        order=order, assigned_pickup_at=assigned_pickup_at,
-        assignment_source=assignment_source, pickup_slots=pickup_slots,
-        selected_date=selected_date, today=_now().date(), event_at=event_at,
-    )
-
-
-@blueprint.get("/order-debug")
-def order_debug():
-    selected_date = _parse_service_date(request.args.get("date"))
-    order_id = str(request.args.get("order_id", "")).strip()
-    order = load_order_for_date(_database_path(), selected_date, order_id)
-    if order is None:
-        return render_template("_order_debug.html", order=None, error="This order is no longer present in the selected date cache."), 404
-
-    raw_square_order: object | None = None
-    payments: tuple[object, ...] = ()
-    live_error: str | None = None
-    if order.square_order_id:
-        try:
-            client = SquareClient(SquareSettings.from_mapping(current_app.config))
-            retrieved_order = client.retrieve_order(order.square_order_id)
-            raw_square_order = _localize_square_timestamps(_redact_sensitive(retrieved_order))
-            retrieved_payments: list[object] = []
-            for payment_id in _payment_ids(retrieved_order):
-                try:
-                    retrieved_payments.append(_localize_square_timestamps(_redact_sensitive(client.get_payment(payment_id))))
-                except SquareError as exc:
-                    retrieved_payments.append({"payment_id": payment_id, "dashboard_error": str(exc)})
-            payments = tuple(retrieved_payments)
-        except SquareError as exc:
-            live_error = str(exc)
-    else:
-        live_error = "This is sample data and has no live Square order document."
-
-    return render_template(
-        "_order_debug.html", order=order, cached_payload=order_to_payload(order),
-        raw_square_order=raw_square_order, payments=payments, live_error=live_error,
-        error=None,
+        order=order,
+        is_walk_in=is_walk_in,
+        assigned_pickup_at=assigned_pickup_at,
+        assignment_source=assignment_source,
+        pickup_slots=pickup_slots,
+        selected_date=selected_date,
+        today=_now().date(),
+        event_at=event_at,
     )
 
 
@@ -326,6 +266,102 @@ def update_settings():
     save_configuration(_database_path(), configuration)
     flash("Service setup saved.", "success")
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
+
+
+def _updated_fulfillment_state(
+    raw_order: Mapping[str, object], fulfillment_uid: str | None
+) -> str | None:
+    raw_fulfillments = raw_order.get("fulfillments", [])
+    if not isinstance(raw_fulfillments, list):
+        return None
+    for fulfillment in raw_fulfillments:
+        if not isinstance(fulfillment, Mapping):
+            continue
+        uid = str(fulfillment.get("uid", "")).strip()
+        if fulfillment_uid and uid != fulfillment_uid:
+            continue
+        state = str(fulfillment.get("state", "")).strip().upper()
+        if state:
+            return state
+    return None
+
+
+@blueprint.post("/order-complete")
+def complete_square_order():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    order = load_order_for_date(_database_path(), selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    if order.is_walk_in:
+        return jsonify(ok=False, error="Walk-in orders are already completed in Square."), 400
+    if order.released or order.fulfillment_state == "COMPLETED":
+        return jsonify(ok=True, already_completed=True)
+    if not order.square_order_id:
+        return jsonify(ok=False, error="This order is not linked to Square."), 400
+    if order.square_version is None:
+        return jsonify(
+            ok=False,
+            error=(
+                "Square did not provide an order version, so this order cannot be "
+                "updated through the Orders API."
+            ),
+        ), 400
+    if not order.fulfillment_uid:
+        return jsonify(
+            ok=False,
+            error="This order does not identify a pickup fulfillment. Run a full refresh and try again.",
+        ), 400
+
+    try:
+        client = SquareClient(SquareSettings.from_mapping(current_app.config))
+        updated_raw = client.complete_order(
+            order.square_order_id, fulfillment_uid=order.fulfillment_uid
+        )
+    except SquareError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+    fulfillment_state = _updated_fulfillment_state(
+        updated_raw, order.fulfillment_uid
+    ) or order.fulfillment_state
+    raw_version = updated_raw.get("version")
+    try:
+        square_version = int(raw_version)
+    except (TypeError, ValueError):
+        square_version = order.square_version
+
+    updated_order = replace(
+        order,
+        released=(
+            fulfillment_state == "COMPLETED"
+            or str(updated_raw.get("state", "")).upper() == "COMPLETED"
+        ),
+        square_version=square_version,
+        fulfillment_state=fulfillment_state,
+        source_updated_at=_now(),
+    )
+    merge_orders_for_date(
+        _database_path(),
+        selected_date,
+        (updated_order,),
+        candidate_square_order_ids=(order.square_order_id,),
+        source="square",
+        synced_at=datetime.now(UTC),
+    )
+
+    return jsonify(
+        ok=True,
+        already_completed=False,
+        order_state=str(updated_raw.get("state", "")).upper() or None,
+        fulfillment_state=fulfillment_state,
+    )
 
 
 @blueprint.post("/walk-in-assignment")
@@ -367,6 +403,64 @@ def update_walk_in_assignment():
         _database_path(), selected_date, order_id, pickup_at
     )
     return jsonify(ok=True)
+
+
+@blueprint.post("/sync/quick")
+def quick_sync():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        payload = request.form
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    if selected_date != _now().date():
+        return jsonify(
+            ok=False,
+            error="Automatic refresh is available only for today's service date.",
+        ), 400
+
+    try:
+        result = sync_orders_for_date(
+            _database_path(),
+            selected_date,
+            current_app.config,
+            incremental=True,
+        )
+    except SquareError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+    return jsonify(
+        ok=True,
+        incremental=result.incremental,
+        changed_count=result.changed_count,
+        removed_count=result.removed_count,
+        order_count=result.info.order_count,
+        candidates_scanned=result.candidates_scanned or 0,
+        synced_at=result.info.synced_at.isoformat(),
+        warnings=list(result.warnings),
+    )
+
+
+@blueprint.post("/auto-refresh-settings")
+def update_auto_refresh_settings():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    enabled = bool(payload.get("enabled"))
+    try:
+        seconds = int(payload.get("seconds", 30))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Refresh interval must be a number."), 400
+    if seconds not in AUTO_REFRESH_INTERVALS:
+        return jsonify(
+            ok=False,
+            error="Choose one of the available refresh intervals.",
+        ), 400
+
+    save_app_metadata(
+        _database_path(), AUTO_REFRESH_ENABLED_KEY, "true" if enabled else "false"
+    )
+    save_app_metadata(_database_path(), AUTO_REFRESH_SECONDS_KEY, str(seconds))
+    return jsonify(ok=True, enabled=enabled, seconds=seconds)
 
 
 @blueprint.post("/sync")

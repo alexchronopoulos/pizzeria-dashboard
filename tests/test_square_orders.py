@@ -282,6 +282,44 @@ def test_square_client_paginates_search_orders() -> None:
     assert "fulfillment_filter" not in filter_payload
 
 
+
+
+def test_square_client_searches_incrementally_by_updated_at() -> None:
+    calls: list[Mapping[str, object] | None] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append(payload)
+        return {"orders": [{"id": "changed-order"}]}
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    orders = client.search_orders_updated_since(
+        location_id="LOCATION-1",
+        updated_start_at="2026-07-31T18:00:00Z",
+        updated_end_at="2026-07-31T18:05:00Z",
+    )
+
+    assert [order["id"] for order in orders] == ["changed-order"]
+    payload = calls[0]
+    assert payload is not None
+    query = payload["query"]
+    assert isinstance(query, Mapping)
+    filter_payload = query["filter"]
+    assert isinstance(filter_payload, Mapping)
+    assert "state_filter" not in filter_payload
+    assert filter_payload["date_time_filter"] == {
+        "updated_at": {
+            "start_at": "2026-07-31T18:00:00Z",
+            "end_at": "2026-07-31T18:05:00Z",
+        }
+    }
+    assert query["sort"] == {
+        "sort_field": "UPDATED_AT",
+        "sort_order": "ASC",
+    }
+
+
 def test_completed_orders_without_pickup_times_become_walk_ins() -> None:
     raw_orders = (
         {
@@ -820,15 +858,6 @@ def test_square_sync_writes_live_orders_to_sqlite(tmp_path: Path) -> None:
             # Force name-based fallbacks for this integration test.
             return ()
 
-        def list_payments(self, **kwargs):
-            return (
-                {
-                    "id": "payment-1",
-                    "order_id": "square-order-1",
-                    "receipt_number": "FCMu",
-                },
-            )
-
     result = sync_orders_for_date(
         database_path,
         SERVICE_DATE,
@@ -848,7 +877,7 @@ def test_square_sync_writes_live_orders_to_sqlite(tmp_path: Path) -> None:
     cached = load_orders_for_date(database_path, SERVICE_DATE)
     assert all(order.square_order_id != "draft-cart" for order in cached)
     assert cached[0].square_order_id == "square-order-1"
-    assert cached[0].receipt_number == "FCMu"
+    assert cached[0].receipt_number is None
     assert cached[0].items[0].catalog_object_id == "variation-plain"
 
 
@@ -892,17 +921,6 @@ def test_square_sync_includes_paid_generic_order_source_walk_in(tmp_path: Path) 
         ):
             return ()
 
-        def list_payments(self, **kwargs):
-            return (
-                {
-                    "id": "payment-L1so",
-                    "order_id": "generic-order-L1so",
-                    "receipt_number": "L1so",
-                    "status": "COMPLETED",
-                    "application_details": {"square_product": "SQUARE_POS"},
-                },
-            )
-
     result = sync_orders_for_date(
         database_path,
         SERVICE_DATE,
@@ -920,7 +938,7 @@ def test_square_sync_includes_paid_generic_order_source_walk_in(tmp_path: Path) 
     cached = load_orders_for_date(database_path, SERVICE_DATE)
     assert len(cached) == 1
     assert cached[0].is_walk_in is True
-    assert cached[0].receipt_number == "L1so"
+    assert cached[0].receipt_number is None
     assert cached[0].pickup_at.strftime("%-I:%M %p") == "2:04 PM"
 
 
@@ -1150,3 +1168,154 @@ def test_ticket_name_walk_in_uses_eastern_timestamps_and_auto_places_745() -> No
     target = next(window for window in board.windows if window.pickup_at.hour == 19 and window.pickup_at.minute == 45)
     assert target.orders == (order,)
     assert board.unscheduled_orders == ()
+
+
+def test_square_client_batch_retrieves_orders_in_one_request() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        return {"orders": [{"id": value} for value in payload["order_ids"]]}
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    orders = client.batch_retrieve_orders(
+        ("order-1", "order-2"), location_id="LOCATION-1"
+    )
+
+    assert [order["id"] for order in orders] == ["order-1", "order-2"]
+    assert calls == [
+        (
+            "POST",
+            "https://connect.squareup.com/v2/orders/batch-retrieve",
+            {
+                "order_ids": ["order-1", "order-2"],
+                "location_id": "LOCATION-1",
+            },
+        )
+    ]
+
+
+def test_full_sync_prefilters_unrelated_dates_before_walk_in_enrichment(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    batch_ids: list[str] = []
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+
+        def resolve_location(self):
+            return {"id": "LOCATION-1", "name": "Pizzeria Mari"}
+
+        def search_orders_for_service_date(self, **kwargs):
+            return (
+                {
+                    "id": "old-walk-in",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-01T18:00:00Z",
+                    "closed_at": "2026-07-01T18:05:00Z",
+                    "line_items": [{"name": "Plain Pie", "quantity": "1"}],
+                },
+                {
+                    "id": "today-walk-in",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-31T18:00:00Z",
+                    "closed_at": "2026-07-31T18:05:00Z",
+                    "line_items": [{"name": "Plain Pie", "quantity": "1"}],
+                },
+            )
+
+        def batch_retrieve_orders(self, order_ids, *, location_id=None):
+            batch_ids.extend(order_ids)
+            return (
+                {
+                    "id": "today-walk-in",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-31T18:00:00Z",
+                    "closed_at": "2026-07-31T18:05:00Z",
+                    "ticket_name": "Sam 7:45",
+                    "line_items": [{"name": "Plain Pie", "quantity": "1"}],
+                },
+            )
+
+        def batch_retrieve_catalog_objects(
+            self, object_ids, *, include_related_objects=False
+        ):
+            return ()
+
+    result = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        {
+            "ORDER_SOURCE": "square",
+            "SQUARE_ACCESS_TOKEN": "token",
+            "SQUARE_LOCATION_ID": "LOCATION-1",
+            "SERVICE_TIMEZONE": "America/New_York",
+            "SQUARE_ORDER_LOOKBACK_DAYS": 60,
+        },
+        square_client=FakeSquareClient(),
+    )
+
+    assert result.candidates_scanned == 2
+    assert batch_ids == ["today-walk-in"]
+    cached = load_orders_for_date(database_path, SERVICE_DATE)
+    assert [order.square_order_id for order in cached] == ["today-walk-in"]
+    assert cached[0].ticket_name == "Sam 7:45"
+
+
+def test_square_client_completes_pickup_fulfillment_and_order() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        if method == "GET":
+            return {
+                "order": {
+                    "id": "order-1",
+                    "state": "OPEN",
+                    "version": 7,
+                    "fulfillments": [
+                        {
+                            "uid": "pickup-1",
+                            "type": "PICKUP",
+                            "state": "RESERVED",
+                        }
+                    ],
+                }
+            }
+        assert method == "PUT"
+        assert payload is not None
+        assert payload["order"] == {
+            "version": 7,
+            "fulfillments": [{"uid": "pickup-1", "state": "COMPLETED"}],
+            "state": "COMPLETED",
+        }
+        assert payload.get("idempotency_key")
+        return {
+            "order": {
+                "id": "order-1",
+                "state": "COMPLETED",
+                "version": 8,
+                "fulfillments": [
+                    {
+                        "uid": "pickup-1",
+                        "type": "PICKUP",
+                        "state": "COMPLETED",
+                    }
+                ],
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    updated = client.complete_order("order-1", fulfillment_uid="pickup-1")
+
+    assert updated["state"] == "COMPLETED"
+    assert len(calls) == 2
+    assert calls[0][0] == "GET"
+    assert calls[1][0] == "PUT"
+    assert calls[1][1].endswith("/v2/orders/order-1")

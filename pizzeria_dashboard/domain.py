@@ -26,6 +26,38 @@ _TICKET_TIME_TOKEN = re.compile(
 )
 
 
+def customer_display_name(name: str) -> str:
+    """Return a privacy-preserving customer label for the dashboard.
+
+    Keep the first name and reduce any surname to an initial. Ticket-name pickup
+    times are removed from the visible label, while the original value remains
+    available internally for walk-in slot parsing.
+    """
+    value = str(name or "").strip()
+    if not value:
+        return "Guest"
+
+    normalized = value.replace("\u00a0", " ").replace("：", ":")
+    normalized = _TICKET_TIME_TOKEN.sub(" ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" \t-–—,;/")
+    if not normalized:
+        return "Guest"
+
+    if normalized.casefold() in {"guest", "walk-in", "walk in"}:
+        return normalized
+
+    parts = normalized.split()
+    if len(parts) == 1:
+        return parts[0]
+
+    first_name = parts[0]
+    surname = parts[-1].strip(".,")
+    initial_match = re.search(r"[A-Za-z]", surname)
+    if initial_match is None:
+        return first_name
+    return f"{first_name} {initial_match.group(0).upper()}."
+
+
 def parse_ticket_pickup_time(
     ticket_name: str | None,
     service_date: date,
@@ -219,6 +251,19 @@ class Order:
     source_closed_at: datetime | None = None
     creation_product: str | None = None
     ticket_name: str | None = None
+
+    @property
+    def display_customer_name(self) -> str:
+        """Return the label shown on the production dashboard.
+
+        Scheduled online customers are reduced to first name plus last initial.
+        Walk-in Ticket Names remain unchanged because staff intentionally use that
+        field as the counter-order identifier and pickup-time entry.
+        """
+        if self.is_walk_in:
+            value = str(self.ticket_name or self.customer_name or "Walk-in").strip()
+            return value or "Walk-in"
+        return customer_display_name(self.customer_name)
 
     @property
     def production_items(self) -> tuple[Item, ...]:

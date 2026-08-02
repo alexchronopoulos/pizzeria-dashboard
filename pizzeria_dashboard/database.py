@@ -23,6 +23,13 @@ class SyncInfo:
     order_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    info: SyncInfo
+    changed_count: int
+    removed_count: int
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -193,6 +200,144 @@ def replace_orders_for_date(
         )
 
     return SyncInfo(service_date, source, sync_time, len(order_list))
+
+
+def merge_orders_for_date(
+    path: Path,
+    service_date: date,
+    orders: Iterable[Order],
+    *,
+    candidate_square_order_ids: Iterable[str],
+    source: str,
+    synced_at: datetime | None = None,
+) -> MergeResult:
+    """Merge an incremental Square refresh into one cached service date.
+
+    Every raw Square order returned by the UPDATED_AT search is represented in
+    ``candidate_square_order_ids``. If one of those candidates no longer
+    converts into a production order (for example, it was canceled or its
+    pickup date changed), its stale cached rows are removed. Orders that were
+    not part of the narrow refresh window remain untouched.
+    """
+    order_list = tuple(orders)
+    candidate_ids = {value for value in candidate_square_order_ids if value}
+    sync_time = synced_at or _utc_now()
+    date_key = service_date.isoformat()
+    serialized_orders: dict[str, str] = {
+        order.order_id: json.dumps(
+            order_to_payload(order), separators=(",", ":"), sort_keys=True
+        )
+        for order in order_list
+    }
+    eligible_cache_ids = set(serialized_orders)
+    changed_count = 0
+    removed_count = 0
+
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing_rows = connection.execute(
+            """
+            SELECT order_id, source_payload_json
+            FROM orders
+            WHERE service_date = ?
+            """,
+            (date_key,),
+        ).fetchall()
+        existing_payloads = {
+            str(row["order_id"]): str(row["source_payload_json"])
+            for row in existing_rows
+        }
+
+        stale_cache_ids: list[str] = []
+        if candidate_ids:
+            for row in existing_rows:
+                cache_id = str(row["order_id"])
+                if cache_id in eligible_cache_ids:
+                    continue
+                try:
+                    payload = json.loads(str(row["source_payload_json"]))
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, Mapping):
+                    continue
+                square_order_id = payload.get("square_order_id")
+                if square_order_id and str(square_order_id) in candidate_ids:
+                    stale_cache_ids.append(cache_id)
+
+        for order in order_list:
+            payload = serialized_orders[order.order_id]
+            if existing_payloads.get(order.order_id) != payload:
+                changed_count += 1
+            connection.execute(
+                """
+                INSERT INTO orders (
+                    order_id,
+                    service_date,
+                    pickup_at,
+                    customer_name,
+                    released,
+                    source_payload_json,
+                    source_updated_at,
+                    cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id, service_date) DO UPDATE SET
+                    pickup_at = excluded.pickup_at,
+                    customer_name = excluded.customer_name,
+                    released = excluded.released,
+                    source_payload_json = excluded.source_payload_json,
+                    source_updated_at = excluded.source_updated_at,
+                    cached_at = excluded.cached_at
+                """,
+                (
+                    order.order_id,
+                    date_key,
+                    order.pickup_at.isoformat(),
+                    order.customer_name,
+                    int(order.released),
+                    payload,
+                    (
+                        order.source_updated_at.isoformat()
+                        if order.source_updated_at
+                        else None
+                    ),
+                    sync_time.isoformat(),
+                ),
+            )
+
+        if stale_cache_ids:
+            placeholders = ",".join("?" for _ in stale_cache_ids)
+            connection.execute(
+                f"DELETE FROM orders WHERE service_date = ? AND order_id IN ({placeholders})",
+                (date_key, *stale_cache_ids),
+            )
+            connection.execute(
+                f"DELETE FROM order_slot_assignments WHERE service_date = ? AND order_id IN ({placeholders})",
+                (date_key, *stale_cache_ids),
+            )
+            removed_count = len(stale_cache_ids)
+
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM orders WHERE service_date = ?",
+            (date_key,),
+        ).fetchone()
+        order_count = int(row["total"]) if row is not None else 0
+        connection.execute(
+            """
+            INSERT INTO sync_runs (service_date, source, synced_at, order_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(service_date) DO UPDATE SET
+                source = excluded.source,
+                synced_at = excluded.synced_at,
+                order_count = excluded.order_count
+            """,
+            (date_key, source, sync_time.isoformat(), order_count),
+        )
+
+    return MergeResult(
+        info=SyncInfo(service_date, source, sync_time, order_count),
+        changed_count=changed_count,
+        removed_count=removed_count,
+    )
 
 
 def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:

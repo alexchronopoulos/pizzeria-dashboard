@@ -20,12 +20,10 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Preserves pizza modifiers using Square kitchen names.
 - Counts named salad and `Side` modifiers against configurable prepared inventory.
 - Highlights cookie, side, salad, and removal modifiers for fast kitchen scanning.
-- Resolves receipt and payment details for the order inspector without cluttering production cards.
 - Hides drink-category items and individual slice line items from the production board. Mixed pie-and-slice walk-ins remain visible, with only production-relevant items shown.
-- Retains Square order version and fulfillment identifiers needed for the future
-  Release Capacity action.
-- Opens every order in a modal with the cached kitchen document, the complete live Square order, associated payment documents, fulfillment recipients, source fields, and identifiers useful for debugging `Guest` records.
-- Redacts stable card fingerprints and credential-like fields from the debug JSON.
+- Retains Square order version and fulfillment identifiers needed to complete eligible pickup orders from the Release candidate badge.
+- Opens every order in a compact modal with pickup controls and the cached kitchen view. Raw Square debug data is not exposed in the dashboard.
+- Displays customer names as first name plus last initial, and removes Ticket Name pickup times from visible customer labels.
 - Adds an independent eight-minute timer to every pizza line item. Timers can be started, paused, resumed, and reset.
 - Stores active timer state in the browser so countdowns survive a page refresh on the same device.
 - Detects completed orders with no actual pickup timestamp as walk-ins when their local `created_at` or `closed_at` date matches the selected service date.
@@ -154,9 +152,8 @@ uv run python -m pizzeria_dashboard
 ```
 
 Open `http://localhost:5000`, select a service date, and press **Pull from
-Square**. Click any order card to open the Square order inspector. The modal
-loads the current order and associated tender payments directly from Square,
-while retaining a cached fallback if the live request fails. Each pizza row also includes an eight-minute bake timer. Timer state is local to that browser/device and survives normal page refreshes. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
+Square**. Click any order card to open the pickup-time and kitchen-details modal.
+Each pizza row also includes an eight-minute bake timer. Timer state is local to that browser/device and survives normal page refreshes. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
 
 If Square is temporarily unavailable, previously cached dates remain visible.
 A failed pull does not erase the existing cache.
@@ -245,6 +242,31 @@ named completed fulfillments remain visible because they may represent slots
 manually released through Square.
 
 
-## Receipt and payment details
+## Live service refresh
 
-Square payment data is retained for the order inspector but is no longer displayed on production cards. If the Payments API cannot be read, order sync continues and shows a warning.
+When the dashboard is open on today's service date, it checks Square every 30 seconds. After the initial full-day pull, each check searches only orders whose `updated_at` timestamp changed since the last successful refresh, with a short overlap to avoid missing orders during an in-flight request. New online orders and newly completed walk-ins are merged into SQLite without replacing untouched orders. The regular button remains a full-day rebuild.
+
+Configure the cadence in `.env` when needed:
+
+```dotenv
+SQUARE_AUTO_REFRESH_SECONDS=30
+SQUARE_INCREMENTAL_OVERLAP_SECONDS=120
+```
+
+## Completing Square orders from the dashboard
+
+For scheduled Square pickup orders that include an API order version and a pickup
+fulfillment UID, the production card displays a **Complete** button. The action:
+
+1. retrieves the latest Square order version,
+2. marks the pickup fulfillment `COMPLETED`,
+3. marks the order `COMPLETED` when no other fulfillments remain open, and
+4. updates the disposable SQLite cache so the completed order remains visible.
+
+The Square access token must permit both `ORDERS_READ` and `ORDERS_WRITE`. Walk-in
+orders do not show the button because they already arrive from Square in the
+`COMPLETED` state.
+
+SQLite is used as a rebuildable local cache for fast rendering, incremental sync
+cursors, same-day prepared counts, and dashboard preferences. Square remains the
+source of truth for orders, and a full Square refresh can rebuild the order cache.

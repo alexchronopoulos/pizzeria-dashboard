@@ -46,6 +46,10 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         ),
         SQUARE_TIMEOUT_SECONDS=_env_int("SQUARE_TIMEOUT_SECONDS", 20),
         SQUARE_ORDER_LOOKBACK_DAYS=_env_int("SQUARE_ORDER_LOOKBACK_DAYS", 60),
+        SQUARE_AUTO_REFRESH_SECONDS=_env_int("SQUARE_AUTO_REFRESH_SECONDS", 30),
+        SQUARE_INCREMENTAL_OVERLAP_SECONDS=_env_int(
+            "SQUARE_INCREMENTAL_OVERLAP_SECONDS", 120
+        ),
         SQUARE_PIZZA_CATEGORY_NAMES=os.getenv(
             "SQUARE_PIZZA_CATEGORY_NAMES",
             "Traditional Pies,Mari Pies,Seasonal Special Pies,Pizza,Pizzas",

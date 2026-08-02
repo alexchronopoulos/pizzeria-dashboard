@@ -6,10 +6,20 @@ from pizzeria_dashboard.domain import (
     Modifier,
     Order,
     build_service_board,
+    customer_display_name,
     parse_ticket_pickup_time,
     production_display_name,
 )
 
+
+
+
+def test_customer_display_name_masks_surnames_and_ticket_times() -> None:
+    assert customer_display_name("Alex Christopher") == "Alex C."
+    assert customer_display_name("Tim S.") == "Tim S."
+    assert customer_display_name("Sam 7:45") == "Sam"
+    assert customer_display_name("5:45 Peter Johnson") == "Peter J."
+    assert customer_display_name("Guest") == "Guest"
 
 def test_board_groups_aware_square_order_with_naive_configured_slot() -> None:
     service_date = date(2026, 7, 31)
@@ -223,3 +233,16 @@ def test_ticket_name_auto_assigns_walk_in_but_manual_override_wins() -> None:
         walk_in_assignments={walk_in.order_id: None},
     )
     assert forced_unscheduled.unscheduled_orders == (walk_in,)
+
+
+def test_walk_in_display_name_keeps_ticket_name_unchanged() -> None:
+    order = Order(
+        order_id="walk-in-name",
+        customer_name="Sam 7:45",
+        pickup_at=datetime(2026, 7, 31, 19, 45),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        is_walk_in=True,
+        ticket_name="Sam 7:45",
+    )
+
+    assert order.display_customer_name == "Sam 7:45"

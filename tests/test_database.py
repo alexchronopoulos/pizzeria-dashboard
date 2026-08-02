@@ -11,6 +11,7 @@ from pizzeria_dashboard.database import (
     load_orders_for_date,
     load_service_state_payload,
     load_sync_info,
+    merge_orders_for_date,
     migrate_legacy_service_state,
     replace_orders_for_date,
     save_order_slot_assignment,
@@ -180,3 +181,39 @@ def test_explicit_unscheduled_override_is_preserved_separately(tmp_path: Path) -
     assert load_order_slot_assignment_overrides(database_path, service_date) == {
         "walk-in-1": None
     }
+
+
+def test_incremental_merge_preserves_untouched_orders_and_removes_changed_candidates(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 7, 31)
+    initialize_database(database_path)
+    original = build_sample_orders(service_date)[:3]
+    square_orders = tuple(
+        replace(order, square_order_id=f"square-{index}")
+        for index, order in enumerate(original, start=1)
+    )
+    replace_orders_for_date(
+        database_path, service_date, square_orders, source="square"
+    )
+
+    updated = replace(square_orders[0], customer_name="Updated customer")
+    result = merge_orders_for_date(
+        database_path,
+        service_date,
+        (updated,),
+        candidate_square_order_ids=("square-1", "square-2"),
+        source="square",
+        synced_at=datetime(2026, 7, 31, 18, 0, tzinfo=UTC),
+    )
+
+    cached = load_orders_for_date(database_path, service_date)
+    assert [order.square_order_id for order in cached] == ["square-1", "square-3"]
+    assert next(order for order in cached if order.square_order_id == "square-1").customer_name == "Updated customer"
+    assert result.changed_count == 1
+    assert result.removed_count == 1
+    assert result.info.order_count == 2

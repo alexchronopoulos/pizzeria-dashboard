@@ -2,31 +2,66 @@
 <div class="order-details-error" role="alert"><strong>Order details unavailable</strong><p>{{ error }}</p></div>
 {% elif order %}
 <div class="order-details-content">
-  <div class="order-detail-tabs" role="tablist">
-    <button type="button" class="order-detail-tab is-active" data-order-tab="pickup">Pickup time</button>
-    <button type="button" class="order-detail-tab" data-order-debug-url="{{ url_for('dashboard.order_debug', date=selected_date.isoformat(), order_id=order.order_id) }}">Debug</button>
-  </div>
   <section class="order-detail-panel" data-order-panel="pickup">
     <header class="order-details-header">
-      <div><p class="eyebrow">Order details</p><h2>{{ order.customer_name }}</h2>
-      <p class="order-details-pickup">{% if order.is_walk_in %}Walk-in paid {{ event_at.strftime('%A, %B %-d at %-I:%M %p %Z') }}{% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}{% else %}Pickup {{ order.pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}{% endif %}</p></div>
+      <div>
+        <p class="eyebrow">Order details</p>
+        <h2>{{ order.display_customer_name }}</h2>
+        <p class="order-details-pickup">
+          {% if is_walk_in %}
+          Walk-in paid {{ event_at.strftime('%A, %B %-d at %-I:%M %p %Z') }}{% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}
+          {% else %}
+          <strong>Pickup time:</strong> {{ order.pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}
+          {% endif %}
+        </p>
+      </div>
     </header>
-    {% if order.is_walk_in %}
+    {% if is_walk_in %}
     <section class="order-details-section walk-in-slot-editor">
-      <div class="walk-in-slot-editor-heading"><div><h3>Pickup time</h3>
-      {% if assignment_source == 'ticket-name' %}<p>Automatically parsed from the Ticket Name{% if order.ticket_name %}: <strong>{{ order.ticket_name }}</strong>{% endif %}.</p>
-      {% elif assignment_source == 'manual' %}<p>This time is a saved local override.</p>
-      {% elif assignment_source == 'manual-unscheduled' %}<p>This order is explicitly kept unscheduled.</p>
-      {% else %}<p>No configured slot could be parsed from{% if order.ticket_name %} <strong>{{ order.ticket_name }}</strong>{% else %} the Ticket Name{% endif %}.</p>{% endif %}</div></div>
+      <div class="walk-in-slot-editor-heading">
+        <div>
+          <h3>Pickup time</h3>
+          {% if assignment_source == 'ticket-name' %}
+          <p>Automatically parsed from the Ticket Name.</p>
+          {% elif assignment_source == 'manual' %}
+          <p>This time is a saved local override.</p>
+          {% elif assignment_source == 'manual-unscheduled' %}
+          <p>This order is explicitly kept unscheduled.</p>
+          {% else %}
+          <p>No configured slot could be parsed from the Square Ticket Name.</p>
+          {% endif %}
+        </div>
+      </div>
       <form class="walk-in-slot-form" data-walk-in-assignment-form data-assignment-url="{{ url_for('dashboard.update_walk_in_assignment') }}">
-        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}"><input type="hidden" name="order_id" value="{{ order.order_id }}">
-        <label><span>Dashboard slot</span><select name="pickup_at"><option value=""{% if assigned_pickup_at is none %} selected{% endif %}>Unscheduled</option>{% for slot in pickup_slots %}<option value="{{ slot.isoformat() }}"{% if assigned_pickup_at and assigned_pickup_at.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}>{{ slot.strftime('%-I:%M %p') }}</option>{% endfor %}</select></label>
-        <button type="submit">Save pickup time</button><span class="walk-in-slot-status" data-walk-in-assignment-status aria-live="polite"></span>
+        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+        <input type="hidden" name="order_id" value="{{ order.order_id }}">
+        <label>
+          <span>Dashboard slot</span>
+          <select name="pickup_at">
+            <option value=""{% if assigned_pickup_at is none %} selected{% endif %}>Unscheduled</option>
+            {% for slot in pickup_slots %}
+            <option value="{{ slot.isoformat() }}"{% if assigned_pickup_at and assigned_pickup_at.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}>{{ slot.strftime('%-I:%M %p') }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Save pickup time</button>
+        <span class="walk-in-slot-status" data-walk-in-assignment-status aria-live="polite"></span>
       </form>
     </section>
     {% endif %}
-    <section class="order-details-section"><h3>Kitchen view</h3><div class="detail-item-list">{% for item in order.production_items %}<div class="detail-item"><div class="detail-item-heading"><strong>{{ item.quantity }}× {{ item.display_name }}</strong><span>{{ item.category }}</span></div>{% if item.production_modifiers %}<ul>{% for modifier in item.production_modifiers %}<li>{{ modifier.quantity }}× {{ modifier.display_name }}</li>{% endfor %}</ul>{% endif %}</div>{% endfor %}</div></section>
+    <section class="order-details-section">
+      <h3>Kitchen view</h3>
+      <div class="detail-item-list">
+        {% for item in order.production_items %}
+        <div class="detail-item">
+          <div class="detail-item-heading"><strong>{{ item.quantity }}× {{ item.display_name }}</strong><span>{{ item.category }}</span></div>
+          {% if item.production_modifiers %}
+          <ul>{% for modifier in item.production_modifiers %}<li>{{ modifier.quantity }}× {{ modifier.display_name }}</li>{% endfor %}</ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
   </section>
-  <section class="order-detail-panel" data-order-debug-panel hidden><div class="order-details-loading"><strong>Debug data is loaded only when requested.</strong></div></section>
 </div>
 {% endif %}

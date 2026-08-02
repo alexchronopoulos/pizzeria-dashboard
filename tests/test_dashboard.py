@@ -3,9 +3,14 @@ from html import unescape
 from html.parser import HTMLParser
 from datetime import date
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pizzeria_dashboard import create_app
-from pizzeria_dashboard.database import load_orders_for_date, load_service_state_payload
+from pizzeria_dashboard.database import (
+    load_app_metadata,
+    load_orders_for_date,
+    load_service_state_payload,
+)
 from pizzeria_dashboard.sample_data import build_sample_service
 from pizzeria_dashboard.service_config import load_configuration
 from pizzeria_dashboard.service_state import build_inventory_summary, default_state
@@ -56,6 +61,63 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert response.data.count(b'class="pickup-window') == 16
     assert response.data.count(b'class="order-row') >= 3
     assert len(load_orders_for_date(Path(app.config["DATABASE_PATH"]), date(2026, 7, 31))) == 14
+
+
+def test_today_square_dashboard_has_incremental_and_auto_refresh_controls(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="token",
+        SQUARE_LOCATION_ID="LOCATION-1",
+        AUTO_SEED_SAMPLE_DATA=False,
+    )
+    response = app.test_client().get("/?date=2026-07-31")
+
+    assert response.status_code == 200
+    assert b"Incremental update" in response.data
+    assert b"Auto refresh" in response.data
+    assert b'data-auto-sync-toggle' in response.data
+    assert b'data-auto-sync-interval' in response.data
+    assert b"Full refresh from Square" in response.data
+
+
+
+def test_historical_square_dashboard_still_shows_disabled_refresh_controls(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="token",
+        SQUARE_LOCATION_ID="LOCATION-1",
+        AUTO_SEED_SAMPLE_DATA=False,
+    )
+    response = app.test_client().get("/?date=2026-07-24")
+
+    assert response.status_code == 200
+    assert b"Incremental update" in response.data
+    assert b"Auto refresh" in response.data
+    assert b"Today only" in response.data
+    assert b'data-incremental-sync-button' in response.data
+    assert b'Incremental updates are available while viewing today.' in response.data
+    assert b'data-auto-sync-toggle' in response.data
+
+
+def test_auto_refresh_preferences_persist_in_sqlite(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    response = client.post(
+        "/auto-refresh-settings",
+        json={"enabled": False, "seconds": 120},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"ok": True, "enabled": False, "seconds": 120}
+    database_path = Path(app.config["DATABASE_PATH"])
+    assert load_app_metadata(database_path, "square_auto_refresh_enabled") == "false"
+    assert load_app_metadata(database_path, "square_auto_refresh_seconds") == "120"
 
 
 def test_release_candidates_consider_total_slot_capacity() -> None:
@@ -118,6 +180,7 @@ def test_modifiers_and_salads_render_from_cached_documents(tmp_path: Path) -> No
 
 def test_production_view_hides_trailing_parenthetical_descriptions(tmp_path: Path) -> None:
     from datetime import datetime
+    from zoneinfo import ZoneInfo
     from pizzeria_dashboard.database import replace_orders_for_date
     from pizzeria_dashboard.domain import Item, Modifier, Order
 
@@ -204,7 +267,7 @@ def test_order_cards_open_the_details_dialog(tmp_path: Path) -> None:
     assert b'dashboard.js' in response.data
 
 
-def test_sample_order_details_load_debug_data_separately(tmp_path: Path) -> None:
+def test_sample_order_details_are_privacy_preserving_without_debug_data(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     client = app.test_client()
     client.get("/?date=2026-07-31")
@@ -220,115 +283,47 @@ def test_sample_order_details_load_debug_data_separately(tmp_path: Path) -> None
     assert response.status_code == 200
     assert b"Alex R." in response.data
     assert b"Pickup time" in response.data
-    assert b"Debug" in response.data
+    assert b"Debug" not in response.data
     assert b"Mexican Coke" not in response.data
     assert b"Cached dashboard document" not in response.data
-
-    debug = client.get(
+    assert client.get(
         "/order-debug",
-        query_string={
-            "date": "2026-07-31",
-            "order_id": "sample-2026-07-31-PM-1042",
-        },
-    )
-    assert debug.status_code == 200
-    assert b"Mexican Coke" in debug.data
-    assert b"Cached dashboard document" in debug.data
-    assert b"sample data" in debug.data
+        query_string={"date": "2026-07-31", "order_id": "sample-2026-07-31-PM-1042"},
+    ).status_code == 404
 
 
-def test_guest_order_details_fetch_live_square_order_and_payment(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_customer_names_are_reduced_to_first_name_and_last_initial(tmp_path: Path) -> None:
     from datetime import datetime
     from pizzeria_dashboard.database import replace_orders_for_date
     from pizzeria_dashboard.domain import Item, Order
-    import pizzeria_dashboard.dashboard as dashboard_module
 
-    class FakeSquareClient:
-        def __init__(self, settings):
-            self.settings = settings
-
-        def retrieve_order(self, order_id):
-            assert order_id == "square-guest-order"
-            return {
-                "id": order_id,
-                "state": "OPEN",
-                "customer_id": "CUSTOMER-1",
-                "created_at": "2026-07-30T18:00:00Z",
-                "updated_at": "2026-07-31T18:30:00Z",
-                "creation_source": {
-                    "name": "Square Online",
-                    "product": "SQUARE_ONLINE",
-                },
-                "fulfillments": [
-                    {
-                        "uid": "pickup-1",
-                        "state": "PROPOSED",
-                        "pickup_details": {
-                            "pickup_at": "2026-07-31T20:00:00Z",
-                            "recipient": {},
-                        },
-                    }
-                ],
-                "tenders": [{"payment_id": "payment-1"}],
-            }
-
-        def get_payment(self, payment_id):
-            assert payment_id == "payment-1"
-            return {
-                "id": payment_id,
-                "order_id": "square-guest-order",
-                "receipt_number": "FCMu",
-                "status": "COMPLETED",
-                "card_details": {"card": {"fingerprint": "secret-card-fingerprint"}},
-            }
-
-    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
-    app = _test_app(
-        tmp_path,
-        AUTO_SEED_SAMPLE_DATA=False,
-        ORDER_SOURCE="square",
-        SQUARE_ACCESS_TOKEN="test-token",
-    )
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
     selected = date(2026, 7, 31)
     replace_orders_for_date(
         Path(app.config["DATABASE_PATH"]),
         selected,
         (
             Order(
-                order_id="cache-guest",
-                customer_name="Guest",
+                order_id="private-name",
+                customer_name="Alex Christopher",
                 pickup_at=datetime(2026, 7, 31, 16, 0),
                 items=(Item("Plain Pie", 1, "pizza"),),
-                square_order_id="square-guest-order",
-                fulfillment_uid="pickup-1",
-                fulfillment_state="PROPOSED",
             ),
         ),
-        source="square",
+        source="sample",
     )
 
     client = app.test_client()
+    dashboard = client.get("/?date=2026-07-31")
+    assert b"Alex C." in dashboard.data
+    assert b"Alex Christopher" not in dashboard.data
+
     details = client.get(
         "/order-details",
-        query_string={"date": "2026-07-31", "order_id": "cache-guest"},
+        query_string={"date": "2026-07-31", "order_id": "private-name"},
     )
-    assert details.status_code == 200
-    assert b"SQUARE_ONLINE" not in details.data
-
-    response = client.get(
-        "/order-debug",
-        query_string={"date": "2026-07-31", "order_id": "cache-guest"},
-    )
-
-    assert response.status_code == 200
-    assert b"SQUARE_ONLINE" in response.data
-    assert b"CUSTOMER-1" in response.data
-    assert b"payment-1" in response.data
-    assert b"FCMu" in response.data
-    assert b"[redacted]" in response.data
-    assert b"secret-card-fingerprint" not in response.data
+    assert b"Alex C." in details.data
+    assert b"Alex Christopher" not in details.data
 
 
 def test_drinks_and_order_numbers_are_hidden(tmp_path: Path) -> None:
@@ -699,3 +694,92 @@ def test_ticket_name_auto_assigns_walk_in_and_modal_can_override_slot(
     after_text = _visible_text(after)
     assert "1 waiting" in after_text
     assert "Sam 7:30" in after_text
+
+
+def test_open_square_order_can_be_marked_completed(tmp_path: Path, monkeypatch) -> None:
+    from datetime import datetime
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    class FakeSquareClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def complete_order(self, order_id, *, fulfillment_uid):
+            assert order_id == "square-order-1"
+            assert fulfillment_uid == "pickup-1"
+            return {
+                "id": order_id,
+                "state": "COMPLETED",
+                "version": 8,
+                "updated_at": "2026-07-31T20:05:00Z",
+                "fulfillments": [
+                    {
+                        "uid": fulfillment_uid,
+                        "type": "PICKUP",
+                        "state": "COMPLETED",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(2026, 7, 31, 16, 5, tzinfo=ZoneInfo("America/New_York")),
+    )
+    app = _test_app(
+        tmp_path,
+        AUTO_SEED_SAMPLE_DATA=False,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="test-token",
+    )
+    selected = date(2026, 7, 31)
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]),
+        selected,
+        (
+            Order(
+                order_id="cached-order-1",
+                customer_name="Alex R.",
+                pickup_at=datetime(2026, 7, 31, 16, 0),
+                items=(Item("Plain Pie", 1, "pizza"),),
+                square_order_id="square-order-1",
+                square_version=7,
+                location_id="LOCATION-1",
+                fulfillment_uid="pickup-1",
+                fulfillment_state="RESERVED",
+            ),
+        ),
+        source="square",
+    )
+
+    client = app.test_client()
+    dashboard = client.get("/?date=2026-07-31")
+    assert dashboard.status_code == 200
+    assert b'data-order-complete-button' in dashboard.data
+    assert b'>Release candidate</button>' in dashboard.data
+    assert b'>Complete</button>' not in dashboard.data
+
+    response = client.post(
+        "/order-complete",
+        json={"service_date": "2026-07-31", "order_id": "cached-order-1"},
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ok": True,
+        "already_completed": False,
+        "order_state": "COMPLETED",
+        "fulfillment_state": "COMPLETED",
+    }
+
+    cached = load_orders_for_date(Path(app.config["DATABASE_PATH"]), selected)
+    assert len(cached) == 1
+    assert cached[0].released is True
+    assert cached[0].fulfillment_state == "COMPLETED"
+    assert cached[0].square_version == 8
+
+    refreshed = client.get("/?date=2026-07-31")
+    assert b'data-order-complete-button' not in refreshed.data
+    assert b"Capacity released" in refreshed.data

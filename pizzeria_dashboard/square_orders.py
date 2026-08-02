@@ -178,6 +178,7 @@ class CatalogModifierInfo:
 class SquareOrderPull:
     orders: tuple[Order, ...]
     candidates_scanned: int
+    candidate_square_order_ids: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
 
@@ -200,6 +201,52 @@ def service_date_search_range(
     return _rfc3339_utc(local_start), _rfc3339_utc(local_end)
 
 
+def _raw_order_matches_service_date(
+    raw_order: Mapping[str, object],
+    *,
+    service_date: date,
+    timezone: ZoneInfo,
+) -> bool:
+    """Return whether a raw Square order can appear on this service board.
+
+    Full refreshes search a long creation window so preorders are included. Do
+    this inexpensive date/fulfillment pass before catalog enrichment so orders
+    for unrelated service dates do not trigger extra Catalog or RetrieveOrder
+    traffic.
+    """
+    if str(raw_order.get("state", "")).upper() not in {"OPEN", "COMPLETED"}:
+        return False
+
+    has_pickup_time = False
+    has_non_pickup_fulfillment = False
+    for fulfillment in _mapping_list(raw_order.get("fulfillments")):
+        if str(fulfillment.get("type", "")) != "PICKUP":
+            has_non_pickup_fulfillment = True
+            continue
+        if str(fulfillment.get("state", "")) in {"CANCELED", "FAILED"}:
+            continue
+        pickup_details = fulfillment.get("pickup_details")
+        if not isinstance(pickup_details, Mapping):
+            continue
+        pickup_at = _parse_square_datetime(pickup_details.get("pickup_at"))
+        if pickup_at is None:
+            continue
+        has_pickup_time = True
+        if pickup_at.astimezone(timezone).date() == service_date:
+            return True
+
+    if has_pickup_time or has_non_pickup_fulfillment:
+        return False
+    return (
+        _walk_in_event_at(
+            raw_order,
+            service_date=service_date,
+            timezone=timezone,
+        )
+        is not None
+    )
+
+
 def pull_square_orders_for_date(
     client: SquareClient,
     *,
@@ -208,45 +255,101 @@ def pull_square_orders_for_date(
     location_id: str,
     lookback_days: int,
     rules: ClassificationRules,
+    updated_start_at: str | None = None,
+    updated_end_at: str | None = None,
 ) -> SquareOrderPull:
-    start_at, end_at = service_date_search_range(
+    full_start_at, full_end_at = service_date_search_range(
         service_date, timezone_name, lookback_days
     )
-    search_orders = getattr(client, "search_orders_for_service_date", None)
-    if not callable(search_orders):
-        search_orders = client.search_pickup_orders
-    raw_orders = search_orders(
-        location_id=location_id,
-        created_start_at=start_at,
-        created_end_at=end_at,
-    )
+    if updated_start_at and updated_end_at:
+        search_orders = getattr(client, "search_orders_updated_since", None)
+        if not callable(search_orders):
+            raise SquareAPIError(
+                "This Square client does not support incremental order refreshes."
+            )
+        raw_orders = search_orders(
+            location_id=location_id,
+            updated_start_at=updated_start_at,
+            updated_end_at=updated_end_at,
+        )
+    else:
+        search_orders = getattr(client, "search_orders_for_service_date", None)
+        if not callable(search_orders):
+            search_orders = client.search_pickup_orders
+        raw_orders = search_orders(
+            location_id=location_id,
+            created_start_at=full_start_at,
+            created_end_at=full_end_at,
+        )
 
     warnings: list[str] = []
+    all_raw_orders = tuple(raw_orders)
+    timezone = ZoneInfo(timezone_name)
+    raw_orders = tuple(
+        raw_order
+        for raw_order in all_raw_orders
+        if _raw_order_matches_service_date(
+            raw_order,
+            service_date=service_date,
+            timezone=timezone,
+        )
+    )
+
     # SearchOrders can omit ticket_name for completed counter orders even though
     # RetrieveOrder returns it. Enrich only likely walk-ins that are missing the
     # field so Ticket Names such as "Sam 7:45" can drive automatic placement.
+    # Use Square's batch endpoint rather than one network request per walk-in.
+    missing_ticket_ids = tuple(
+        order_id
+        for raw_order in raw_orders
+        if str(raw_order.get("state", "")).upper() == "COMPLETED"
+        and not str(raw_order.get("ticket_name", "")).strip()
+        and not any(
+            isinstance(fulfillment.get("pickup_details"), Mapping)
+            and bool(
+                str(
+                    fulfillment["pickup_details"].get("pickup_at", "")
+                ).strip()
+            )
+            for fulfillment in _mapping_list(raw_order.get("fulfillments"))
+            if str(fulfillment.get("type", "")) == "PICKUP"
+        )
+        and (order_id := _optional_string(raw_order.get("id")))
+    )
+    batch_retrieve_orders = getattr(client, "batch_retrieve_orders", None)
     retrieve_order = getattr(client, "retrieve_order", None)
-    if callable(retrieve_order):
+    if missing_ticket_ids and callable(batch_retrieve_orders):
+        try:
+            retrieved = batch_retrieve_orders(
+                missing_ticket_ids,
+                location_id=location_id,
+            )
+            retrieved_by_id = {
+                order_id: order
+                for order in retrieved
+                if (order_id := _optional_string(order.get("id")))
+            }
+            raw_orders = tuple(
+                retrieved_by_id.get(_optional_string(order.get("id")) or "", order)
+                for order in raw_orders
+            )
+        except SquareAPIError as exc:
+            warnings.append(
+                "Could not batch-retrieve complete walk-in orders; Ticket Name "
+                f"parsing may be unavailable. Square said: {exc}"
+            )
+    elif missing_ticket_ids and callable(retrieve_order):
         enriched_orders: list[Mapping[str, object]] = []
         for raw_order in raw_orders:
-            state = str(raw_order.get("state", "")).upper()
-            has_ticket_name = bool(str(raw_order.get("ticket_name", "")).strip())
-            fulfillments = _mapping_list(raw_order.get("fulfillments"))
-            has_pickup_at = any(
-                isinstance(f.get("pickup_details"), Mapping)
-                and bool(str(f["pickup_details"].get("pickup_at", "")).strip())
-                for f in fulfillments
-            )
-            if state == "COMPLETED" and not has_ticket_name and not has_pickup_at:
-                order_id = _optional_string(raw_order.get("id"))
-                if order_id:
-                    try:
-                        raw_order = retrieve_order(order_id)
-                    except SquareAPIError as exc:
-                        warnings.append(
-                            f"Could not retrieve full walk-in order {order_id}; "
-                            f"Ticket Name parsing may be unavailable. Square said: {exc}"
-                        )
+            order_id = _optional_string(raw_order.get("id"))
+            if order_id in missing_ticket_ids:
+                try:
+                    raw_order = retrieve_order(order_id)
+                except SquareAPIError as exc:
+                    warnings.append(
+                        f"Could not retrieve full walk-in order {order_id}; "
+                        f"Ticket Name parsing may be unavailable. Square said: {exc}"
+                    )
             enriched_orders.append(raw_order)
         raw_orders = tuple(enriched_orders)
 
@@ -261,40 +364,25 @@ def pull_square_orders_for_date(
             f"classify pizzas and drinks. Square said: {exc}"
         )
 
-    receipt_numbers_by_order_id: dict[str, str] = {}
-    paid_order_ids: set[str] = set()
-    payment_products_by_order_id: dict[str, str] = {}
-    list_payments = getattr(client, "list_payments", None)
-    if callable(list_payments):
-        try:
-            payments = list_payments(
-                location_id=location_id,
-                begin_time=start_at,
-                end_time=end_at,
-            )
-            receipt_numbers_by_order_id = build_receipt_number_index(payments)
-            paid_order_ids = build_paid_order_id_set(payments)
-            payment_products_by_order_id = build_payment_product_index(payments)
-        except SquareAPIError as exc:
-            warnings.append(
-                "Payment details could not be loaded. Orders were synced without "
-                f"receipt or payment-source metadata. Square said: {exc}"
-            )
-
     orders = convert_square_orders(
         raw_orders,
         service_date=service_date,
         timezone_name=timezone_name,
         catalog_index=catalog_index,
         modifier_index=modifier_index,
-        receipt_numbers_by_order_id=receipt_numbers_by_order_id,
-        paid_order_ids=paid_order_ids,
-        payment_products_by_order_id=payment_products_by_order_id,
         rules=rules,
+    )
+    candidate_ids = tuple(
+        dict.fromkeys(
+            order_id
+            for raw_order in all_raw_orders
+            if (order_id := _optional_string(raw_order.get("id")))
+        )
     )
     return SquareOrderPull(
         orders=orders,
-        candidates_scanned=len(raw_orders),
+        candidates_scanned=len(all_raw_orders),
+        candidate_square_order_ids=candidate_ids,
         warnings=tuple(warnings),
     )
 

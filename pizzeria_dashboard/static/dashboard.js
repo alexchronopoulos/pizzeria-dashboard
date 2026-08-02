@@ -31,8 +31,8 @@
         requestController = new AbortController();
         body.innerHTML = `
             <div class="order-details-loading" role="status">
-                <strong>Loading Square order details…</strong>
-                <span>The cached order will remain available if Square cannot be reached.</span>
+                <strong>Loading order details…</strong>
+                <span>Loading the cached kitchen view and pickup controls.</span>
             </div>
         `;
         if (!dialog.open) {
@@ -66,7 +66,11 @@
 
     document.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (!target || target.closest("[data-bake-timer]")) {
+        if (
+            !target
+            || target.closest("[data-bake-timer]")
+            || target.closest("[data-order-complete-button]")
+        ) {
             return;
         }
         const trigger = target.closest("[data-order-details-trigger]");
@@ -96,41 +100,6 @@
         openOrderDetails(row);
     });
 
-    document.addEventListener("click", async (event) => {
-        const target = event.target instanceof Element ? event.target : null;
-        const debugTab = target?.closest("[data-order-debug-url]");
-        if (!debugTab) return;
-        event.preventDefault();
-        const content = debugTab.closest(".order-details-content");
-        const pickupPanel = content?.querySelector('[data-order-panel="pickup"]');
-        const debugPanel = content?.querySelector("[data-order-debug-panel]");
-        content?.querySelectorAll(".order-detail-tab").forEach((tab) => tab.classList.remove("is-active"));
-        debugTab.classList.add("is-active");
-        if (pickupPanel) pickupPanel.hidden = true;
-        if (debugPanel) debugPanel.hidden = false;
-        if (!debugPanel || debugPanel.dataset.loaded === "true") return;
-        debugPanel.innerHTML = '<div class="order-details-loading"><strong>Loading Square debug data…</strong></div>';
-        try {
-            const response = await fetch(debugTab.dataset.orderDebugUrl, {headers: {Accept: "text/html"}});
-            debugPanel.innerHTML = await response.text();
-            debugPanel.dataset.loaded = "true";
-        } catch (error) {
-            debugPanel.innerHTML = `<div class="order-details-error"><strong>Could not load debug data</strong><p>${String(error)}</p></div>`;
-        }
-    });
-
-    document.addEventListener("click", (event) => {
-        const target = event.target instanceof Element ? event.target : null;
-        const pickupTab = target?.closest('[data-order-tab="pickup"]');
-        if (!pickupTab) return;
-        const content = pickupTab.closest(".order-details-content");
-        content?.querySelectorAll(".order-detail-tab").forEach((tab) => tab.classList.remove("is-active"));
-        pickupTab.classList.add("is-active");
-        const pickupPanel = content?.querySelector('[data-order-panel="pickup"]');
-        const debugPanel = content?.querySelector("[data-order-debug-panel]");
-        if (pickupPanel) pickupPanel.hidden = false;
-        if (debugPanel) debugPanel.hidden = true;
-    });
 
     document.addEventListener("submit", async (event) => {
         const form = event.target.closest("[data-walk-in-assignment-form]");
@@ -188,6 +157,56 @@
     dialog.addEventListener("click", (event) => {
         if (event.target === dialog) {
             closeDialog();
+        }
+    });
+})();
+
+(() => {
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-order-complete-button]");
+        if (!button) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const url = button.dataset.orderCompleteUrl;
+        const serviceDate = button.dataset.serviceDate;
+        const orderId = button.dataset.orderId;
+        const label = button.dataset.orderLabel || "this order";
+        if (!url || !serviceDate || !orderId) {
+            return;
+        }
+        if (!window.confirm(`Mark ${label} completed in Square?`)) {
+            return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = "Completing…";
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: serviceDate,
+                    order_id: orderId,
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "Square could not complete the order.");
+            }
+            button.textContent = "Completed";
+            window.location.reload();
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = originalText;
+            window.alert(String(error));
         }
     });
 })();
@@ -479,4 +498,179 @@
         const now = Date.now();
         timers.forEach((timer) => render(timer, now));
     }, 250);
+})();
+
+(() => {
+    const board = document.getElementById("production-board");
+    if (!board || board.dataset.autoSyncAvailable !== "true") {
+        return;
+    }
+
+    const syncUrl = board.dataset.autoSyncUrl;
+    const serviceDate = board.dataset.serviceDate;
+    const status = document.querySelector("[data-auto-sync-status]");
+    const incrementalButton = document.querySelector("[data-incremental-sync-button]");
+    const controls = document.querySelector("[data-auto-refresh-controls]");
+    const toggle = controls?.querySelector("[data-auto-sync-toggle]");
+    const intervalSelect = controls?.querySelector("[data-auto-sync-interval]");
+    const settingsUrl = controls?.dataset.settingsUrl;
+    if (!syncUrl || !serviceDate) {
+        return;
+    }
+
+    let enabled = board.dataset.autoSyncEnabled === "true";
+    let seconds = Math.max(
+        10,
+        Number.parseInt(intervalSelect?.value || board.dataset.autoSyncSeconds || "30", 10),
+    );
+    let syncing = false;
+    let timerId = null;
+
+    const setStatus = (message) => {
+        if (status) {
+            status.textContent = message;
+        }
+    };
+
+    const setButtonState = (busy) => {
+        if (!incrementalButton) {
+            return;
+        }
+        incrementalButton.disabled = busy;
+        incrementalButton.textContent = busy ? "Checking Square…" : "Incremental update";
+    };
+
+    const schedule = (delaySeconds = seconds) => {
+        window.clearTimeout(timerId);
+        timerId = null;
+        if (!enabled) {
+            setStatus("Auto refresh stopped");
+            return;
+        }
+        timerId = window.setTimeout(() => runQuickSync(false), delaySeconds * 1000);
+    };
+
+    const shouldDefer = () => (
+        document.hidden
+        || Boolean(document.querySelector("dialog[open]"))
+        || document.body.classList.contains("walk-in-assignment-pending")
+    );
+
+    const savePreferences = async () => {
+        if (!settingsUrl) {
+            return;
+        }
+        try {
+            const response = await fetch(settingsUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({enabled, seconds}),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "Could not save refresh settings.");
+            }
+        } catch (error) {
+            setStatus(`Settings not saved · ${String(error)}`);
+        }
+    };
+
+    const runQuickSync = async (manual = false) => {
+        if (syncing) {
+            return;
+        }
+        if (!manual && shouldDefer()) {
+            schedule(5);
+            return;
+        }
+
+        syncing = true;
+        setButtonState(true);
+        setStatus(manual ? "Running incremental update…" : "Checking Square…");
+        try {
+            const response = await fetch(syncUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({service_date: serviceDate}),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "Square refresh failed.");
+            }
+
+            const changes = Number(result.changed_count || 0) + Number(result.removed_count || 0);
+            if (changes > 0) {
+                setStatus(`${changes} order change${changes === 1 ? "" : "s"} found—updating…`);
+                window.location.reload();
+                return;
+            }
+
+            const now = new Date();
+            const checkedAt = now.toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+                second: "2-digit",
+            });
+            setStatus(`${enabled ? "Live" : "Incremental update complete"} · checked ${checkedAt}`);
+        } catch (error) {
+            setStatus(`Refresh paused · ${String(error)}`);
+        } finally {
+            syncing = false;
+            setButtonState(false);
+            schedule();
+        }
+    };
+
+    incrementalButton?.addEventListener("click", () => runQuickSync(true));
+
+    toggle?.addEventListener("change", () => {
+        enabled = toggle.checked;
+        savePreferences();
+        if (enabled) {
+            setStatus(`Auto refresh enabled · every ${seconds}s`);
+            schedule(1);
+        } else {
+            window.clearTimeout(timerId);
+            timerId = null;
+            setStatus("Auto refresh stopped");
+        }
+    });
+
+    intervalSelect?.addEventListener("change", () => {
+        seconds = Math.max(10, Number.parseInt(intervalSelect.value || "30", 10));
+        savePreferences();
+        setStatus(enabled ? `Auto refresh set to every ${seconds}s` : "Auto refresh stopped");
+        schedule();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && enabled) {
+            schedule(1);
+        }
+    });
+
+    if (enabled) {
+        schedule(3);
+    } else {
+        setStatus("Auto refresh stopped");
+    }
+})();
+
+(() => {
+    document.querySelectorAll("[data-full-sync-form]").forEach((form) => {
+        form.addEventListener("submit", () => {
+            const button = form.querySelector("[data-full-sync-button]");
+            if (!button) {
+                return;
+            }
+            button.disabled = true;
+            button.textContent = "Full refresh running…";
+        });
+    });
 })();
