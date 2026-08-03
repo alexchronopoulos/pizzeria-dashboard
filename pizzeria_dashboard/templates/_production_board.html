@@ -75,6 +75,12 @@
             {% endif %}
         </div>
     </div>
+    {% if order.note %}
+    <div class="order-note" aria-label="Order note">
+        <strong>Order note</strong>
+        <span>{{ order.note }}</span>
+    </div>
+    {% endif %}
     <ul class="item-list">
         {% for item in order.production_items %}
         <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}">
@@ -291,12 +297,21 @@
             <h2>Service slots</h2>
         </div>
         <div class="sync-controls">
+            {% if service.windows %}
+            <label class="prep-view-control" data-prep-view-control>
+                <input type="checkbox" data-prep-view-toggle>
+                <span>
+                    <strong>Prep view</strong>
+                    <small>Hide empty &amp; past slots</small>
+                </span>
+            </label>
+            {% endif %}
             {% if square_refresh_controls_visible %}
             <button
                 class="incremental-sync-button"
                 type="button"
                 data-incremental-sync-button
-                {% if not auto_sync_available %}disabled title="Incremental updates are available while viewing today."{% endif %}
+                {% if not incremental_sync_available %}disabled title="Incremental updates are available for today and future service dates."{% endif %}
             >Incremental update</button>
             <div
                 class="auto-refresh-control{% if not auto_sync_available %} auto-refresh-control--unavailable{% endif %}"
@@ -321,7 +336,7 @@
                     </select>
                 </label>
                 {% if not auto_sync_available %}
-                <span class="auto-refresh-scope-note">Today only</span>
+                <span class="auto-refresh-scope-note">Today &amp; future only</span>
                 {% endif %}
             </div>
             {% endif %}
@@ -377,6 +392,8 @@
             class="pickup-window{% if window.is_empty %} pickup-window--empty{% endif %}{% if window.pizza_units > service.pizza_capacity_per_window %} pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %} pickup-window--full{% endif %}"
             data-walk-in-drop-zone
             data-pickup-at="{{ window.pickup_at.isoformat() }}"
+            data-slot-empty="{{ 'true' if window.pizza_units == 0 else 'false' }}"
+            data-slot-past="{{ 'true' if window.pickup_at < current_service_time else 'false' }}"
         >
             <div class="window-time">
                 <time datetime="{{ window.pickup_at.isoformat() }}">{{ window.pickup_at.strftime('%-I:%M') }}</time>
@@ -423,6 +440,9 @@
         </article>
         {% endfor %}
     </div>
+    <p class="prep-view-empty" data-prep-view-empty hidden>
+        No upcoming slots with pizzas.
+    </p>
     {% elif service.unscheduled_orders %}
     <p class="board-empty-state">
         Walk-ins were found, but this day has no configured service slots. Open Service setup to add hours before assigning them.
@@ -448,7 +468,7 @@
             {% if auto_sync_enabled %}Live refresh every {{ auto_sync_seconds }}s{% else %}Auto refresh stopped{% endif %}
         </span>
         {% elif square_refresh_controls_visible %}
-        <span class="auto-sync-status">Live refresh is available on today’s dashboard</span>
+        <span class="auto-sync-status">Refresh controls are unavailable for past dates</span>
         {% else %}
         Drinks are hidden from the production view
         {% endif %}

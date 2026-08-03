@@ -1,7 +1,7 @@
 import sqlite3
 from html import unescape
 from html.parser import HTMLParser
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -82,9 +82,65 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert len(load_orders_for_date(Path(app.config["DATABASE_PATH"]), date(2026, 7, 31))) == 14
 
 
+def test_prep_view_toggle_marks_empty_and_past_slots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            7,
+            31,
+            17,
+            0,
+            1,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'data-prep-view-control' in html
+    assert 'data-prep-view-toggle' in html
+    assert 'data-service-timezone="America/New_York"' in html
+    assert 'data-prep-view-empty' in html
+
+    past_slot_start = html.index('data-pickup-at="2026-07-31T16:00:00"')
+    past_slot_end = html.index(">", past_slot_start)
+    past_slot = html[past_slot_start:past_slot_end]
+    assert 'data-slot-empty="false"' in past_slot
+    assert 'data-slot-past="true"' in past_slot
+
+    empty_slot_start = html.index('data-pickup-at="2026-07-31T17:30:00"')
+    empty_slot_end = html.index(">", empty_slot_start)
+    empty_slot = html[empty_slot_start:empty_slot_end]
+    assert 'data-slot-empty="true"' in empty_slot
+    assert 'data-slot-past="false"' in empty_slot
+
+
 def test_today_square_dashboard_has_incremental_and_auto_refresh_controls(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            7,
+            31,
+            12,
+            0,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
     app = _test_app(
         tmp_path,
         ORDER_SOURCE="square",
@@ -99,13 +155,70 @@ def test_today_square_dashboard_has_incremental_and_auto_refresh_controls(
     assert b"Auto refresh" in response.data
     assert b'data-auto-sync-toggle' in response.data
     assert b'data-auto-sync-interval' in response.data
+    assert b'data-incremental-sync-available="true"' in response.data
+    assert b'data-auto-sync-available="true"' in response.data
     assert b"Full refresh from Square" in response.data
+
+
+def test_future_square_dashboard_allows_incremental_and_auto_refresh(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            7,
+            31,
+            12,
+            0,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="token",
+        SQUARE_LOCATION_ID="LOCATION-1",
+        AUTO_SEED_SAMPLE_DATA=False,
+    )
+    response = app.test_client().get("/?date=2026-08-01")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'data-incremental-sync-available="true"' in html
+    assert 'data-auto-sync-available="true"' in html
+    button_start = html.index('data-incremental-sync-button')
+    button_end = html.index('>', button_start)
+    assert "disabled" not in html[button_start:button_end]
+    toggle_start = html.index('data-auto-sync-toggle')
+    toggle_end = html.index('>', toggle_start)
+    assert "disabled" not in html[toggle_start:toggle_end]
+    assert "Today &amp; future only" not in html
 
 
 
 def test_historical_square_dashboard_still_shows_disabled_refresh_controls(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            7,
+            31,
+            12,
+            0,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
     app = _test_app(
         tmp_path,
         ORDER_SOURCE="square",
@@ -118,9 +231,10 @@ def test_historical_square_dashboard_still_shows_disabled_refresh_controls(
     assert response.status_code == 200
     assert b"Incremental update" in response.data
     assert b"Auto refresh" in response.data
-    assert b"Today only" in response.data
+    assert b"Today &amp; future only" in response.data
     assert b'data-incremental-sync-button' in response.data
-    assert b'Incremental updates are available while viewing today.' in response.data
+    assert b'Incremental updates are available for today and future service dates.' in response.data
+    assert b'data-incremental-sync-available="false"' in response.data
     assert b'data-auto-sync-toggle' in response.data
 
 
@@ -237,6 +351,40 @@ def test_production_view_hides_trailing_parenthetical_descriptions(tmp_path: Pat
     assert "Spring Pie" in visible_text
     assert "1× Spring Beet Salad" in visible_text
     assert "local beets, butterhead, etc." not in visible_text
+
+
+def test_order_note_is_visible_on_main_order_card(tmp_path: Path) -> None:
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]),
+        selected,
+        (
+            Order(
+                order_id="noted-order",
+                customer_name="Alex",
+                pickup_at=datetime(2026, 7, 31, 16, 0),
+                items=(Item("Plain Pie", 1, "pizza"),),
+                note="Please leave this pie uncut.\nCustomer will arrive early.",
+            ),
+        ),
+        source="sample",
+    )
+
+    response = app.test_client().get("/?date=2026-07-31")
+    visible_text = _visible_text(response)
+    cached_order = load_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected
+    )[0]
+
+    assert response.status_code == 200
+    assert "Order note" in visible_text
+    assert "Please leave this pie uncut." in visible_text
+    assert "Customer will arrive early." in visible_text
+    assert cached_order.note == "Please leave this pie uncut.\nCustomer will arrive early."
 
 
 

@@ -396,6 +396,11 @@ h2 {
     gap: 14px;
 }
 
+.pickup-window[hidden],
+.prep-view-empty[hidden] {
+    display: none !important;
+}
+
 .pickup-window,
 .pickup-window--available,
 .pickup-window--full,
@@ -504,6 +509,33 @@ h2 {
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 7px;
+}
+
+.order-note {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px 12px;
+    margin-top: 12px;
+    padding: 9px 11px;
+    border: 2px solid var(--black);
+    border-left: 7px solid var(--brand-orange);
+    border-radius: 7px;
+    background: var(--brand-yellow);
+    color: var(--text);
+}
+
+.order-note strong {
+    font-size: 0.74rem;
+    font-weight: 900;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+}
+
+.order-note span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-weight: 800;
+    white-space: pre-wrap;
 }
 
 .badge {
@@ -1236,6 +1268,10 @@ h2 {
 
     .empty-slot-message span {
         text-align: left;
+    }
+
+    .order-note {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -2353,6 +2389,64 @@ h2 {
     gap: 9px;
 }
 
+.prep-view-control {
+    display: inline-flex;
+    min-height: 46px;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 11px;
+    border: 3px solid var(--black);
+    border-radius: 9px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.prep-view-control input {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    accent-color: var(--brand-green);
+}
+
+.prep-view-control span {
+    display: grid;
+    gap: 1px;
+    line-height: 1.05;
+    white-space: nowrap;
+}
+
+.prep-view-control strong {
+    font-size: 0.84rem;
+    font-weight: 900;
+}
+
+.prep-view-control small {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.prep-view-control--active {
+    background: var(--soft-green);
+}
+
+.prep-view-control:focus-within {
+    outline: 4px solid var(--brand-green);
+    outline-offset: 3px;
+}
+
+.prep-view-empty {
+    margin: 0;
+    padding: 22px;
+    border: 3px dashed var(--black);
+    border-radius: var(--radius);
+    background: var(--brand-cream);
+    color: var(--brand-blue);
+    font-weight: 900;
+    text-align: center;
+}
+
 .incremental-sync-button {
     display: inline-flex;
     min-height: 46px;
@@ -2434,6 +2528,10 @@ h2 {
     }
 
     .auto-refresh-control {
+        justify-content: center;
+    }
+
+    .prep-view-control {
         justify-content: center;
     }
 }

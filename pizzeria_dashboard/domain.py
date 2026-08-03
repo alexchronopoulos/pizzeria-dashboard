@@ -251,6 +251,7 @@ class Order:
     source_closed_at: datetime | None = None
     creation_product: str | None = None
     ticket_name: str | None = None
+    note: str | None = None
 
     @property
     def display_customer_name(self) -> str:
@@ -587,6 +588,7 @@ def order_to_payload(order: Order) -> dict[str, object]:
         ),
         "creation_product": order.creation_product,
         "ticket_name": order.ticket_name,
+        "note": order.note,
         "items": [
             {
                 "name": item.name,
@@ -735,4 +737,5 @@ def order_from_payload(payload: Mapping[str, object]) -> Order:
             if payload.get("ticket_name")
             else None
         ),
+        note=(str(payload["note"]) if payload.get("note") else None),
     )

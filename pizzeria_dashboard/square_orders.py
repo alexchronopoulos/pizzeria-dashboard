@@ -672,6 +672,7 @@ def convert_square_orders(
         )
         creation_product = _creation_product(raw_order)
         ticket_name = _optional_string(raw_order.get("ticket_name"))
+        order_note = _optional_string(raw_order.get("note"))
 
         for fulfillment, pickup_at in matching_fulfillments:
             uid = _optional_string(fulfillment.get("uid"))
@@ -698,6 +699,7 @@ def convert_square_orders(
                 customer_name = str(recipient["display_name"])
 
             fulfillment_state = _optional_string(fulfillment.get("state"))
+            note = _fulfillment_note(fulfillment) or order_note
             # Square can return completed pickup records created by POS or other
             # workflows that have no recipient name. They are not useful on the
             # production board and otherwise appear as mysterious "Guest" orders.
@@ -728,6 +730,7 @@ def convert_square_orders(
                     source_closed_at=source_closed_at,
                     creation_product=creation_product,
                     ticket_name=ticket_name,
+                    note=note,
                 )
             )
 
@@ -777,6 +780,7 @@ def convert_square_orders(
                 source_closed_at=source_closed_at,
                 creation_product=creation_product,
                 ticket_name=ticket_name,
+                note=_first_fulfillment_note(raw_fulfillments) or order_note,
             )
         )
 
@@ -957,6 +961,39 @@ def _mapping_list(value: object) -> tuple[Mapping[str, object], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _fulfillment_note(fulfillment: Mapping[str, object]) -> str | None:
+    """Return the customer-facing note attached to a Square fulfillment.
+
+    Square pickup order instructions are stored on
+    ``fulfillment.pickup_details.note`` rather than on the top-level Order
+    object. Keep support for the other fulfillment detail objects so the
+    adapter remains useful if the dashboard later includes those order types.
+    """
+    for details_key in (
+        "pickup_details",
+        "in_store_details",
+        "delivery_details",
+        "shipment_details",
+    ):
+        details = fulfillment.get(details_key)
+        if not isinstance(details, Mapping):
+            continue
+        note = _optional_string(details.get("note"))
+        if note:
+            return note
+    return None
+
+
+def _first_fulfillment_note(
+    fulfillments: Iterable[Mapping[str, object]],
+) -> str | None:
+    for fulfillment in fulfillments:
+        note = _fulfillment_note(fulfillment)
+        if note:
+            return note
+    return None
 
 
 def _optional_string(value: object) -> str | None:

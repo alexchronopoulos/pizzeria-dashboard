@@ -72,6 +72,7 @@ def _raw_square_orders() -> tuple[Mapping[str, object], ...]:
                     "state": "RESERVED",
                     "pickup_details": {
                         "pickup_at": "2026-07-31T20:00:00Z",
+                        "note": "Please leave this pie uncut.",
                         "recipient": {"display_name": "Alex R."},
                     },
                 }
@@ -168,6 +169,7 @@ def test_square_orders_are_filtered_by_pickup_date_and_keep_modifiers() -> None:
     assert first.receipt_number == "FCMu"
     assert first.square_version == 7
     assert first.fulfillment_uid == "pickup-1"
+    assert first.note == "Please leave this pie uncut."
     assert first.pizza_units == 1
     assert first.items[0].category == "pizza"
     assert first.items[1].category == "drink"
@@ -192,6 +194,72 @@ def test_square_orders_are_filtered_by_pickup_date_and_keep_modifiers() -> None:
         "Pickled chiles",
         "Basil",
     ]
+
+
+def test_pickup_note_is_scoped_to_its_matching_fulfillment() -> None:
+    raw_order = dict(_raw_square_orders()[0])
+    raw_order["fulfillments"] = [
+        {
+            "uid": "pickup-other-day",
+            "type": "PICKUP",
+            "state": "PROPOSED",
+            "pickup_details": {
+                "pickup_at": "2026-08-01T20:00:00Z",
+                "note": "Tomorrow's note",
+                "recipient": {"display_name": "Tomorrow Guest"},
+            },
+        },
+        {
+            "uid": "pickup-today",
+            "type": "PICKUP",
+            "state": "RESERVED",
+            "pickup_details": {
+                "pickup_at": "2026-07-31T20:00:00Z",
+                "note": "Today's note",
+                "recipient": {"display_name": "Alex R."},
+            },
+        },
+    ]
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].fulfillment_uid == "pickup-today"
+    assert orders[0].note == "Today's note"
+
+
+def test_legacy_top_level_order_note_remains_supported() -> None:
+    raw_order = dict(_raw_square_orders()[0])
+    raw_order["note"] = "Legacy top-level note"
+    raw_order["fulfillments"] = [
+        {
+            "uid": "pickup-1",
+            "type": "PICKUP",
+            "state": "RESERVED",
+            "pickup_details": {
+                "pickup_at": "2026-07-31T20:00:00Z",
+                "recipient": {"display_name": "Alex R."},
+            },
+        }
+    ]
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert orders[0].note == "Legacy top-level note"
 
 
 def test_draft_orders_are_excluded_from_production_orders() -> None:

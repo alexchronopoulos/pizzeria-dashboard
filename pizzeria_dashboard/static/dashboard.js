@@ -1,4 +1,90 @@
 (() => {
+    const board = document.getElementById("production-board");
+    const control = document.querySelector("[data-prep-view-control]");
+    const toggle = control?.querySelector("[data-prep-view-toggle]");
+    const slots = Array.from(document.querySelectorAll(".pickup-window[data-pickup-at]"));
+    const emptyState = document.querySelector("[data-prep-view-empty]");
+    if (!board || !control || !toggle || !slots.length) {
+        return;
+    }
+
+    const storageKey = "pizzeria-dashboard:prep-view";
+    const serviceTimezone = board.dataset.serviceTimezone || "America/New_York";
+
+    const serviceNow = () => {
+        try {
+            const parts = new Intl.DateTimeFormat("en-US", {
+                timeZone: serviceTimezone,
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hourCycle: "h23",
+            }).formatToParts(new Date());
+            const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+            return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+        } catch (_error) {
+            const now = new Date();
+            const offsetNow = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+            return offsetNow.toISOString().slice(0, 19);
+        }
+    };
+
+    const savedPreference = () => {
+        try {
+            return window.localStorage.getItem(storageKey) === "true";
+        } catch (_error) {
+            return false;
+        }
+    };
+
+    const savePreference = (enabled) => {
+        try {
+            window.localStorage.setItem(storageKey, enabled ? "true" : "false");
+        } catch (_error) {
+            // The view still works when browser storage is disabled.
+        }
+    };
+
+    const applyPrepView = () => {
+        const enabled = toggle.checked;
+        const now = serviceNow();
+        let visibleSlots = 0;
+
+        slots.forEach((slot) => {
+            const pickupAt = slot.dataset.pickupAt || "";
+            const isPast = pickupAt ? pickupAt < now : slot.dataset.slotPast === "true";
+            const isEmpty = slot.dataset.slotEmpty === "true";
+            slot.dataset.slotPast = isPast ? "true" : "false";
+            slot.hidden = enabled && (isEmpty || isPast);
+            if (!slot.hidden) {
+                visibleSlots += 1;
+            }
+        });
+
+        control.classList.toggle("prep-view-control--active", enabled);
+        control.setAttribute("aria-label", enabled
+            ? "Prep view on. Empty and past slots are hidden."
+            : "Prep view off. All service slots are shown.");
+        if (emptyState) {
+            emptyState.hidden = !enabled || visibleSlots > 0;
+        }
+    };
+
+    toggle.checked = savedPreference();
+    applyPrepView();
+
+    toggle.addEventListener("change", () => {
+        savePreference(toggle.checked);
+        applyPrepView();
+    });
+
+    window.setInterval(applyPrepView, 30_000);
+})();
+
+(() => {
     const dialog = document.getElementById("order-details-dialog");
     const body = document.getElementById("order-details-dialog-body");
     const closeButton = dialog?.querySelector("[data-order-details-close]");
@@ -680,7 +766,13 @@
 
 (() => {
     const board = document.getElementById("production-board");
-    if (!board || board.dataset.autoSyncAvailable !== "true") {
+    if (!board) {
+        return;
+    }
+
+    const incrementalSyncAvailable = board.dataset.incrementalSyncAvailable === "true";
+    const autoSyncAvailable = board.dataset.autoSyncAvailable === "true";
+    if (!incrementalSyncAvailable && !autoSyncAvailable) {
         return;
     }
 
@@ -696,7 +788,7 @@
         return;
     }
 
-    let enabled = board.dataset.autoSyncEnabled === "true";
+    let enabled = autoSyncAvailable && board.dataset.autoSyncEnabled === "true";
     let seconds = Math.max(
         10,
         Number.parseInt(intervalSelect?.value || board.dataset.autoSyncSeconds || "30", 10),
@@ -714,13 +806,16 @@
         if (!incrementalButton) {
             return;
         }
-        incrementalButton.disabled = busy;
+        incrementalButton.disabled = busy || !incrementalSyncAvailable;
         incrementalButton.textContent = busy ? "Checking Square…" : "Incremental update";
     };
 
     const schedule = (delaySeconds = seconds) => {
         window.clearTimeout(timerId);
         timerId = null;
+        if (!autoSyncAvailable) {
+            return;
+        }
         if (!enabled) {
             setStatus("Auto refresh stopped");
             return;
@@ -735,7 +830,7 @@
     );
 
     const savePreferences = async () => {
-        if (!settingsUrl) {
+        if (!autoSyncAvailable || !settingsUrl) {
             return;
         }
         try {
@@ -803,13 +898,17 @@
         } finally {
             syncing = false;
             setButtonState(false);
-            schedule();
+            if (autoSyncAvailable) {
+                schedule();
+            }
         }
     };
 
-    incrementalButton?.addEventListener("click", () => runQuickSync(true));
+    if (incrementalSyncAvailable) {
+        incrementalButton?.addEventListener("click", () => runQuickSync(true));
+    }
 
-    toggle?.addEventListener("change", () => {
+    if (autoSyncAvailable) toggle?.addEventListener("change", () => {
         enabled = toggle.checked;
         savePreferences();
         if (enabled) {
@@ -822,7 +921,7 @@
         }
     });
 
-    intervalSelect?.addEventListener("change", () => {
+    if (autoSyncAvailable) intervalSelect?.addEventListener("change", () => {
         seconds = Math.max(10, Number.parseInt(intervalSelect.value || "30", 10));
         savePreferences();
         setStatus(enabled ? `Auto refresh set to every ${seconds}s` : "Auto refresh stopped");
@@ -835,10 +934,12 @@
         }
     });
 
-    if (enabled) {
-        schedule(3);
-    } else {
-        setStatus("Auto refresh stopped");
+    if (autoSyncAvailable) {
+        if (enabled) {
+            schedule(3);
+        } else {
+            setStatus("Auto refresh stopped");
+        }
     }
 })();
 

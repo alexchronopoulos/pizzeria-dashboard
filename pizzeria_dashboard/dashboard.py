@@ -158,9 +158,13 @@ def index() -> str:
         source == "square"
         and bool(str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip())
     )
+    incremental_sync_available = (
+        square_refresh_controls_visible
+        and selected_date >= now.date()
+    )
     auto_sync_available = (
         square_refresh_controls_visible
-        and selected_date == now.date()
+        and selected_date >= now.date()
     )
 
     return render_template(
@@ -175,6 +179,7 @@ def index() -> str:
         order_source=source,
         service_configuration=service_configuration,
         selected_day_hours=service_configuration.hours_for_date(selected_date),
+        current_service_time=now.replace(tzinfo=None),
         square_configured=bool(
             str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
         ),
@@ -187,6 +192,7 @@ def index() -> str:
             else None
         ),
         square_refresh_controls_visible=square_refresh_controls_visible,
+        incremental_sync_available=incremental_sync_available,
         auto_sync_available=auto_sync_available,
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
@@ -502,10 +508,10 @@ def quick_sync():
     if not isinstance(payload, Mapping):
         payload = request.form
     selected_date = _parse_service_date(str(payload.get("service_date", "")))
-    if selected_date != _now().date():
+    if selected_date < _now().date():
         return jsonify(
             ok=False,
-            error="Automatic refresh is available only for today's service date.",
+            error="Refreshes are available only for today or a future service date.",
         ), 400
 
     try:

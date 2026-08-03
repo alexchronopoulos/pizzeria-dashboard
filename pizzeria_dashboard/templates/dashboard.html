@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.2">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.6">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -62,11 +62,13 @@
 
 <div
     id="production-board"
+    data-incremental-sync-available="{{ 'true' if incremental_sync_available else 'false' }}"
     data-auto-sync-available="{{ 'true' if auto_sync_available else 'false' }}"
     data-auto-sync-enabled="{{ 'true' if auto_sync_enabled else 'false' }}"
     data-auto-sync-url="{{ url_for('dashboard.quick_sync') }}"
     data-service-date="{{ selected_date.isoformat() }}"
     data-auto-sync-seconds="{{ auto_sync_seconds }}"
+    data-service-timezone="{{ service_timezone.key }}"
 >
     {% include "_production_board.html" %}
 </div>
@@ -86,5 +88,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.3') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.6') }}" defer></script>
 {% endblock %}
