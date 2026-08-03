@@ -19,6 +19,7 @@
     {% endif %}
     aria-label="View all details for {{ customer_label }}{% if unscheduled %}, unscheduled walk-in{% elif window %} at {{ window.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
 >
+    <div class="order-content">
     <div class="order-heading">
         <div class="order-identity">
             <strong class="customer-name">{{ customer_label }}</strong>
@@ -85,19 +86,6 @@
                 {% if item.category == "pizza" and selected_date >= today %}
                 <div class="pizza-bake-controls">
                     <div
-                        class="oven-position-selector"
-                        data-oven-position
-                        data-service-date="{{ selected_date.isoformat() }}"
-                        data-oven-position-key="{{ selected_date.isoformat() }}|{{ order.square_order_id or order.order_id }}|{{ item.catalog_object_id or item.name }}|{{ loop.index0 }}"
-                        role="group"
-                        aria-label="Oven position for {{ item.quantity }} {{ item.display_name }}"
-                    >
-                        <button type="button" draggable="false" data-oven-position-choice="top-left" aria-label="Assign {{ item.display_name }} to the top-left oven position" title="Top left">TL</button>
-                        <button type="button" draggable="false" data-oven-position-choice="top-right" aria-label="Assign {{ item.display_name }} to the top-right oven position" title="Top right">TR</button>
-                        <button type="button" draggable="false" data-oven-position-choice="bottom-left" aria-label="Assign {{ item.display_name }} to the bottom-left oven position" title="Bottom left">BL</button>
-                        <button type="button" draggable="false" data-oven-position-choice="bottom-right" aria-label="Assign {{ item.display_name }} to the bottom-right oven position" title="Bottom right">BR</button>
-                    </div>
-                    <div
                         class="bake-timer"
                         data-bake-timer
                         data-bake-duration-seconds="480"
@@ -135,6 +123,30 @@
         </li>
         {% endfor %}
     </ul>
+    </div>
+    {% if selected_date >= today and order.pizza_units %}
+    <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">
+        {% for item in order.production_items %}
+        {% if item.category == "pizza" %}
+        <div class="order-oven-entry">
+            <div
+                class="oven-position-selector"
+                data-oven-position
+                data-service-date="{{ selected_date.isoformat() }}"
+                data-oven-position-key="{{ selected_date.isoformat() }}|{{ order.square_order_id or order.order_id }}|{{ item.catalog_object_id or item.name }}|{{ loop.index0 }}"
+                role="group"
+                aria-label="Oven position for {{ item.quantity }} {{ item.display_name }}"
+            >
+                <button type="button" draggable="false" data-oven-position-choice="top-left" aria-label="Assign {{ item.display_name }} to the top-left oven position" title="Top left"></button>
+                <button type="button" draggable="false" data-oven-position-choice="top-right" aria-label="Assign {{ item.display_name }} to the top-right oven position" title="Top right"></button>
+                <button type="button" draggable="false" data-oven-position-choice="bottom-left" aria-label="Assign {{ item.display_name }} to the bottom-left oven position" title="Bottom left"></button>
+                <button type="button" draggable="false" data-oven-position-choice="bottom-right" aria-label="Assign {{ item.display_name }} to the bottom-right oven position" title="Bottom right"></button>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </aside>
+    {% endif %}
 </div>
 {%- endmacro %}
 

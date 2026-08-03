@@ -1769,33 +1769,58 @@ h2 {
     margin-left: auto;
 }
 
+/* Sprint 8.3: move the oven map into its own column between the order and slot capacity. */
+.order-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0;
+}
+
+.order-content {
+    min-width: 0;
+    padding: 17px 20px 18px;
+}
+
+.order-oven-panel {
+    display: flex;
+    min-width: 116px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    padding: 13px 11px;
+    border-left: 2px solid var(--black);
+    background: var(--brand-cream);
+}
+
+.order-oven-entry {
+    display: grid;
+    justify-items: center;
+}
+
 .oven-position-selector {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: repeat(2, 28px);
-    grid-template-rows: repeat(2, 28px);
-    gap: 4px;
-    padding: 4px;
-    border: 2px solid var(--black);
-    border-radius: 9px;
-    background: var(--brand-cream);
+    grid-template-columns: repeat(2, 42px);
+    grid-template-rows: repeat(2, 42px);
+    gap: 7px;
+    padding: 7px;
+    border: 3px solid var(--black);
+    border-radius: 11px;
+    background: white;
 }
 
 .oven-position-selector button {
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 42px;
+    height: 42px;
     place-items: center;
     padding: 0;
-    border: 2px solid var(--black);
-    border-radius: 5px;
+    border: 3px solid var(--black);
+    border-radius: 7px;
     background: white;
-    color: var(--text);
+    color: transparent;
     cursor: pointer;
-    font-size: 0.58rem;
-    font-weight: 900;
-    letter-spacing: -0.02em;
-    line-height: 1;
     touch-action: manipulation;
 }
 
@@ -1933,15 +1958,22 @@ h2 {
         gap: 6px;
     }
 
-    .oven-position-selector {
-        grid-template-columns: repeat(2, 26px);
-        grid-template-rows: repeat(2, 26px);
+    .order-row {
+        grid-template-columns: 1fr;
     }
 
-    .oven-position-selector button {
-        width: 26px;
-        height: 26px;
+    .order-oven-panel {
+        min-width: 0;
+        align-items: center;
+        padding: 12px 16px 15px;
+        border-top: 2px solid var(--black);
+        border-left: 0;
     }
+
+    .order-oven-entry {
+        width: 100%;
+    }
+
 
     .bake-timer-button {
         min-width: 104px;
