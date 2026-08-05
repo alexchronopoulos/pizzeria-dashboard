@@ -27,6 +27,36 @@
         </p>
       </div>
     </header>
+    <section class="order-details-section internal-note-editor">
+      <div class="internal-note-editor-heading">
+        <div>
+          <h3>Staff note</h3>
+          <p>Saved only in this dashboard. Use for allergies, substitutions, order changes, or reminders.</p>
+        </div>
+      </div>
+      <form
+        class="internal-note-form"
+        data-order-note-form
+        data-order-note-url="{{ url_for('dashboard.update_order_internal_note') }}"
+      >
+        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+        <input type="hidden" name="order_id" value="{{ order.order_id }}">
+        <label>
+          <span>Internal note</span>
+          <textarea
+            name="note"
+            rows="4"
+            maxlength="2000"
+            placeholder="Example: Gluten allergy — change gloves and use a clean cutter."
+          >{{ internal_note or '' }}</textarea>
+        </label>
+        <div class="internal-note-actions">
+          <button type="submit">Save note</button>
+          <button type="button" class="internal-note-clear" data-order-note-clear{% if not internal_note %} hidden{% endif %}>Clear note</button>
+          <span class="internal-note-status" data-order-note-status aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
     {% if is_walk_in %}
     <section class="order-details-section walk-in-slot-editor">
       <div class="walk-in-slot-editor-heading">

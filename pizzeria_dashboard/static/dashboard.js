@@ -238,6 +238,78 @@
     });
 
 
+    document.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const clearButton = target?.closest("[data-order-note-clear]");
+        if (!clearButton || !body.contains(clearButton)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const form = clearButton.closest("[data-order-note-form]");
+        const textarea = form?.querySelector('textarea[name="note"]');
+        if (!form || !textarea) {
+            return;
+        }
+        textarea.value = "";
+        form.requestSubmit();
+    });
+
+    document.addEventListener("submit", async (event) => {
+        const form = event.target.closest("[data-order-note-form]");
+        if (!form) {
+            return;
+        }
+        event.preventDefault();
+
+        const noteUrl = form.dataset.orderNoteUrl;
+        const status = form.querySelector("[data-order-note-status]");
+        const submitButton = form.querySelector('button[type="submit"]');
+        const clearButton = form.querySelector("[data-order-note-clear]");
+        const formData = new FormData(form);
+        if (!noteUrl || !submitButton) {
+            return;
+        }
+
+        submitButton.disabled = true;
+        if (clearButton) {
+            clearButton.disabled = true;
+        }
+        if (status) {
+            status.textContent = "Saving…";
+        }
+        try {
+            const response = await fetch(noteUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: formData.get("service_date"),
+                    order_id: formData.get("order_id"),
+                    note: formData.get("note"),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The staff note could not be saved.");
+            }
+            if (status) {
+                status.textContent = result.note ? "Saved" : "Cleared";
+            }
+            window.location.reload();
+        } catch (error) {
+            submitButton.disabled = false;
+            if (clearButton) {
+                clearButton.disabled = false;
+            }
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
     document.addEventListener("submit", async (event) => {
         const form = event.target.closest("[data-walk-in-assignment-form]");
         if (!form) {

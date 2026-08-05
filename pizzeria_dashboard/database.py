@@ -16,7 +16,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -91,6 +91,17 @@ def initialize_database(path: Path) -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (service_date, order_id)
             );
+
+            CREATE TABLE IF NOT EXISTS order_internal_notes (
+                service_date TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                note TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, order_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_order_internal_notes_service_date
+                ON order_internal_notes (service_date);
 
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT PRIMARY KEY,
@@ -413,6 +424,73 @@ def load_order_for_date(
     if not isinstance(payload, Mapping):
         return None
     return order_from_payload(payload)
+
+
+def load_order_internal_notes_for_date(
+    path: Path, service_date: date
+) -> dict[str, str]:
+    """Load staff-authored notes for orders on one service date."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT order_id, note
+            FROM order_internal_notes
+            WHERE service_date = ?
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    return {str(row["order_id"]): str(row["note"]) for row in rows}
+
+
+def load_order_internal_note(
+    path: Path, service_date: date, order_id: str
+) -> str | None:
+    """Load one staff-authored order note."""
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT note
+            FROM order_internal_notes
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (service_date.isoformat(), order_id),
+        ).fetchone()
+    return str(row["note"]) if row is not None else None
+
+
+def save_order_internal_note(
+    path: Path, service_date: date, order_id: str, note: str
+) -> str | None:
+    """Save or clear a staff note without modifying the cached Square order."""
+    normalized = str(note).replace("\r\n", "\n").replace("\r", "\n").strip()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if normalized:
+            connection.execute(
+                """
+                INSERT INTO order_internal_notes (
+                    service_date, order_id, note, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(service_date, order_id) DO UPDATE SET
+                    note = excluded.note,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    service_date.isoformat(),
+                    order_id,
+                    normalized,
+                    _utc_now().isoformat(),
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                DELETE FROM order_internal_notes
+                WHERE service_date = ? AND order_id = ?
+                """,
+                (service_date.isoformat(), order_id),
+            )
+    return normalized or None
 
 
 def has_orders_for_date(path: Path, service_date: date) -> bool:

@@ -4,6 +4,7 @@
 {% set can_complete = order.square_order_id and order.square_version is not none and order.fulfillment_uid and not order.is_walk_in and not order.released and order.fulfillment_state != "COMPLETED" %}
 {% set customer_order_key = order.square_order_id or order.order_id %}
 {% set customer_summary = customer_summaries.get(customer_order_key) if customer_summaries else none %}
+{% set internal_note = internal_notes.get(order.order_id) if internal_notes else none %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}"
@@ -75,8 +76,14 @@
             {% endif %}
         </div>
     </div>
+    {% if internal_note %}
+    <div class="order-note order-note--internal" aria-label="Staff note">
+        <strong>Staff note</strong>
+        <span>{{ internal_note }}</span>
+    </div>
+    {% endif %}
     {% if order.note %}
-    <div class="order-note" aria-label="Order note">
+    <div class="order-note" aria-label="Customer order note">
         <strong>Order note</strong>
         <span>{{ order.note }}</span>
     </div>

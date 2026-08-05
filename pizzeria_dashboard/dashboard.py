@@ -25,10 +25,13 @@ from .database import (
     load_customer_summaries_for_orders,
     load_order_slot_assignment_overrides,
     load_order_for_date,
+    load_order_internal_note,
+    load_order_internal_notes_for_date,
     load_orders_for_date,
     load_sync_info,
     merge_orders_for_date,
     save_app_metadata,
+    save_order_internal_note,
     save_order_slot_assignment,
 )
 from .domain import Order, build_service_board, parse_ticket_pickup_time
@@ -114,6 +117,7 @@ def index() -> str:
 
     database_path = _database_path()
     orders = load_orders_for_date(database_path, selected_date)
+    internal_notes = load_order_internal_notes_for_date(database_path, selected_date)
     service_configuration = load_configuration(database_path)
     service = build_service_board(
         selected_date,
@@ -199,6 +203,7 @@ def index() -> str:
         customer_summaries=customer_summaries,
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
+        internal_notes=internal_notes,
     )
 
 
@@ -230,7 +235,18 @@ def order_details():
     if not order_id:
         return render_template("_order_details.html", order=None, error="No cached order ID was supplied."), 400
 
-    order = load_order_for_date(_database_path(), selected_date, order_id)
+    # Direct modal requests can arrive before the main board has been opened.
+    # In sample mode, initialize that date's disposable cache just as index()
+    # does. Square-backed dates are never fetched here; they continue to use
+    # whatever has already been cached by an explicit sync.
+    try:
+        source = _order_source()
+    except SquareError:
+        source = "configuration-error"
+    _ensure_cached_orders(selected_date, source)
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
     if order is None:
         return render_template("_order_details.html", order=None, error="This order is no longer present in the selected date cache."), 404
 
@@ -269,7 +285,49 @@ def order_details():
         selected_date=selected_date,
         today=_now().date(),
         event_at=event_at,
+        internal_note=load_order_internal_note(
+            database_path, selected_date, order_id
+        ),
     )
+
+
+@blueprint.post("/order-note")
+def update_order_internal_note():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    # Validate the submitted value before looking up the order so malformed or
+    # oversized notes consistently return 400 rather than being masked by a
+    # missing/stale cache row.
+    raw_note = payload.get("note", "")
+    if raw_note is None:
+        raw_note = ""
+    if not isinstance(raw_note, str):
+        return jsonify(ok=False, error="The note must be text."), 400
+    normalized_note = raw_note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(normalized_note) > 2000:
+        return jsonify(ok=False, error="Staff notes are limited to 2,000 characters."), 400
+
+    try:
+        source = _order_source()
+    except SquareError:
+        source = "configuration-error"
+    _ensure_cached_orders(selected_date, source)
+
+    database_path = _database_path()
+    if load_order_for_date(database_path, selected_date, order_id) is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+
+    saved_note = save_order_internal_note(
+        database_path, selected_date, order_id, normalized_note
+    )
+    return jsonify(ok=True, note=saved_note)
 
 
 @blueprint.get("/customer-history")

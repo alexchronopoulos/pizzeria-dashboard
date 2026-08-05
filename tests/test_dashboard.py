@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from pizzeria_dashboard import create_app
 from pizzeria_dashboard.database import (
     load_app_metadata,
+    load_order_internal_note,
     load_orders_for_date,
     load_service_state_payload,
 )
@@ -386,6 +387,97 @@ def test_order_note_is_visible_on_main_order_card(tmp_path: Path) -> None:
     assert "Customer will arrive early." in visible_text
     assert cached_order.note == "Please leave this pie uncut.\nCustomer will arrive early."
 
+
+
+def test_staff_note_can_be_saved_from_order_details_and_appears_on_card(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = date(2026, 7, 31)
+    order_id = "sample-2026-07-31-PM-1042"
+
+    details = client.get(
+        f"/order-details?date={selected.isoformat()}&order_id={order_id}"
+    )
+    details_html = details.get_data(as_text=True)
+    assert details.status_code == 200
+    assert 'data-order-note-form' in details_html
+    assert 'data-order-note-clear' in details_html
+    assert "Saved only in this dashboard" in details_html
+
+    response = client.post(
+        "/order-note",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order_id,
+            "note": "  Allergy: change gloves.\nSubstitute aged mozzarella.  ",
+        },
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ok": True,
+        "note": "Allergy: change gloves.\nSubstitute aged mozzarella.",
+    }
+    assert load_order_internal_note(
+        Path(app.config["DATABASE_PATH"]), selected, order_id
+    ) == "Allergy: change gloves.\nSubstitute aged mozzarella."
+
+    board = client.get(f"/?date={selected.isoformat()}")
+    visible_text = _visible_text(board)
+    assert "Staff note" in visible_text
+    assert "Allergy: change gloves." in visible_text
+    assert "Substitute aged mozzarella." in visible_text
+    assert b'order-note order-note--internal' in board.data
+
+    details = client.get(
+        f"/order-details?date={selected.isoformat()}&order_id={order_id}"
+    )
+    assert b"Allergy: change gloves." in details.data
+    assert b"Substitute aged mozzarella." in details.data
+
+    cleared = client.post(
+        "/order-note",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order_id,
+            "note": "",
+        },
+    )
+    assert cleared.status_code == 200
+    assert cleared.get_json() == {"ok": True, "note": None}
+    assert load_order_internal_note(
+        Path(app.config["DATABASE_PATH"]), selected, order_id
+    ) is None
+
+    board = client.get(f"/?date={selected.isoformat()}")
+    assert b'order-note order-note--internal' not in board.data
+
+
+def test_staff_note_rejects_missing_orders_and_oversized_text(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+
+    missing = client.post(
+        "/order-note",
+        json={
+            "service_date": "2026-07-31",
+            "order_id": "missing",
+            "note": "Test",
+        },
+    )
+    assert missing.status_code == 404
+
+    too_long = client.post(
+        "/order-note",
+        json={
+            "service_date": "2026-07-31",
+            "order_id": "sample-2026-07-31-PM-1042",
+            "note": "x" * 2001,
+        },
+    )
+    assert too_long.status_code == 400
+    assert "2,000" in too_long.get_json()["error"]
 
 
 def test_past_dates_hide_capacity_released_badges(tmp_path: Path) -> None:

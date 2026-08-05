@@ -524,6 +524,15 @@ h2 {
     color: var(--text);
 }
 
+.order-note--internal {
+    border-left-color: var(--brand-red);
+    background: #f8d8d2;
+}
+
+.order-note--internal strong {
+    color: var(--brand-red);
+}
+
 .order-note strong {
     font-size: 0.74rem;
     font-weight: 900;
@@ -2215,6 +2224,89 @@ h2 {
         border-top: 2px solid var(--black);
         border-left: 7px solid var(--brand-orange);
     }
+}
+
+/* Staff-authored order notes. */
+.internal-note-editor {
+    background: var(--soft-orange);
+}
+
+.internal-note-editor-heading h3,
+.internal-note-editor-heading p {
+    margin: 0;
+}
+
+.internal-note-editor-heading p {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.internal-note-form {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.internal-note-form label {
+    display: grid;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.internal-note-form textarea {
+    width: 100%;
+    min-height: 108px;
+    resize: vertical;
+    padding: 10px 11px;
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    background: white;
+    color: var(--text);
+    font: inherit;
+    font-weight: 750;
+    line-height: 1.35;
+    text-transform: none;
+}
+
+.internal-note-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px;
+}
+
+.internal-note-actions button {
+    min-height: 42px;
+    padding: 7px 13px;
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    background: var(--brand-blue);
+    color: white;
+    font: inherit;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.internal-note-actions .internal-note-clear {
+    background: white;
+    color: var(--brand-red);
+}
+
+.internal-note-actions button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.internal-note-status {
+    color: var(--brand-blue);
+    font-size: 0.78rem;
+    font-weight: 900;
 }
 
 /* Sprint 3.8: ticket-name pickup parsing and modal slot editor. */

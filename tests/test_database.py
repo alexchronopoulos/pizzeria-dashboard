@@ -8,12 +8,15 @@ from pizzeria_dashboard.database import (
     load_order_slot_assignment_overrides,
     load_order_slot_assignments,
     load_order_for_date,
+    load_order_internal_note,
+    load_order_internal_notes_for_date,
     load_orders_for_date,
     load_service_state_payload,
     load_sync_info,
     merge_orders_for_date,
     migrate_legacy_service_state,
     replace_orders_for_date,
+    save_order_internal_note,
     save_order_slot_assignment,
     save_service_state_payload,
 )
@@ -38,6 +41,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "sync_runs",
         "app_metadata",
         "order_slot_assignments",
+        "order_internal_notes",
     } <= tables
 
 
@@ -68,6 +72,43 @@ def test_one_cached_order_can_be_loaded_for_details(tmp_path: Path) -> None:
 
     assert loaded == original[0]
     assert load_order_for_date(database_path, service_date, "missing") is None
+
+
+def test_internal_order_notes_survive_order_refresh_and_can_be_cleared(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 7, 31)
+    initialize_database(database_path)
+    orders = build_sample_orders(service_date)
+    replace_orders_for_date(database_path, service_date, orders, source="sample")
+
+    saved = save_order_internal_note(
+        database_path,
+        service_date,
+        orders[0].order_id,
+        "  Allergy: use clean cutter.\r\nSubstitute basil.  ",
+    )
+
+    assert saved == "Allergy: use clean cutter.\nSubstitute basil."
+    assert load_order_internal_note(
+        database_path, service_date, orders[0].order_id
+    ) == "Allergy: use clean cutter.\nSubstitute basil."
+    assert load_order_internal_notes_for_date(database_path, service_date) == {
+        orders[0].order_id: "Allergy: use clean cutter.\nSubstitute basil."
+    }
+
+    replace_orders_for_date(database_path, service_date, orders, source="sample")
+    assert load_order_internal_note(
+        database_path, service_date, orders[0].order_id
+    ) == "Allergy: use clean cutter.\nSubstitute basil."
+
+    assert save_order_internal_note(
+        database_path, service_date, orders[0].order_id, "   "
+    ) is None
+    assert load_order_internal_note(
+        database_path, service_date, orders[0].order_id
+    ) is None
 
 
 def test_replacing_a_date_removes_stale_cached_orders(tmp_path: Path) -> None:
