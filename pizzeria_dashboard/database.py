@@ -525,7 +525,12 @@ def load_sync_info(path: Path, service_date: date) -> SyncInfo | None:
 def load_order_slot_assignment_overrides(
     path: Path, service_date: date
 ) -> dict[str, datetime | None]:
-    """Load explicit walk-in slot choices, including forced-unscheduled rows."""
+    """Load local pickup-slot overrides for cached orders.
+
+    Walk-ins may use ``None`` to remain explicitly unscheduled. Scheduled
+    Square orders use a concrete timestamp only; deleting their row restores
+    the original pickup time from the cached Square order.
+    """
     with _connect(path) as connection:
         rows = connection.execute(
             """
@@ -553,7 +558,7 @@ def load_order_slot_assignment_overrides(
 def load_order_slot_assignments(
     path: Path, service_date: date
 ) -> dict[str, datetime]:
-    """Load only walk-ins assigned to actual service slots.
+    """Load only orders assigned to actual service slots.
 
     Kept as the public compatibility view used by existing callers and tests.
     Explicit unscheduled overrides are available through
@@ -593,6 +598,22 @@ def save_order_slot_assignment(
                 serialized_pickup_at,
                 _utc_now().isoformat(),
             ),
+        )
+
+
+def delete_order_slot_assignment(
+    path: Path,
+    service_date: date,
+    order_id: str,
+) -> None:
+    """Remove a local slot override and restore the source pickup behavior."""
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            DELETE FROM order_slot_assignments
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (service_date.isoformat(), order_id),
         )
 
 

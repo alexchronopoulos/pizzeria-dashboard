@@ -5,6 +5,8 @@
 {% set customer_order_key = order.square_order_id or order.order_id %}
 {% set customer_summary = customer_summaries.get(customer_order_key) if customer_summaries else none %}
 {% set internal_note = internal_notes.get(order.order_id) if internal_notes else none %}
+{% set pickup_override = pickup_overrides.get(order.order_id) if pickup_overrides and order.order_id in pickup_overrides and not order.is_walk_in else none %}
+{% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}"
@@ -45,6 +47,12 @@
             {% if order.is_walk_in %}
             <span class="badge badge--walk-in">{% if unscheduled %}Unscheduled {% endif %}Walk-in</span>
             {% endif %}
+            {% if pickup_override %}
+            <span
+                class="badge badge--pickup-adjusted"
+                title="Original Square pickup time: {{ original_pickup_at.strftime('%-I:%M %p') }}"
+            >Moved from {{ original_pickup_at.strftime('%-I:%M %p') }}</span>
+            {% endif %}
             {% for salad_name, salad_count in order.salad_summary %}
             <span class="badge badge--salad">{{ salad_count }}× {{ salad_name }}</span>
             {% endfor %}
@@ -65,7 +73,7 @@
                     data-order-complete-url="{{ url_for('dashboard.complete_square_order') }}"
                     data-service-date="{{ selected_date.isoformat() }}"
                     data-order-id="{{ order.order_id }}"
-                    data-order-label="{{ customer_label }} at {{ order.pickup_at.strftime('%-I:%M %p') }}"
+                    data-order-label="{{ customer_label }} at {{ window.pickup_at.strftime('%-I:%M %p') }}"
                     draggable="false"
                     aria-label="Mark {{ customer_label }} completed in Square"
                     title="Mark this order completed in Square"

@@ -31,8 +31,10 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Parses configured pickup times from Ticket Names such as `Sam 7:30` or `5:45 Peter` and automatically places the walk-in into the matching service slot.
 - Supports dragging walk-ins into configured service slots or back to the Unscheduled lane.
 - Adds a pickup-slot selector to the order-details modal for quick reassignment when the destination slot is far down the page.
-- Stores manual walk-in slot assignments and explicit Unscheduled overrides in SQLite so a Square refresh preserves them.
-- Does not write timer or walk-in assignment state back to Square.
+- Lets scheduled pickup orders be moved to another configured dashboard slot while retaining a one-click return to the original Square time.
+- Shows each destination slot's current pizza load before a scheduled order is moved and marks adjusted order cards with their original pickup time.
+- Stores scheduled-order adjustments, manual walk-in assignments, and explicit Unscheduled overrides in SQLite so a Square refresh preserves them.
+- Does not write timer or pickup-time override state back to Square.
 
 The active database remains:
 
@@ -154,6 +156,11 @@ uv run python -m pizzeria_dashboard
 Open `http://localhost:5000`, select a service date, and press **Pull from
 Square**. Click any order card to open the pickup-time and kitchen-details modal.
 Each pizza row also includes an eight-minute bake timer. Timer state is local to that browser/device and survives normal page refreshes. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
+
+For an already scheduled order, choose another configured time in Order Details.
+The production board immediately moves the order and recalculates both slots'
+pizza totals. The Square order itself keeps its original pickup time; select
+**Original Square time** to remove the local override.
 
 If Square is temporarily unavailable, previously cached dates remain visible.
 A failed pull does not erase the existing cache.

@@ -505,8 +505,20 @@ def build_service_board(
     pizza_capacity_per_window: int = 3,
     pickup_times: Iterable[datetime] = (),
     walk_in_assignments: Mapping[str, datetime | None] | None = None,
+    pickup_time_overrides: Mapping[str, datetime | None] | None = None,
 ) -> ServiceBoard:
-    walk_in_assignments = walk_in_assignments or {}
+    """Build the production board using any saved local pickup overrides.
+
+    ``walk_in_assignments`` remains as a compatibility alias for older callers.
+    Concrete timestamps in ``pickup_time_overrides`` move any order to that
+    dashboard slot. ``None`` remains meaningful only for walk-ins, where it
+    forces the order into Unscheduled.
+    """
+    assignments = (
+        pickup_time_overrides
+        if pickup_time_overrides is not None
+        else (walk_in_assignments or {})
+    )
     configured_pickup_times = tuple(pickup_times)
     grouped: dict[datetime, list[Order]] = defaultdict(list)
     unscheduled: list[Order] = []
@@ -515,20 +527,25 @@ def build_service_board(
     for order in orders:
         if not order.production_items:
             continue
+        if order.order_id in assignments:
+            assigned_pickup_at = assignments[order.order_id]
+            if assigned_pickup_at is not None:
+                grouped[_service_wall_time(assigned_pickup_at)].append(order)
+                continue
+            if order.is_walk_in:
+                unscheduled.append(order)
+                continue
         if order.is_walk_in:
-            if order.order_id in walk_in_assignments:
-                assigned_pickup_at = walk_in_assignments[order.order_id]
-            else:
-                assigned_pickup_at = parse_ticket_pickup_time(
-                    order.ticket_name or order.customer_name,
-                    service_date,
-                    configured_pickup_times,
-                    reference_at=(
-                        order.source_closed_at
-                        or order.source_created_at
-                        or order.pickup_at
-                    ),
-                )
+            assigned_pickup_at = parse_ticket_pickup_time(
+                order.ticket_name or order.customer_name,
+                service_date,
+                configured_pickup_times,
+                reference_at=(
+                    order.source_closed_at
+                    or order.source_created_at
+                    or order.pickup_at
+                ),
+            )
             if assigned_pickup_at is None:
                 unscheduled.append(order)
                 continue

@@ -2168,6 +2168,11 @@ h2 {
     color: var(--brand-blue);
 }
 
+.badge--pickup-adjusted {
+    background: var(--brand-lavender);
+    color: var(--brand-blue);
+}
+
 .walk-in-paid-time {
     color: var(--brand-red);
     font-size: 0.76rem;
@@ -2309,12 +2314,18 @@ h2 {
     font-weight: 900;
 }
 
-/* Sprint 3.8: ticket-name pickup parsing and modal slot editor. */
-.walk-in-slot-editor {
+/* Local pickup-time editors for scheduled and walk-in orders. */
+.walk-in-slot-editor,
+.scheduled-slot-editor {
     background: var(--brand-cream);
 }
 
-.walk-in-slot-editor-heading {
+.scheduled-slot-editor {
+    background: var(--soft-blue);
+}
+
+.walk-in-slot-editor-heading,
+.scheduled-slot-editor-heading {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -2323,11 +2334,14 @@ h2 {
 }
 
 .walk-in-slot-editor-heading h3,
-.walk-in-slot-editor-heading p {
+.walk-in-slot-editor-heading p,
+.scheduled-slot-editor-heading h3,
+.scheduled-slot-editor-heading p {
     margin: 0;
 }
 
-.walk-in-slot-editor-heading p {
+.walk-in-slot-editor-heading p,
+.scheduled-slot-editor-heading p {
     margin-top: 4px;
     color: var(--muted);
     font-size: 0.82rem;
@@ -2345,14 +2359,16 @@ h2 {
     overflow-wrap: anywhere;
 }
 
-.walk-in-slot-form {
+.walk-in-slot-form,
+.scheduled-slot-form {
     display: grid;
     grid-template-columns: minmax(180px, 1fr) auto minmax(80px, auto);
     align-items: end;
     gap: 10px;
 }
 
-.walk-in-slot-form label {
+.walk-in-slot-form label,
+.scheduled-slot-form label {
     display: grid;
     gap: 4px;
     color: var(--muted);
@@ -2363,7 +2379,9 @@ h2 {
 }
 
 .walk-in-slot-form select,
-.walk-in-slot-form button {
+.walk-in-slot-form button,
+.scheduled-slot-form select,
+.scheduled-slot-form button {
     min-height: 42px;
     border: 3px solid var(--black);
     border-radius: 8px;
@@ -2371,25 +2389,29 @@ h2 {
     font-weight: 900;
 }
 
-.walk-in-slot-form select {
+.walk-in-slot-form select,
+.scheduled-slot-form select {
     width: 100%;
     padding: 7px 10px;
     background: white;
 }
 
-.walk-in-slot-form button {
+.walk-in-slot-form button,
+.scheduled-slot-form button {
     padding: 7px 13px;
     background: var(--brand-blue);
     color: white;
     cursor: pointer;
 }
 
-.walk-in-slot-form button:disabled {
+.walk-in-slot-form button:disabled,
+.scheduled-slot-form button:disabled {
     opacity: 0.6;
     cursor: wait;
 }
 
-.walk-in-slot-status {
+.walk-in-slot-status,
+.scheduled-slot-status {
     align-self: center;
     color: var(--brand-blue);
     font-size: 0.78rem;
@@ -2397,7 +2419,8 @@ h2 {
 }
 
 @media (max-width: 760px) {
-    .walk-in-slot-editor-heading {
+    .walk-in-slot-editor-heading,
+    .scheduled-slot-editor-heading {
         display: grid;
     }
 
@@ -2406,10 +2429,19 @@ h2 {
         width: fit-content;
     }
 
-    .walk-in-slot-form {
+    .walk-in-slot-form,
+    .scheduled-slot-form {
         grid-template-columns: 1fr;
         align-items: stretch;
     }
+}
+
+.pickup-time-adjusted-summary {
+    display: block;
+    margin-top: 4px;
+    color: var(--brand-red);
+    font-size: 0.82rem;
+    font-weight: 900;
 }
 
 /* Sprint 3.8.1: reliable order inspector trigger. */

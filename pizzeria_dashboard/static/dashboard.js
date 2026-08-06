@@ -311,6 +311,54 @@
     });
 
     document.addEventListener("submit", async (event) => {
+        const form = event.target.closest("[data-scheduled-pickup-time-form]");
+        if (!form) {
+            return;
+        }
+        event.preventDefault();
+
+        const pickupTimeUrl = form.dataset.pickupTimeUrl;
+        const status = form.querySelector("[data-scheduled-pickup-time-status]");
+        const submitButton = form.querySelector('button[type="submit"]');
+        const formData = new FormData(form);
+        if (!pickupTimeUrl || !submitButton) {
+            return;
+        }
+
+        submitButton.disabled = true;
+        if (status) {
+            status.textContent = "Saving…";
+        }
+        try {
+            const response = await fetch(pickupTimeUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: formData.get("service_date"),
+                    order_id: formData.get("order_id"),
+                    pickup_at: formData.get("pickup_at"),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The pickup time could not be saved.");
+            }
+            if (status) {
+                status.textContent = result.overridden ? "Adjusted" : "Original time restored";
+            }
+            window.location.reload();
+        } catch (error) {
+            submitButton.disabled = false;
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
+    document.addEventListener("submit", async (event) => {
         const form = event.target.closest("[data-walk-in-assignment-form]");
         if (!form) {
             return;

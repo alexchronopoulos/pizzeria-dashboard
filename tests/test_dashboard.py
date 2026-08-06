@@ -961,6 +961,147 @@ def test_ticket_name_auto_assigns_walk_in_and_modal_can_override_slot(
     assert "Sam 7:30" in after_text
 
 
+def test_scheduled_order_pickup_time_can_be_adjusted_and_restored(
+    tmp_path: Path,
+) -> None:
+    from pizzeria_dashboard.database import (
+        load_order_slot_assignment_overrides,
+        replace_orders_for_date,
+    )
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="scheduled-move-1",
+        customer_name="Dana Move",
+        pickup_at=datetime(2026, 7, 31, 16, 0),
+        items=(Item("Plain Pie", 2, "pizza"),),
+        square_order_id="scheduled-move-1",
+        fulfillment_uid="pickup-1",
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    client = app.test_client()
+
+    details = client.get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": order.order_id},
+    )
+    details_html = details.get_data(as_text=True)
+    assert details.status_code == 200
+    assert "Adjust pickup time" in details_html
+    assert "data-scheduled-pickup-time-form" in details_html
+    assert "Original Square time — 4:00 PM" in details_html
+    assert "4:15 PM — 0/3 pizzas" in details_html
+
+    adjusted = client.post(
+        "/scheduled-pickup-time",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "pickup_at": "2026-07-31T16:15:00",
+        },
+    )
+    assert adjusted.status_code == 200
+    assert adjusted.get_json() == {
+        "ok": True,
+        "overridden": True,
+        "pickup_at": "2026-07-31T16:15:00",
+    }
+    assert load_order_slot_assignment_overrides(database_path, selected) == {
+        order.order_id: datetime(2026, 7, 31, 16, 15)
+    }
+
+    moved = client.get(f"/?date={selected.isoformat()}")
+    moved_html = moved.get_data(as_text=True)
+    original_slot_start = moved_html.index('data-pickup-at="2026-07-31T16:00:00"')
+    original_slot_end = moved_html.index('data-pickup-at="2026-07-31T16:15:00"')
+    original_slot_html = moved_html[original_slot_start:original_slot_end]
+    adjusted_slot_end = moved_html.find(
+        'class="pickup-window', original_slot_end + 1
+    )
+    adjusted_slot_html = moved_html[
+        original_slot_end : adjusted_slot_end if adjusted_slot_end != -1 else None
+    ]
+    assert "Dana M." not in original_slot_html
+    assert "Dana M." in adjusted_slot_html
+    assert "2 pizzas" in adjusted_slot_html
+    assert "Moved from 4:00" in adjusted_slot_html
+
+    # Source refreshes keep the local production override intact.
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    assert load_order_slot_assignment_overrides(database_path, selected) == {
+        order.order_id: datetime(2026, 7, 31, 16, 15)
+    }
+
+    restored = client.post(
+        "/scheduled-pickup-time",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "pickup_at": "original",
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.get_json() == {
+        "ok": True,
+        "overridden": False,
+        "pickup_at": "2026-07-31T16:00:00",
+    }
+    assert load_order_slot_assignment_overrides(database_path, selected) == {}
+
+
+def test_scheduled_pickup_time_rejects_walk_ins_and_non_service_slots(
+    tmp_path: Path,
+) -> None:
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    scheduled = Order(
+        "scheduled-invalid-slot",
+        "Scheduled",
+        datetime(2026, 7, 31, 16, 0),
+        (Item("Plain Pie", 1, "pizza"),),
+    )
+    walk_in = Order(
+        "walk-in-invalid-editor",
+        "Walk-in",
+        datetime(2026, 7, 31, 13, 0),
+        (Item("Plain Pie", 1, "pizza"),),
+        is_walk_in=True,
+    )
+    replace_orders_for_date(
+        database_path, selected, (scheduled, walk_in), source="square"
+    )
+    client = app.test_client()
+
+    invalid_slot = client.post(
+        "/scheduled-pickup-time",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": scheduled.order_id,
+            "pickup_at": "2026-07-31T16:07:00",
+        },
+    )
+    assert invalid_slot.status_code == 400
+    assert invalid_slot.get_json()["error"] == "Choose one of the configured service slots."
+
+    wrong_editor = client.post(
+        "/scheduled-pickup-time",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": walk_in.order_id,
+            "pickup_at": "2026-07-31T16:15:00",
+        },
+    )
+    assert wrong_editor.status_code == 400
+    assert "walk-in pickup editor" in wrong_editor.get_json()["error"]
+
+
 def test_open_square_order_can_be_marked_completed(tmp_path: Path, monkeypatch) -> None:
     from datetime import datetime
     from pizzeria_dashboard.database import replace_orders_for_date

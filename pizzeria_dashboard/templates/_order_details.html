@@ -22,11 +22,52 @@
           {% if is_walk_in %}
           Walk-in paid {{ event_at.strftime('%A, %B %-d at %-I:%M %p %Z') }}{% if assigned_pickup_at %} · assigned to {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% endif %}
           {% else %}
-          <strong>Pickup time:</strong> {{ order.pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}
+          <strong>Pickup time:</strong> {{ effective_pickup_at.strftime('%A, %B %-d at %-I:%M %p') }}
+          {% if scheduled_pickup_override %}
+          <span class="pickup-time-adjusted-summary">Adjusted in the dashboard from {{ original_pickup_at.strftime('%-I:%M %p') }}.</span>
+          {% endif %}
           {% endif %}
         </p>
       </div>
     </header>
+    {% if not is_walk_in %}
+    <section class="order-details-section scheduled-slot-editor">
+      <div class="scheduled-slot-editor-heading">
+        <div>
+          <h3>Adjust pickup time</h3>
+          <p>
+            This moves the order on the production dashboard only. Square keeps the original
+            {{ original_pickup_at.strftime('%-I:%M %p') }} pickup time.
+          </p>
+        </div>
+      </div>
+      <form
+        class="scheduled-slot-form"
+        data-scheduled-pickup-time-form
+        data-pickup-time-url="{{ url_for('dashboard.update_scheduled_pickup_time') }}"
+      >
+        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+        <input type="hidden" name="order_id" value="{{ order.order_id }}">
+        <label>
+          <span>Dashboard pickup time</span>
+          <select name="pickup_at">
+            <option value="original"{% if not scheduled_pickup_override %} selected{% endif %}>
+              Original Square time — {{ original_pickup_at.strftime('%-I:%M %p') }}
+            </option>
+            {% for slot in pickup_slots %}
+            {% set slot_pizzas = pickup_slot_loads.get(slot, 0) %}
+            <option
+              value="{{ slot.isoformat() }}"
+              {% if scheduled_pickup_override and scheduled_pickup_override.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}
+            >{{ slot.strftime('%-I:%M %p') }} — {{ slot_pizzas }}/{{ pizza_capacity_per_window }} pizzas</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Save pickup time</button>
+        <span class="scheduled-slot-status" data-scheduled-pickup-time-status aria-live="polite"></span>
+      </form>
+    </section>
+    {% endif %}
     <section class="order-details-section internal-note-editor">
       <div class="internal-note-editor-heading">
         <div>

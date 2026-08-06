@@ -4,6 +4,7 @@ from datetime import date
 from pathlib import Path
 
 from pizzeria_dashboard.database import (
+    delete_order_slot_assignment,
     initialize_database,
     load_order_slot_assignment_overrides,
     load_order_slot_assignments,
@@ -148,6 +149,29 @@ def test_walk_in_slot_assignments_survive_sync_and_prune_stale_orders(
 
     replace_orders_for_date(database_path, service_date, orders[1:], source="sample")
     assert load_order_slot_assignments(database_path, service_date) == {}
+
+
+def test_scheduled_pickup_override_can_be_restored_to_source_time(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 7, 31)
+    initialize_database(database_path)
+
+    save_order_slot_assignment(
+        database_path,
+        service_date,
+        "scheduled-1",
+        datetime(2026, 7, 31, 17, 15),
+    )
+    assert load_order_slot_assignments(database_path, service_date) == {
+        "scheduled-1": datetime(2026, 7, 31, 17, 15)
+    }
+
+    delete_order_slot_assignment(database_path, service_date, "scheduled-1")
+    assert load_order_slot_assignment_overrides(database_path, service_date) == {}
 
 
 def test_separate_service_dates_remain_cached(tmp_path: Path) -> None:

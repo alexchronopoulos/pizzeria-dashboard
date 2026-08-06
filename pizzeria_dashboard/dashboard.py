@@ -18,6 +18,7 @@ from flask import (
 )
 
 from .database import (
+    delete_order_slot_assignment,
     has_orders_for_date,
     load_app_metadata,
     load_customer_history_for_order,
@@ -56,6 +57,14 @@ AUTO_REFRESH_INTERVALS = (15, 30, 60, 120, 300)
 def _now() -> datetime:
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     return datetime.now(timezone)
+
+
+def _local_service_time(value: datetime) -> datetime:
+    """Normalize a timestamp to timezone-neutral local service wall time."""
+    if value.tzinfo is None:
+        return value
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    return value.astimezone(timezone).replace(tzinfo=None)
 
 
 def _database_path() -> Path:
@@ -119,6 +128,9 @@ def index() -> str:
     orders = load_orders_for_date(database_path, selected_date)
     internal_notes = load_order_internal_notes_for_date(database_path, selected_date)
     service_configuration = load_configuration(database_path)
+    pickup_overrides = load_order_slot_assignment_overrides(
+        database_path, selected_date
+    )
     service = build_service_board(
         selected_date,
         orders,
@@ -126,9 +138,7 @@ def index() -> str:
             current_app.config["PIZZA_CAPACITY_PER_WINDOW"]
         ),
         pickup_times=service_configuration.pickup_times(selected_date),
-        walk_in_assignments=load_order_slot_assignment_overrides(
-            database_path, selected_date
-        ),
+        pickup_time_overrides=pickup_overrides,
     )
     inventory_salad_types = tuple(
         dict.fromkeys((*service_configuration.salad_types, *service.salad_counts.keys()))
@@ -204,6 +214,11 @@ def index() -> str:
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
+        pickup_overrides=pickup_overrides,
+        original_pickup_times={
+            order.order_id: _local_service_time(order.pickup_at)
+            for order in orders
+        },
     )
 
 
@@ -264,6 +279,29 @@ def order_details():
     assigned_pickup_at, assignment_source = _effective_walk_in_assignment(
         order, selected_date, pickup_slots, assignment_overrides
     )
+    original_pickup_at = _local_service_time(order.pickup_at)
+    scheduled_pickup_override = (
+        assignment_overrides.get(order.order_id)
+        if not is_walk_in and order.order_id in assignment_overrides
+        else None
+    )
+    effective_pickup_at = (
+        scheduled_pickup_override or original_pickup_at
+        if not is_walk_in
+        else assigned_pickup_at
+    )
+    service = build_service_board(
+        selected_date,
+        load_orders_for_date(database_path, selected_date),
+        pizza_capacity_per_window=int(
+            current_app.config["PIZZA_CAPACITY_PER_WINDOW"]
+        ),
+        pickup_times=pickup_slots,
+        pickup_time_overrides=assignment_overrides,
+    )
+    pickup_slot_loads = {
+        window.pickup_at: window.pizza_units for window in service.windows
+    }
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     event_at = order.source_closed_at or order.source_created_at or order.pickup_at
     if event_at.tzinfo is not None:
@@ -281,6 +319,11 @@ def order_details():
         is_walk_in=is_walk_in,
         assigned_pickup_at=assigned_pickup_at,
         assignment_source=assignment_source,
+        original_pickup_at=original_pickup_at,
+        scheduled_pickup_override=scheduled_pickup_override,
+        effective_pickup_at=effective_pickup_at,
+        pickup_slot_loads=pickup_slot_loads,
+        pizza_capacity_per_window=service.pizza_capacity_per_window,
         pickup_slots=pickup_slots,
         selected_date=selected_date,
         today=_now().date(),
@@ -328,6 +371,85 @@ def update_order_internal_note():
         database_path, selected_date, order_id, normalized_note
     )
     return jsonify(ok=True, note=saved_note)
+
+
+@blueprint.post("/scheduled-pickup-time")
+def update_scheduled_pickup_time():
+    """Save or clear a dashboard-only pickup-time override."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    try:
+        source = _order_source()
+    except SquareError:
+        source = "configuration-error"
+    _ensure_cached_orders(selected_date, source)
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    is_walk_in = order.is_walk_in or bool(
+        order.ticket_name
+        and order.source_closed_at
+        and order.fulfillment_uid is None
+    )
+    if is_walk_in:
+        return jsonify(
+            ok=False,
+            error="Use the walk-in pickup editor for this order.",
+        ), 400
+
+    raw_pickup_at = str(payload.get("pickup_at", "")).strip()
+    if raw_pickup_at == "original":
+        delete_order_slot_assignment(database_path, selected_date, order_id)
+        return jsonify(
+            ok=True,
+            overridden=False,
+            pickup_at=_local_service_time(order.pickup_at).isoformat(),
+        )
+
+    if not raw_pickup_at:
+        return jsonify(ok=False, error="Choose a pickup time."), 400
+    try:
+        pickup_at = _local_service_time(datetime.fromisoformat(raw_pickup_at))
+    except ValueError:
+        return jsonify(ok=False, error="The pickup time is invalid."), 400
+    if pickup_at.date() != selected_date:
+        return jsonify(ok=False, error="The pickup time is on another day."), 400
+
+    configuration = load_configuration(database_path)
+    allowed_slots = {
+        _local_service_time(value)
+        for value in configuration.pickup_times(selected_date)
+    }
+    if pickup_at not in allowed_slots:
+        return jsonify(
+            ok=False,
+            error="Choose one of the configured service slots.",
+        ), 400
+
+    original_pickup_at = _local_service_time(order.pickup_at)
+    if pickup_at == original_pickup_at:
+        delete_order_slot_assignment(database_path, selected_date, order_id)
+        overridden = False
+    else:
+        save_order_slot_assignment(
+            database_path, selected_date, order_id, pickup_at
+        )
+        overridden = True
+
+    return jsonify(
+        ok=True,
+        overridden=overridden,
+        pickup_at=pickup_at.isoformat(),
+    )
 
 
 @blueprint.get("/customer-history")

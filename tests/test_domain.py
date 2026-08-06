@@ -151,6 +151,30 @@ def test_walk_ins_stay_unscheduled_until_locally_assigned() -> None:
     assert assigned.windows[0].pizza_units == 2
 
 
+def test_scheduled_order_uses_local_pickup_override_for_board_capacity() -> None:
+    service_date = date(2026, 7, 31)
+    original_slot = datetime(2026, 7, 31, 16, 0)
+    adjusted_slot = datetime(2026, 7, 31, 16, 15)
+    order = Order(
+        "scheduled-1",
+        "Alex",
+        original_slot,
+        (Item("Plain Pie", 2, "pizza"),),
+    )
+
+    board = build_service_board(
+        service_date,
+        (order,),
+        pickup_times=(original_slot, adjusted_slot),
+        pickup_time_overrides={order.order_id: adjusted_slot},
+    )
+
+    assert board.windows[0].orders == ()
+    assert board.windows[0].pizza_units == 0
+    assert board.windows[1].orders == (order,)
+    assert board.windows[1].pizza_units == 2
+
+
 def test_slice_only_walk_in_is_hidden_but_mixed_walk_in_remains() -> None:
     service_date = date(2026, 7, 31)
     event_at = datetime(2026, 7, 31, 13, 15, tzinfo=ZoneInfo("America/New_York"))
