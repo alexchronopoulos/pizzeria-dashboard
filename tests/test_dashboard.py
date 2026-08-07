@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from html import unescape
 from html.parser import HTMLParser
@@ -9,7 +10,9 @@ from pizzeria_dashboard import create_app
 from pizzeria_dashboard.database import (
     load_app_metadata,
     load_order_internal_note,
+    load_order_ready_states,
     load_orders_for_date,
+    load_pie_production_states,
     load_service_state_payload,
 )
 from pizzeria_dashboard.sample_data import build_sample_service
@@ -239,6 +242,53 @@ def test_historical_square_dashboard_still_shows_disabled_refresh_controls(
     assert b'data-auto-sync-toggle' in response.data
 
 
+def test_incremental_refresh_detects_staff_note_changes_from_another_device(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    selected = date(2026, 8, 6)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026, 8, 6, 17, 0, tzinfo=ZoneInfo("America/New_York")
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_module,
+        "_refresh_customer_history_after_order_sync",
+        lambda **_kwargs: None,
+    )
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    assert client.get(f"/?date={selected.isoformat()}").status_code == 200
+
+    saved = client.post(
+        "/order-note",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": "sample-2026-08-06-PM-1042",
+            "note": "Allergy note from the prep display",
+        },
+    )
+    assert saved.status_code == 200
+
+    refreshed = client.post(
+        "/sync/quick",
+        json={
+            "service_date": selected.isoformat(),
+            "board_content_revision": "",
+        },
+    )
+    payload = refreshed.get_json()
+    assert refreshed.status_code == 200
+    assert payload["ok"] is True
+    assert payload["board_content_changed"] is True
+    assert payload["board_content_revision"] == saved.get_json()["board_content_revision"]
+
+
 def test_auto_refresh_preferences_persist_in_sqlite(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     client = app.test_client()
@@ -296,6 +346,9 @@ def test_modifiers_and_salads_render_from_cached_documents(tmp_path: Path) -> No
     assert b"Pepperoni" in response.data
     assert b"Pickled chiles" in response.data
     assert b"Basil" in response.data
+    assert b"Modifier prep" in response.data
+    assert b"portions" in response.data
+    assert b'class="modifier-prep-list"' in response.data
     assert "1× Cucumber Salad".encode() in response.data
     assert "1× Kale Caesar Salad".encode() in response.data
     assert "2× Cookie".encode() in response.data
@@ -415,10 +468,10 @@ def test_staff_note_can_be_saved_from_order_details_and_appears_on_card(
         },
     )
     assert response.status_code == 200
-    assert response.get_json() == {
-        "ok": True,
-        "note": "Allergy: change gloves.\nSubstitute aged mozzarella.",
-    }
+    saved_payload = response.get_json()
+    assert saved_payload["ok"] is True
+    assert saved_payload["note"] == "Allergy: change gloves.\nSubstitute aged mozzarella."
+    assert saved_payload["board_content_revision"]
     assert load_order_internal_note(
         Path(app.config["DATABASE_PATH"]), selected, order_id
     ) == "Allergy: change gloves.\nSubstitute aged mozzarella."
@@ -445,7 +498,10 @@ def test_staff_note_can_be_saved_from_order_details_and_appears_on_card(
         },
     )
     assert cleared.status_code == 200
-    assert cleared.get_json() == {"ok": True, "note": None}
+    cleared_payload = cleared.get_json()
+    assert cleared_payload["ok"] is True
+    assert cleared_payload["note"] is None
+    assert cleared_payload["board_content_revision"]
     assert load_order_internal_note(
         Path(app.config["DATABASE_PATH"]), selected, order_id
     ) is None
@@ -780,6 +836,93 @@ def test_past_dates_hide_bake_timers(tmp_path: Path) -> None:
     assert b"data-oven-position" not in response.data
 
 
+def test_shared_timer_oven_and_boxed_state_routes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    selected = date(2026, 8, 6)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026, 8, 6, 17, 0, tzinfo=ZoneInfo("America/New_York")
+        ),
+    )
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    board = client.get(f"/?date={selected.isoformat()}")
+    html = board.get_data(as_text=True)
+    pie_keys = re.findall(r'data-bake-timer-key="([^"]+)"', html)
+
+    assert board.status_code == 200
+    assert len(pie_keys) >= 2
+    assert 'data-live-production-state-url="/live-production-state"' in html
+    assert 'data-pie-production-state-url="/pie-production-state"' in html
+    assert 'data-order-ready-url="/order-ready"' in html
+
+    first = client.post(
+        "/pie-production-state",
+        json={
+            "service_date": selected.isoformat(),
+            "pie_key": pie_keys[0],
+            "timer_action": "start",
+            "duration_ms": 480_000,
+        },
+    )
+    second = client.post(
+        "/pie-production-state",
+        json={
+            "service_date": selected.isoformat(),
+            "pie_key": pie_keys[1],
+            "timer_action": "start",
+            "duration_ms": 480_000,
+        },
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.get_json()["pies"][pie_keys[0]]["timer_status"] == "running"
+    assert first.get_json()["pies"][pie_keys[0]]["oven_position"] == "top-left"
+    assert second.get_json()["pies"][pie_keys[1]]["oven_position"] == "top-right"
+
+    live = client.get(
+        "/live-production-state", query_string={"date": selected.isoformat()}
+    )
+    live_payload = live.get_json()
+    assert live.status_code == 200
+    assert live_payload["pies"][pie_keys[0]]["oven_position"] == "top-left"
+    assert live_payload["pies"][pie_keys[1]]["oven_position"] == "top-right"
+    assert load_pie_production_states(
+        Path(app.config["DATABASE_PATH"]), selected
+    )[pie_keys[0]].timer_status == "running"
+
+    order_id = "sample-2026-08-06-PM-1042"
+    boxed = client.post(
+        "/order-ready",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order_id,
+            "boxed": True,
+        },
+    )
+    assert boxed.status_code == 200
+    assert boxed.get_json()["boxed_at"]
+    assert order_id in load_order_ready_states(
+        Path(app.config["DATABASE_PATH"]), selected
+    )
+
+    refreshed = client.get(f"/?date={selected.isoformat()}").get_data(as_text=True)
+    row_start = refreshed.index(f'data-order-id="{order_id}"')
+    row_tag_start = refreshed.rfind("<div", 0, row_start)
+    row_tag_end = refreshed.index(">", row_start)
+    row_end = refreshed.find('class="order-row', row_start + 1)
+    order_html = refreshed[row_start : row_end if row_end != -1 else None]
+    assert "order-row--boxed" in refreshed[row_tag_start:row_tag_end]
+    assert "BOXED &amp; READY" in order_html
+    assert "Undo boxed" in order_html
+
+
 def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
     tmp_path: Path,
 ) -> None:
@@ -834,7 +977,9 @@ def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
         },
     )
     assert assigned.status_code == 200
-    assert assigned.get_json() == {"ok": True}
+    assigned_payload = assigned.get_json()
+    assert assigned_payload["ok"] is True
+    assert assigned_payload["board_content_revision"]
     assert load_order_slot_assignments(database_path, selected) == {
         "walk-in-square-1": datetime(2026, 7, 31, 16, 15)
     }
@@ -1004,11 +1149,11 @@ def test_scheduled_order_pickup_time_can_be_adjusted_and_restored(
         },
     )
     assert adjusted.status_code == 200
-    assert adjusted.get_json() == {
-        "ok": True,
-        "overridden": True,
-        "pickup_at": "2026-07-31T16:15:00",
-    }
+    adjusted_payload = adjusted.get_json()
+    assert adjusted_payload["ok"] is True
+    assert adjusted_payload["overridden"] is True
+    assert adjusted_payload["pickup_at"] == "2026-07-31T16:15:00"
+    assert adjusted_payload["board_content_revision"]
     assert load_order_slot_assignment_overrides(database_path, selected) == {
         order.order_id: datetime(2026, 7, 31, 16, 15)
     }
@@ -1044,12 +1189,64 @@ def test_scheduled_order_pickup_time_can_be_adjusted_and_restored(
         },
     )
     assert restored.status_code == 200
-    assert restored.get_json() == {
-        "ok": True,
-        "overridden": False,
-        "pickup_at": "2026-07-31T16:00:00",
-    }
+    restored_payload = restored.get_json()
+    assert restored_payload["ok"] is True
+    assert restored_payload["overridden"] is False
+    assert restored_payload["pickup_at"] == "2026-07-31T16:00:00"
+    assert restored_payload["board_content_revision"]
     assert load_order_slot_assignment_overrides(database_path, selected) == {}
+
+
+def test_current_day_pickup_editors_hide_elapsed_slots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    selected = date(2026, 8, 6)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026, 8, 6, 17, 0, tzinfo=ZoneInfo("America/New_York")
+        ),
+    )
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    database_path = Path(app.config["DATABASE_PATH"])
+    scheduled = Order(
+        "scheduled-future-slot",
+        "Scheduled",
+        datetime(2026, 8, 6, 17, 30),
+        (Item("Plain Pie", 1, "pizza"),),
+    )
+    walk_in = Order(
+        "walk-in-future-slot",
+        "Walk-in",
+        datetime(2026, 8, 6, 16, 30),
+        (Item("Plain Pie", 1, "pizza"),),
+        is_walk_in=True,
+    )
+    replace_orders_for_date(
+        database_path, selected, (scheduled, walk_in), source="square"
+    )
+    client = app.test_client()
+
+    scheduled_details = client.get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": scheduled.order_id},
+    ).get_data(as_text=True)
+    assert 'value="2026-08-06T16:45:00"' not in scheduled_details
+    assert 'value="2026-08-06T17:00:00"' in scheduled_details
+    assert 'value="2026-08-06T17:15:00"' in scheduled_details
+
+    walk_in_details = client.get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": walk_in.order_id},
+    ).get_data(as_text=True)
+    assert 'value="2026-08-06T16:45:00"' not in walk_in_details
+    assert 'value="2026-08-06T17:00:00"' in walk_in_details
 
 
 def test_scheduled_pickup_time_rejects_walk_ins_and_non_service_slots(

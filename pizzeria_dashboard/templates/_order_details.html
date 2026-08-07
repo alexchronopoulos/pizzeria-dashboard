@@ -54,6 +54,11 @@
             <option value="original"{% if not scheduled_pickup_override %} selected{% endif %}>
               Original Square time — {{ original_pickup_at.strftime('%-I:%M %p') }}
             </option>
+            {% if scheduled_pickup_override and scheduled_pickup_override not in pickup_slots %}
+            <option value="{{ scheduled_pickup_override.isoformat() }}" selected>
+              Current adjusted time — {{ scheduled_pickup_override.strftime('%-I:%M %p') }} (past)
+            </option>
+            {% endif %}
             {% for slot in pickup_slots %}
             {% set slot_pizzas = pickup_slot_loads.get(slot, 0) %}
             <option
@@ -121,6 +126,9 @@
           <span>Dashboard slot</span>
           <select name="pickup_at">
             <option value=""{% if assigned_pickup_at is none %} selected{% endif %}>Unscheduled</option>
+            {% if assigned_pickup_at and assigned_pickup_at not in pickup_slots %}
+            <option value="{{ assigned_pickup_at.isoformat() }}" selected>Current assignment — {{ assigned_pickup_at.strftime('%-I:%M %p') }} (past)</option>
+            {% endif %}
             {% for slot in pickup_slots %}
             <option value="{{ slot.isoformat() }}"{% if assigned_pickup_at and assigned_pickup_at.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}>{{ slot.strftime('%-I:%M %p') }}</option>
             {% endfor %}

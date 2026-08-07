@@ -25,7 +25,7 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Opens every order in a compact modal with pickup controls and the cached kitchen view. Raw Square debug data is not exposed in the dashboard.
 - Displays customer names as first name plus last initial, and removes Ticket Name pickup times from visible customer labels.
 - Adds an independent eight-minute timer to every pizza line item. Timers can be started, paused, resumed, and reset.
-- Stores active timer state in the browser so countdowns survive a page refresh on the same device.
+- Stores timer and oven-position state in SQLite and synchronizes it across prep and expo displays every two seconds. Starting a timer automatically claims the first open oven position from top-left to bottom-right; resetting it clears that position.
 - Detects completed orders with no actual pickup timestamp as walk-ins when their local `created_at` or `closed_at` date matches the selected service date.
 - Shows new walk-ins in an **Unscheduled** lane using Square ticket names when available.
 - Parses configured pickup times from Ticket Names such as `Sam 7:30` or `5:45 Peter` and automatically places the walk-in into the matching service slot.
@@ -33,8 +33,10 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Adds a pickup-slot selector to the order-details modal for quick reassignment when the destination slot is far down the page.
 - Lets scheduled pickup orders be moved to another configured dashboard slot while retaining a one-click return to the original Square time.
 - Shows each destination slot's current pizza load before a scheduled order is moved and marks adjusted order cards with their original pickup time.
-- Stores scheduled-order adjustments, manual walk-in assignments, and explicit Unscheduled overrides in SQLite so a Square refresh preserves them.
-- Does not write timer or pickup-time override state back to Square.
+- Stores scheduled-order adjustments, manual walk-in assignments, explicit Unscheduled overrides, and staff notes in SQLite so a Square refresh preserves them.
+- Marks boxed-and-ready orders across every display with a gray card and a shared timestamp.
+- Summarizes pizza add-on modifiers for ingredient prep and hides elapsed pickup slots from today's operational selectors.
+- Does not write timer, oven-position, boxed-ready, staff-note, or pickup-time override state back to Square.
 
 The active database remains:
 
@@ -155,7 +157,9 @@ uv run python -m pizzeria_dashboard
 
 Open `http://localhost:5000`, select a service date, and press **Pull from
 Square**. Click any order card to open the pickup-time and kitchen-details modal.
-Each pizza row also includes an eight-minute bake timer. Timer state is local to that browser/device and survives normal page refreshes. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
+Each pizza row also includes an eight-minute bake timer. Timer state and oven position are shared through SQLite, so prep and expo displays stay synchronized. Starting a timer automatically assigns the first free oven position in top-left to bottom-right order; the oven map can still be adjusted manually. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
+
+Use **Mark boxed** when the complete order is packed. Every display will gray the card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 
 For an already scheduled order, choose another configured time in Order Details.
 The production board immediately moves the order and recalculates both slots'

@@ -1,4 +1,55 @@
 (() => {
+    const STORAGE_KEY = "pizzeria-dashboard:viewport-anchor";
+
+    const visibleSlot = () => Array.from(
+        document.querySelectorAll(".pickup-window[data-pickup-at]:not([hidden])")
+    ).find((slot) => slot.getBoundingClientRect().bottom > 0);
+
+    const remember = () => {
+        const slot = visibleSlot();
+        if (!slot) {
+            return;
+        }
+        try {
+            window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+                pickupAt: slot.dataset.pickupAt || "",
+                top: slot.getBoundingClientRect().top,
+            }));
+        } catch (_error) {
+            // Browser scroll restoration remains the fallback.
+        }
+    };
+
+    const restore = () => {
+        let saved = null;
+        try {
+            saved = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "null");
+            window.sessionStorage.removeItem(STORAGE_KEY);
+        } catch (_error) {
+            saved = null;
+        }
+        if (!saved?.pickupAt || !Number.isFinite(Number(saved.top))) {
+            return;
+        }
+        const slots = Array.from(document.querySelectorAll(".pickup-window[data-pickup-at]"));
+        const anchor = slots.find((slot) => slot.dataset.pickupAt === saved.pickupAt)
+            || slots.find((slot) => (slot.dataset.pickupAt || "") > saved.pickupAt);
+        if (!anchor) {
+            return;
+        }
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+            const delta = anchor.getBoundingClientRect().top - Number(saved.top);
+            if (Math.abs(delta) > 1) {
+                window.scrollBy(0, delta);
+            }
+        }));
+    };
+
+    window.PizzeriaDashboardViewport = {remember, restore};
+    restore();
+})();
+
+(() => {
     const board = document.getElementById("production-board");
     const control = document.querySelector("[data-prep-view-control]");
     const toggle = control?.querySelector("[data-prep-view-toggle]");
@@ -52,17 +103,35 @@
         const enabled = toggle.checked;
         const now = serviceNow();
         let visibleSlots = 0;
-
-        slots.forEach((slot) => {
+        const plan = slots.map((slot) => {
             const pickupAt = slot.dataset.pickupAt || "";
             const isPast = pickupAt ? pickupAt < now : slot.dataset.slotPast === "true";
             const isEmpty = slot.dataset.slotEmpty === "true";
+            return {slot, isPast, hidden: enabled && (isEmpty || isPast)};
+        });
+        const anchorPlan = plan.find(({slot, hidden}) => (
+            !hidden && !slot.hidden && slot.getBoundingClientRect().bottom > 0
+        )) || plan.find(({slot, hidden}) => (
+            !hidden && slot.getBoundingClientRect().bottom > 0
+        ));
+        const anchorTop = anchorPlan?.slot.getBoundingClientRect().top;
+
+        plan.forEach(({slot, isPast, hidden}) => {
             slot.dataset.slotPast = isPast ? "true" : "false";
-            slot.hidden = enabled && (isEmpty || isPast);
-            if (!slot.hidden) {
+            slot.hidden = hidden;
+            if (!hidden) {
                 visibleSlots += 1;
             }
         });
+
+        if (anchorPlan && Number.isFinite(anchorTop)) {
+            window.requestAnimationFrame(() => {
+                const delta = anchorPlan.slot.getBoundingClientRect().top - anchorTop;
+                if (Math.abs(delta) > 1) {
+                    window.scrollBy(0, delta);
+                }
+            });
+        }
 
         control.classList.toggle("prep-view-control--active", enabled);
         control.setAttribute("aria-label", enabled
@@ -157,6 +226,7 @@
             || target.closest("[data-bake-timer]")
             || target.closest("[data-oven-position]")
             || target.closest("[data-order-complete-button]")
+            || target.closest("[data-order-boxed-button]")
         ) {
             return;
         }
@@ -298,6 +368,7 @@
             if (status) {
                 status.textContent = result.note ? "Saved" : "Cleared";
             }
+            window.PizzeriaDashboardViewport?.remember();
             window.location.reload();
         } catch (error) {
             submitButton.disabled = false;
@@ -349,6 +420,7 @@
             if (status) {
                 status.textContent = result.overridden ? "Adjusted" : "Original time restored";
             }
+            window.PizzeriaDashboardViewport?.remember();
             window.location.reload();
         } catch (error) {
             submitButton.disabled = false;
@@ -397,6 +469,7 @@
             if (status) {
                 status.textContent = "Saved";
             }
+            window.PizzeriaDashboardViewport?.remember();
             window.location.reload();
         } catch (error) {
             submitButton.disabled = false;
@@ -459,6 +532,7 @@
                 throw new Error(result.error || "Square could not complete the order.");
             }
             button.textContent = "Completed";
+            window.PizzeriaDashboardViewport?.remember();
             window.location.reload();
         } catch (error) {
             button.disabled = false;
@@ -565,6 +639,7 @@
                 if (!response.ok || !result.ok) {
                     throw new Error(result.error || "The walk-in could not be assigned.");
                 }
+                window.PizzeriaDashboardViewport?.remember();
                 window.location.reload();
             } catch (error) {
                 document.body.classList.remove("walk-in-assignment-pending");
@@ -576,312 +651,317 @@
 
 
 (() => {
+    const board = document.getElementById("production-board");
+    const timers = Array.from(document.querySelectorAll("[data-bake-timer]"));
     const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
-    if (!selectors.length) {
+    const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
+    if (!board || (!timers.length && !selectors.length && !orderRows.length)) {
         return;
     }
 
-    const STORAGE_PREFIX = "pizzeria-dashboard:oven-position:";
+    const stateUrl = board.dataset.liveProductionStateUrl;
+    const updateUrl = board.dataset.pieProductionStateUrl;
+    const orderReadyUrl = board.dataset.orderReadyUrl;
+    const serviceDate = board.dataset.serviceDate;
+    const serviceTimezone = board.dataset.serviceTimezone || "America/New_York";
+    if (!stateUrl || !updateUrl || !orderReadyUrl || !serviceDate) {
+        return;
+    }
+
     const POSITION_LABELS = {
         "top-left": "Top left",
         "top-right": "Top right",
         "bottom-left": "Bottom left",
         "bottom-right": "Bottom right",
     };
+    const DEFAULT_DURATION_MS = 8 * 60 * 1000;
+    const timersByKey = new Map(timers.map((timer) => [timer.dataset.bakeTimerKey, timer]));
+    const selectorsByKey = new Map(selectors.map((selector) => [selector.dataset.ovenPositionKey, selector]));
+    const rowsByOrderId = new Map(orderRows.map((row) => [row.dataset.orderId, row]));
+    let serverOffsetMs = 0;
+    let polling = false;
+    let pieStates = {};
+    let boxedOrders = {};
 
-    const selectorsByDate = new Map();
-    selectors.forEach((selector) => {
-        const serviceDate = selector.dataset.serviceDate || "unknown";
-        if (!selectorsByDate.has(serviceDate)) {
-            selectorsByDate.set(serviceDate, []);
+    const initialPieState = (key) => {
+        const timer = timersByKey.get(key);
+        const selector = selectorsByKey.get(key);
+        return {
+            timer_status: timer?.dataset.timerStatus || "idle",
+            timer_remaining_ms: Number(timer?.dataset.timerRemainingMs || DEFAULT_DURATION_MS),
+            timer_end_at_ms: Number(timer?.dataset.timerEndAtMs || 0) || null,
+            oven_position: selector?.dataset.selectedOvenPosition || null,
+        };
+    };
+    new Set([...timersByKey.keys(), ...selectorsByKey.keys()]).forEach((key) => {
+        pieStates[key] = initialPieState(key);
+    });
+    orderRows.forEach((row) => {
+        if (row.dataset.boxedAt) {
+            boxedOrders[row.dataset.orderId] = row.dataset.boxedAt;
         }
-        selectorsByDate.get(serviceDate).push(selector);
     });
 
-    const storageKeyFor = (serviceDate) => `${STORAGE_PREFIX}${serviceDate}`;
-
-    const readState = (serviceDate) => {
-        try {
-            const raw = window.localStorage.getItem(storageKeyFor(serviceDate));
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-        } catch (_error) {
-            return {};
-        }
+    const adjustedNow = () => Date.now() + serverOffsetMs;
+    const formatRemaining = (milliseconds) => {
+        const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+        return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+    };
+    const durationFor = (timer) => {
+        const seconds = Number.parseInt(timer.dataset.bakeDurationSeconds || "", 10);
+        return (Number.isFinite(seconds) ? seconds * 1000 : DEFAULT_DURATION_MS);
     };
 
-    const writeState = (serviceDate, state) => {
-        try {
-            if (Object.keys(state).length) {
-                window.localStorage.setItem(storageKeyFor(serviceDate), JSON.stringify(state));
+    const effectiveTimerState = (key) => {
+        const raw = pieStates[key] || initialPieState(key);
+        if (raw.timer_status === "running" && raw.timer_end_at_ms) {
+            const remaining = Math.max(Number(raw.timer_end_at_ms) - adjustedNow(), 0);
+            return {
+                ...raw,
+                timer_status: remaining > 0 ? "running" : "done",
+                timer_remaining_ms: remaining,
+            };
+        }
+        return raw;
+    };
+
+    const renderTimers = () => {
+        timersByKey.forEach((timer, key) => {
+            const state = effectiveTimerState(key);
+            const action = timer.querySelector("[data-bake-timer-action]");
+            const display = timer.querySelector("[data-bake-timer-display]");
+            const toggle = timer.querySelector("[data-bake-timer-toggle]");
+            const status = state.timer_status || "idle";
+            timer.classList.toggle("bake-timer--running", status === "running");
+            timer.classList.toggle("bake-timer--paused", status === "paused");
+            timer.classList.toggle("bake-timer--done", status === "done");
+            if (status === "running") {
+                action.textContent = "Pause";
+                display.textContent = formatRemaining(state.timer_remaining_ms);
+                toggle.disabled = false;
+            } else if (status === "paused") {
+                action.textContent = "Resume";
+                display.textContent = formatRemaining(state.timer_remaining_ms);
+                toggle.disabled = false;
+            } else if (status === "done") {
+                action.textContent = "Finished";
+                display.textContent = "DONE";
+                toggle.disabled = true;
             } else {
-                window.localStorage.removeItem(storageKeyFor(serviceDate));
+                action.textContent = "Start";
+                display.textContent = formatRemaining(durationFor(timer));
+                toggle.disabled = false;
             }
-        } catch (_error) {
-            // Oven tracking still works for the current page when storage is unavailable.
-        }
+        });
     };
 
-    const states = new Map();
-
-    const renderDate = (serviceDate) => {
-        const dateSelectors = selectorsByDate.get(serviceDate) || [];
-        const state = states.get(serviceDate) || {};
-
-        dateSelectors.forEach((selector) => {
-            const pieKey = selector.dataset.ovenPositionKey;
-            let selectedPosition = null;
-
+    const renderOven = () => {
+        const occupants = {};
+        Object.entries(pieStates).forEach(([key, state]) => {
+            if (state.oven_position) {
+                occupants[state.oven_position] = key;
+            }
+        });
+        selectorsByKey.forEach((selector, key) => {
+            const selectedPosition = pieStates[key]?.oven_position || null;
+            selector.dataset.selectedOvenPosition = selectedPosition || "";
+            selector.classList.toggle("oven-position-selector--assigned", Boolean(selectedPosition));
             selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
                 const position = button.dataset.ovenPositionChoice;
-                const occupant = state[position];
-                const selected = occupant === pieKey;
+                const occupant = occupants[position];
+                const selected = occupant === key;
                 const occupiedByAnother = Boolean(occupant) && !selected;
                 const label = POSITION_LABELS[position] || position;
-
-                if (selected) {
-                    selectedPosition = position;
-                }
                 button.classList.toggle("is-selected", selected);
                 button.classList.toggle("is-occupied", occupiedByAnother);
                 button.setAttribute("aria-pressed", selected ? "true" : "false");
-                button.dataset.occupied = occupant ? "true" : "false";
                 button.title = selected
                     ? `${label} · this pie`
                     : occupiedByAnother
                         ? `${label} · occupied by another pie`
                         : `${label} · available`;
             });
-
-            selector.classList.toggle("oven-position-selector--assigned", Boolean(selectedPosition));
-            selector.dataset.selectedOvenPosition = selectedPosition || "";
         });
     };
 
-    selectorsByDate.forEach((dateSelectors, serviceDate) => {
-        const knownPieKeys = new Set(dateSelectors.map((selector) => selector.dataset.ovenPositionKey));
-        const state = readState(serviceDate);
-        Object.keys(state).forEach((position) => {
-            if (!knownPieKeys.has(state[position])) {
-                delete state[position];
+    const formatBoxedAt = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return "Ready";
+        }
+        return date.toLocaleTimeString([], {
+            timeZone: serviceTimezone,
+            hour: "numeric",
+            minute: "2-digit",
+            second: "2-digit",
+        });
+    };
+    const renderBoxedOrders = () => {
+        rowsByOrderId.forEach((row, orderId) => {
+            const boxedAt = boxedOrders[orderId] || null;
+            const button = row.querySelector("[data-order-boxed-button]");
+            const status = row.querySelector("[data-order-ready-status]");
+            const time = row.querySelector("[data-order-boxed-time]");
+            row.classList.toggle("order-row--boxed", Boolean(boxedAt));
+            row.dataset.boxedAt = boxedAt || "";
+            if (button) {
+                button.classList.toggle("is-boxed", Boolean(boxedAt));
+                button.setAttribute("aria-pressed", boxedAt ? "true" : "false");
+                button.textContent = boxedAt ? "Undo boxed" : "Mark boxed";
+            }
+            if (status) {
+                status.hidden = !boxedAt;
+            }
+            if (time) {
+                time.dateTime = boxedAt || "";
+                time.textContent = boxedAt ? formatBoxedAt(boxedAt) : "";
             }
         });
-        states.set(serviceDate, state);
-        writeState(serviceDate, state);
-        renderDate(serviceDate);
+    };
+
+    const renderAll = () => {
+        renderTimers();
+        renderOven();
+        renderBoxedOrders();
+    };
+
+    const applyPayload = (payload) => {
+        if (Number.isFinite(Number(payload.server_now_ms))) {
+            serverOffsetMs = Number(payload.server_now_ms) - Date.now();
+        }
+        pieStates = {...pieStates, ...(payload.pies || {})};
+        boxedOrders = payload.boxed_orders || {};
+        renderAll();
+    };
+
+    const postPieUpdate = async (pieKey, changes) => {
+        const response = await fetch(updateUrl, {
+            method: "POST",
+            headers: {"Accept": "application/json", "Content-Type": "application/json"},
+            body: JSON.stringify({
+                service_date: serviceDate,
+                pie_key: pieKey,
+                ...changes,
+            }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.error || "The shared production state could not be saved.");
+        }
+        applyPayload(result);
+    };
+
+    timersByKey.forEach((timer, key) => {
+        timer.querySelector("[data-bake-timer-toggle]")?.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const status = effectiveTimerState(key).timer_status;
+            const timerAction = status === "running" ? "pause" : "start";
+            timer.classList.add("is-saving");
+            try {
+                await postPieUpdate(key, {timer_action: timerAction, duration_ms: durationFor(timer)});
+            } catch (error) {
+                window.alert(String(error));
+            } finally {
+                timer.classList.remove("is-saving");
+            }
+        });
+        timer.querySelector("[data-bake-timer-reset]")?.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            timer.classList.add("is-saving");
+            try {
+                await postPieUpdate(key, {timer_action: "reset", duration_ms: durationFor(timer)});
+            } catch (error) {
+                window.alert(String(error));
+            } finally {
+                timer.classList.remove("is-saving");
+            }
+        });
     });
 
-    selectors.forEach((selector) => {
+    selectorsByKey.forEach((selector, key) => {
         selector.addEventListener("dragstart", (event) => event.preventDefault());
         selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
-            button.addEventListener("click", (event) => {
+            button.addEventListener("click", async (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-
-                const serviceDate = selector.dataset.serviceDate || "unknown";
-                const pieKey = selector.dataset.ovenPositionKey;
-                const position = button.dataset.ovenPositionChoice;
-                const state = states.get(serviceDate) || {};
-
-                if (state[position] === pieKey) {
-                    delete state[position];
-                } else {
-                    Object.keys(state).forEach((candidate) => {
-                        if (state[candidate] === pieKey) {
-                            delete state[candidate];
-                        }
-                    });
-                    state[position] = pieKey;
+                const requested = button.dataset.ovenPositionChoice;
+                const ovenPosition = pieStates[key]?.oven_position === requested ? null : requested;
+                selector.classList.add("is-saving");
+                try {
+                    await postPieUpdate(key, {oven_position: ovenPosition});
+                } catch (error) {
+                    window.alert(String(error));
+                } finally {
+                    selector.classList.remove("is-saving");
                 }
-
-                states.set(serviceDate, state);
-                writeState(serviceDate, state);
-                renderDate(serviceDate);
             });
         });
     });
-})();
 
-(() => {
-    const timers = Array.from(document.querySelectorAll("[data-bake-timer]"));
-    if (!timers.length) {
-        return;
-    }
-
-    const STORAGE_PREFIX = "pizzeria-dashboard:bake-timer:";
-    const DEFAULT_DURATION_SECONDS = 8 * 60;
-
-    const safeRead = (key) => {
-        try {
-            const raw = window.localStorage.getItem(key);
-            return raw ? JSON.parse(raw) : null;
-        } catch (_error) {
-            return null;
-        }
-    };
-
-    const safeWrite = (key, value) => {
-        try {
-            window.localStorage.setItem(key, JSON.stringify(value));
-        } catch (_error) {
-            // The timer still works for the current page if storage is unavailable.
-        }
-    };
-
-    const safeRemove = (key) => {
-        try {
-            window.localStorage.removeItem(key);
-        } catch (_error) {
-            // Nothing else to do.
-        }
-    };
-
-    const formatRemaining = (milliseconds) => {
-        const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
-        const minutes = Math.floor(totalSeconds / 60);
-        const seconds = totalSeconds % 60;
-        return `${minutes}:${String(seconds).padStart(2, "0")}`;
-    };
-
-    const durationFor = (timer) => {
-        const seconds = Number.parseInt(timer.dataset.bakeDurationSeconds || "", 10);
-        return (Number.isFinite(seconds) ? seconds : DEFAULT_DURATION_SECONDS) * 1000;
-    };
-
-    const storageKeyFor = (timer) => `${STORAGE_PREFIX}${timer.dataset.bakeTimerKey}`;
-
-    const defaultState = (timer) => ({
-        status: "idle",
-        remainingMs: durationFor(timer),
-        endAt: null,
-    });
-
-    const normalizedState = (timer) => {
-        const state = safeRead(storageKeyFor(timer));
-        if (!state || !["running", "paused", "done"].includes(state.status)) {
-            return defaultState(timer);
-        }
-
-        if (state.status === "running") {
-            const endAt = Number(state.endAt);
-            if (!Number.isFinite(endAt)) {
-                return defaultState(timer);
-            }
-            if (endAt <= Date.now()) {
-                return { status: "done", remainingMs: 0, endAt: null };
-            }
-            return { status: "running", remainingMs: endAt - Date.now(), endAt };
-        }
-
-        if (state.status === "paused") {
-            const remainingMs = Number(state.remainingMs);
-            return {
-                status: "paused",
-                remainingMs: Number.isFinite(remainingMs) ? Math.max(0, remainingMs) : durationFor(timer),
-                endAt: null,
-            };
-        }
-
-        return { status: "done", remainingMs: 0, endAt: null };
-    };
-
-    const saveState = (timer, state) => {
-        timer._bakeTimerState = state;
-        if (state.status === "idle") {
-            safeRemove(storageKeyFor(timer));
-        } else {
-            safeWrite(storageKeyFor(timer), state);
-        }
-    };
-
-    const render = (timer, now = Date.now()) => {
-        const action = timer.querySelector("[data-bake-timer-action]");
-        const display = timer.querySelector("[data-bake-timer-display]");
-        const toggle = timer.querySelector("[data-bake-timer-toggle]");
-        let state = timer._bakeTimerState || normalizedState(timer);
-
-        if (state.status === "running") {
-            const remainingMs = Math.max(0, Number(state.endAt) - now);
-            if (remainingMs <= 0) {
-                state = { status: "done", remainingMs: 0, endAt: null };
-                saveState(timer, state);
-            } else {
-                state = { ...state, remainingMs };
-                timer._bakeTimerState = state;
-            }
-        }
-
-        timer.classList.toggle("bake-timer--running", state.status === "running");
-        timer.classList.toggle("bake-timer--paused", state.status === "paused");
-        timer.classList.toggle("bake-timer--done", state.status === "done");
-
-        if (state.status === "running") {
-            action.textContent = "Pause";
-            display.textContent = formatRemaining(state.remainingMs);
-            toggle.disabled = false;
-        } else if (state.status === "paused") {
-            action.textContent = "Resume";
-            display.textContent = formatRemaining(state.remainingMs);
-            toggle.disabled = false;
-        } else if (state.status === "done") {
-            action.textContent = "Finished";
-            display.textContent = "DONE";
-            toggle.disabled = true;
-        } else {
-            action.textContent = "Start";
-            display.textContent = formatRemaining(durationFor(timer));
-            toggle.disabled = false;
-        }
-    };
-
-    const start = (timer, remainingMs = durationFor(timer)) => {
-        const state = {
-            status: "running",
-            remainingMs,
-            endAt: Date.now() + remainingMs,
-        };
-        saveState(timer, state);
-        render(timer);
-    };
-
-    const pause = (timer) => {
-        const state = timer._bakeTimerState;
-        const remainingMs = Math.max(0, Number(state.endAt) - Date.now());
-        saveState(timer, { status: "paused", remainingMs, endAt: null });
-        render(timer);
-    };
-
-    const reset = (timer) => {
-        saveState(timer, defaultState(timer));
-        render(timer);
-    };
-
-    timers.forEach((timer) => {
-        timer._bakeTimerState = normalizedState(timer);
-        render(timer);
-
-        timer.querySelector("[data-bake-timer-toggle]")?.addEventListener("click", (event) => {
+    orderRows.forEach((row) => {
+        row.querySelector("[data-order-boxed-button]")?.addEventListener("click", async (event) => {
+            event.preventDefault();
             event.stopPropagation();
-            const state = timer._bakeTimerState;
-            if (state.status === "running") {
-                pause(timer);
-            } else if (state.status === "paused") {
-                start(timer, state.remainingMs);
-            } else if (state.status === "idle") {
-                start(timer);
+            const button = event.currentTarget;
+            const orderId = row.dataset.orderId;
+            const boxed = !Boolean(boxedOrders[orderId]);
+            button.disabled = true;
+            try {
+                const response = await fetch(orderReadyUrl, {
+                    method: "POST",
+                    headers: {"Accept": "application/json", "Content-Type": "application/json"},
+                    body: JSON.stringify({service_date: serviceDate, order_id: orderId, boxed}),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) {
+                    throw new Error(result.error || "The boxed status could not be saved.");
+                }
+                if (result.boxed_at) {
+                    boxedOrders[orderId] = result.boxed_at;
+                } else {
+                    delete boxedOrders[orderId];
+                }
+                renderBoxedOrders();
+            } catch (error) {
+                window.alert(String(error));
+            } finally {
+                button.disabled = false;
             }
-        });
-
-        timer.querySelector("[data-bake-timer-reset]")?.addEventListener("click", (event) => {
-            event.stopPropagation();
-            reset(timer);
         });
     });
 
-    window.setInterval(() => {
-        const now = Date.now();
-        timers.forEach((timer) => render(timer, now));
-    }, 250);
+    const poll = async () => {
+        if (polling || document.hidden) {
+            return;
+        }
+        polling = true;
+        try {
+            const response = await fetch(`${stateUrl}?date=${encodeURIComponent(serviceDate)}`, {
+                headers: {"Accept": "application/json"},
+                cache: "no-store",
+            });
+            const result = await response.json();
+            if (response.ok && result.ok) {
+                applyPayload(result);
+            }
+        } catch (_error) {
+            // Keep the last known production state during a brief network interruption.
+        } finally {
+            polling = false;
+        }
+    };
+
+    renderAll();
+    poll();
+    window.setInterval(renderTimers, 250);
+    window.setInterval(poll, 2_000);
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            poll();
+        }
+    });
 })();
 
 (() => {
@@ -990,7 +1070,10 @@
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({service_date: serviceDate}),
+                body: JSON.stringify({
+                    service_date: serviceDate,
+                    board_content_revision: board.dataset.boardContentRevision || "",
+                }),
             });
             const result = await response.json();
             if (!response.ok || !result.ok) {
@@ -1000,8 +1083,14 @@
             const orderChanges = Number(result.changed_count || 0) + Number(result.removed_count || 0);
             const historyChanges = Number(result.customer_history_changed || 0);
             const changes = orderChanges + historyChanges;
-            if (changes > 0) {
-                setStatus(`${changes} dashboard change${changes === 1 ? "" : "s"} found—updating…`);
+            const localContentChanged = Boolean(result.board_content_changed);
+            board.dataset.boardContentRevision = result.board_content_revision || "";
+            if (changes > 0 || localContentChanged) {
+                const changeLabel = changes > 0
+                    ? `${changes} dashboard change${changes === 1 ? "" : "s"}`
+                    : "Local order changes";
+                setStatus(`${changeLabel} found—updating…`);
+                window.PizzeriaDashboardViewport?.remember();
                 window.location.reload();
                 return;
             }

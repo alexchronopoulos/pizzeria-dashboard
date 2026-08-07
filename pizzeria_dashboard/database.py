@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -34,6 +35,20 @@ class MergeResult:
     info: SyncInfo
     changed_count: int
     removed_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PieProductionState:
+    pie_key: str
+    timer_status: str
+    timer_remaining_ms: int
+    timer_end_at_ms: int | None
+    oven_position: str | None
+    updated_at: datetime
+
+
+OVEN_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
+TIMER_STATUSES = {"idle", "running", "paused", "done"}
 
 
 def _utc_now() -> datetime:
@@ -102,6 +117,31 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_order_internal_notes_service_date
                 ON order_internal_notes (service_date);
+
+            CREATE TABLE IF NOT EXISTS pie_production_states (
+                service_date TEXT NOT NULL,
+                pie_key TEXT NOT NULL,
+                timer_status TEXT NOT NULL DEFAULT 'idle',
+                timer_remaining_ms INTEGER NOT NULL DEFAULT 480000,
+                timer_end_at_ms INTEGER,
+                oven_position TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, pie_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pie_production_states_service_date
+                ON pie_production_states (service_date);
+
+            CREATE TABLE IF NOT EXISTS order_ready_states (
+                service_date TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                boxed_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, order_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_order_ready_states_service_date
+                ON order_ready_states (service_date);
 
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT PRIMARY KEY,
@@ -490,7 +530,286 @@ def save_order_internal_note(
                 """,
                 (service_date.isoformat(), order_id),
             )
+        _touch_board_content_revision(connection, service_date.isoformat())
     return normalized or None
+
+
+def _touch_board_content_revision(
+    connection: sqlite3.Connection, service_date_key: str
+) -> str:
+    revision = str(time.time_ns())
+    connection.execute(
+        """
+        INSERT INTO app_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (f"board_content_revision:{service_date_key}", revision),
+    )
+    return revision
+
+
+def load_board_content_revision(path: Path, service_date: date) -> str:
+    """Return a monotonic token for local changes that require HTML reload."""
+    with _connect(path) as connection:
+        return _metadata_value(
+            connection, f"board_content_revision:{service_date.isoformat()}"
+        ) or ""
+
+
+def _epoch_ms(value: datetime | None = None) -> int:
+    return int((value or _utc_now()).timestamp() * 1000)
+
+
+def _normalized_pie_state(
+    row: sqlite3.Row | None,
+    pie_key: str,
+    *,
+    now_ms: int,
+    default_duration_ms: int = 480_000,
+) -> PieProductionState:
+    if row is None:
+        return PieProductionState(
+            pie_key=pie_key,
+            timer_status="idle",
+            timer_remaining_ms=default_duration_ms,
+            timer_end_at_ms=None,
+            oven_position=None,
+            updated_at=_utc_now(),
+        )
+    status = str(row["timer_status"] or "idle")
+    if status not in TIMER_STATUSES:
+        status = "idle"
+    remaining_ms = max(int(row["timer_remaining_ms"] or 0), 0)
+    end_at_ms = int(row["timer_end_at_ms"]) if row["timer_end_at_ms"] is not None else None
+    if status == "running" and end_at_ms is not None:
+        remaining_ms = max(end_at_ms - now_ms, 0)
+        if remaining_ms == 0:
+            status = "done"
+            end_at_ms = None
+    oven_position = str(row["oven_position"]) if row["oven_position"] else None
+    if oven_position not in OVEN_POSITIONS:
+        oven_position = None
+    try:
+        updated_at = datetime.fromisoformat(str(row["updated_at"]))
+    except ValueError:
+        updated_at = _utc_now()
+    return PieProductionState(
+        pie_key=pie_key,
+        timer_status=status,
+        timer_remaining_ms=remaining_ms,
+        timer_end_at_ms=end_at_ms,
+        oven_position=oven_position,
+        updated_at=updated_at,
+    )
+
+
+def prune_pie_production_states(
+    path: Path, service_date: date, valid_pie_keys: Iterable[str]
+) -> int:
+    valid = tuple(dict.fromkeys(str(key) for key in valid_pie_keys if key))
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if valid:
+            placeholders = ",".join("?" for _ in valid)
+            cursor = connection.execute(
+                f"""
+                DELETE FROM pie_production_states
+                WHERE service_date = ? AND pie_key NOT IN ({placeholders})
+                """,
+                (service_date.isoformat(), *valid),
+            )
+        else:
+            cursor = connection.execute(
+                "DELETE FROM pie_production_states WHERE service_date = ?",
+                (service_date.isoformat(),),
+            )
+    return max(cursor.rowcount, 0)
+
+
+def load_pie_production_states(
+    path: Path, service_date: date
+) -> dict[str, PieProductionState]:
+    now_ms = _epoch_ms()
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT pie_key, timer_status, timer_remaining_ms, timer_end_at_ms,
+                   oven_position, updated_at
+            FROM pie_production_states
+            WHERE service_date = ?
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    return {
+        str(row["pie_key"]): _normalized_pie_state(
+            row, str(row["pie_key"]), now_ms=now_ms
+        )
+        for row in rows
+    }
+
+
+def update_pie_production_state(
+    path: Path,
+    service_date: date,
+    pie_key: str,
+    *,
+    timer_action: str | None = None,
+    duration_ms: int = 480_000,
+    oven_position: str | None | object = ...,
+) -> PieProductionState:
+    """Update one shared pie timer/oven state atomically.
+
+    Starting an idle timer automatically takes the first available oven position
+    in top-left to bottom-right order. Passing ``oven_position=None`` clears the
+    current position; omitting it leaves the position unchanged.
+    """
+    normalized_duration = min(max(int(duration_ms), 1_000), 3_600_000)
+    normalized_action = (timer_action or "").strip().lower() or None
+    if normalized_action not in {None, "start", "pause", "reset"}:
+        raise ValueError("Unsupported timer action.")
+    if oven_position is not ... and oven_position is not None and oven_position not in OVEN_POSITIONS:
+        raise ValueError("Unsupported oven position.")
+
+    date_key = service_date.isoformat()
+    now = _utc_now()
+    now_ms = _epoch_ms(now)
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT pie_key, timer_status, timer_remaining_ms, timer_end_at_ms,
+                   oven_position, updated_at
+            FROM pie_production_states
+            WHERE service_date = ? AND pie_key = ?
+            """,
+            (date_key, pie_key),
+        ).fetchone()
+        state = _normalized_pie_state(
+            row, pie_key, now_ms=now_ms, default_duration_ms=normalized_duration
+        )
+        status = state.timer_status
+        remaining_ms = state.timer_remaining_ms
+        end_at_ms = state.timer_end_at_ms
+        selected_position = state.oven_position
+
+        if normalized_action == "start":
+            if status == "paused" and remaining_ms > 0:
+                run_for_ms = remaining_ms
+            else:
+                run_for_ms = normalized_duration
+            status = "running"
+            remaining_ms = run_for_ms
+            end_at_ms = now_ms + run_for_ms
+            if selected_position is None:
+                occupied_rows = connection.execute(
+                    """
+                    SELECT oven_position FROM pie_production_states
+                    WHERE service_date = ? AND oven_position IS NOT NULL AND pie_key != ?
+                    """,
+                    (date_key, pie_key),
+                ).fetchall()
+                occupied = {str(value["oven_position"]) for value in occupied_rows}
+                selected_position = next(
+                    (position for position in OVEN_POSITIONS if position not in occupied),
+                    None,
+                )
+        elif normalized_action == "pause":
+            if status == "running" and end_at_ms is not None:
+                remaining_ms = max(end_at_ms - now_ms, 0)
+                status = "paused" if remaining_ms else "done"
+                end_at_ms = None
+        elif normalized_action == "reset":
+            status = "idle"
+            remaining_ms = normalized_duration
+            end_at_ms = None
+            selected_position = None
+
+        if oven_position is not ...:
+            selected_position = oven_position
+            if selected_position is not None:
+                connection.execute(
+                    """
+                    UPDATE pie_production_states
+                    SET oven_position = NULL, updated_at = ?
+                    WHERE service_date = ? AND oven_position = ? AND pie_key != ?
+                    """,
+                    (now.isoformat(), date_key, selected_position, pie_key),
+                )
+
+        connection.execute(
+            """
+            INSERT INTO pie_production_states (
+                service_date, pie_key, timer_status, timer_remaining_ms,
+                timer_end_at_ms, oven_position, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(service_date, pie_key) DO UPDATE SET
+                timer_status = excluded.timer_status,
+                timer_remaining_ms = excluded.timer_remaining_ms,
+                timer_end_at_ms = excluded.timer_end_at_ms,
+                oven_position = excluded.oven_position,
+                updated_at = excluded.updated_at
+            """,
+            (
+                date_key, pie_key, status, remaining_ms, end_at_ms,
+                selected_position, now.isoformat(),
+            ),
+        )
+
+    return PieProductionState(
+        pie_key=pie_key,
+        timer_status=status,
+        timer_remaining_ms=remaining_ms,
+        timer_end_at_ms=end_at_ms,
+        oven_position=selected_position,
+        updated_at=now,
+    )
+
+
+def load_order_ready_states(
+    path: Path, service_date: date
+) -> dict[str, datetime]:
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT order_id, boxed_at
+            FROM order_ready_states
+            WHERE service_date = ?
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    states: dict[str, datetime] = {}
+    for row in rows:
+        try:
+            states[str(row["order_id"])] = datetime.fromisoformat(str(row["boxed_at"]))
+        except ValueError:
+            continue
+    return states
+
+
+def save_order_ready_state(
+    path: Path, service_date: date, order_id: str, *, boxed: bool
+) -> datetime | None:
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if boxed:
+            connection.execute(
+                """
+                INSERT INTO order_ready_states (service_date, order_id, boxed_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(service_date, order_id) DO UPDATE SET
+                    boxed_at = excluded.boxed_at,
+                    updated_at = excluded.updated_at
+                """,
+                (service_date.isoformat(), order_id, now.isoformat(), now.isoformat()),
+            )
+            return now
+        connection.execute(
+            """DELETE FROM order_ready_states WHERE service_date = ? AND order_id = ?""",
+            (service_date.isoformat(), order_id),
+        )
+    return None
 
 
 def has_orders_for_date(path: Path, service_date: date) -> bool:
@@ -599,6 +918,7 @@ def save_order_slot_assignment(
                 _utc_now().isoformat(),
             ),
         )
+        _touch_board_content_revision(connection, service_date.isoformat())
 
 
 def delete_order_slot_assignment(
@@ -615,6 +935,7 @@ def delete_order_slot_assignment(
             """,
             (service_date.isoformat(), order_id),
         )
+        _touch_board_content_revision(connection, service_date.isoformat())
 
 
 def load_service_state_payload(path: Path, service_date: date) -> dict[str, object] | None:

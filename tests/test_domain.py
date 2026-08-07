@@ -340,3 +340,32 @@ def test_pizza_summary_breaks_quantity_ties_by_item_name() -> None:
         ("Cherry Tomato", 2),
         ("Plain Pie", 2),
     )
+
+
+def test_modifier_summary_counts_pizza_addons_and_excludes_removals() -> None:
+    service_date = date(2026, 8, 6)
+    order = Order(
+        order_id="order-1",
+        customer_name="Alex",
+        pickup_at=datetime(2026, 8, 6, 16, 0),
+        items=(
+            Item(
+                "Plain Pie",
+                2,
+                "pizza",
+                modifiers=(
+                    Modifier("Pesto", quantity=1),
+                    Modifier("No Onion", quantity=1),
+                    Modifier("Cucumber Salad", category="salad", quantity=1),
+                ),
+            ),
+        ),
+    )
+    board = build_service_board(
+        service_date,
+        (order,),
+        pickup_times=(datetime(2026, 8, 6, 16, 0),),
+    )
+
+    assert board.modifier_counts == {"Pesto": 2}
+    assert board.modifier_summary == (("Pesto", 2),)

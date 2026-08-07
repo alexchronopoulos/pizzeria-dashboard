@@ -21,6 +21,7 @@ from .database import (
     delete_order_slot_assignment,
     has_orders_for_date,
     load_app_metadata,
+    load_board_content_revision,
     load_customer_history_for_order,
     load_customer_history_sync_info,
     load_customer_summaries_for_orders,
@@ -28,12 +29,17 @@ from .database import (
     load_order_for_date,
     load_order_internal_note,
     load_order_internal_notes_for_date,
+    load_order_ready_states,
     load_orders_for_date,
+    load_pie_production_states,
     load_sync_info,
     merge_orders_for_date,
+    prune_pie_production_states,
     save_app_metadata,
     save_order_internal_note,
+    save_order_ready_state,
     save_order_slot_assignment,
+    update_pie_production_state,
 )
 from .domain import Order, build_service_board, parse_ticket_pickup_time
 from .customer_history import build_customer_visit_summary
@@ -96,6 +102,18 @@ def _ensure_cached_orders(service_date: date, source: str) -> None:
         sync_sample_orders(database_path, service_date)
 
 
+def _production_pie_keys(service_date: date, orders: tuple[Order, ...]) -> tuple[str, ...]:
+    keys: list[str] = []
+    for order in orders:
+        order_key = order.square_order_id or order.order_id
+        for index, item in enumerate(order.production_items):
+            if item.category != "pizza":
+                continue
+            item_key = item.catalog_object_id or item.name
+            keys.append(f"{service_date.isoformat()}|{order_key}|{item_key}|{index}")
+    return tuple(keys)
+
+
 def _auto_refresh_preferences() -> tuple[bool, int]:
     database_path = _database_path()
     configured_seconds = int(current_app.config.get("SQUARE_AUTO_REFRESH_SECONDS", 30))
@@ -126,7 +144,13 @@ def index() -> str:
 
     database_path = _database_path()
     orders = load_orders_for_date(database_path, selected_date)
+    prune_pie_production_states(
+        database_path, selected_date, _production_pie_keys(selected_date, orders)
+    )
     internal_notes = load_order_internal_notes_for_date(database_path, selected_date)
+    pie_states = load_pie_production_states(database_path, selected_date)
+    ready_states = load_order_ready_states(database_path, selected_date)
+    board_content_revision = load_board_content_revision(database_path, selected_date)
     service_configuration = load_configuration(database_path)
     pickup_overrides = load_order_slot_assignment_overrides(
         database_path, selected_date
@@ -168,6 +192,24 @@ def index() -> str:
     customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
+    current_service_time = now.replace(tzinfo=None)
+    if selected_date == now.date():
+        future_one_pie_windows = tuple(
+            window
+            for window in service.one_pie_available_windows
+            if window.pickup_at >= current_service_time
+        )
+        future_two_pie_windows = tuple(
+            window
+            for window in service.two_pie_available_windows
+            if window.pickup_at >= current_service_time
+        )
+    else:
+        # Historical dates remain useful for review, while future dates have no
+        # elapsed service slots yet. Only today's operational lists need live
+        # time filtering.
+        future_one_pie_windows = service.one_pie_available_windows
+        future_two_pie_windows = service.two_pie_available_windows
     square_refresh_controls_visible = (
         source == "square"
         and bool(str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip())
@@ -193,7 +235,7 @@ def index() -> str:
         order_source=source,
         service_configuration=service_configuration,
         selected_day_hours=service_configuration.hours_for_date(selected_date),
-        current_service_time=now.replace(tzinfo=None),
+        current_service_time=current_service_time,
         square_configured=bool(
             str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
         ),
@@ -214,6 +256,16 @@ def index() -> str:
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
+        pie_states=pie_states,
+        boxed_orders={
+            order_id: boxed_at.astimezone(
+                ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+            )
+            for order_id, boxed_at in ready_states.items()
+        },
+        board_content_revision=board_content_revision,
+        future_one_pie_windows=future_one_pie_windows,
+        future_two_pie_windows=future_two_pie_windows,
         pickup_overrides=pickup_overrides,
         original_pickup_times={
             order.order_id: _local_service_time(order.pickup_at)
@@ -267,6 +319,12 @@ def order_details():
 
     configuration = load_configuration(_database_path())
     pickup_slots = configuration.pickup_times(selected_date)
+    current_service_time = _now().replace(tzinfo=None)
+    selectable_pickup_slots = (
+        tuple(slot for slot in pickup_slots if slot >= current_service_time)
+        if selected_date == current_service_time.date()
+        else pickup_slots
+    )
     assignment_overrides = load_order_slot_assignment_overrides(_database_path(), selected_date)
     # Older disposable cache rows may predate the explicit is_walk_in field. A
     # completed fulfillment-free order with a Ticket Name is still a walk-in and
@@ -324,7 +382,8 @@ def order_details():
         effective_pickup_at=effective_pickup_at,
         pickup_slot_loads=pickup_slot_loads,
         pizza_capacity_per_window=service.pizza_capacity_per_window,
-        pickup_slots=pickup_slots,
+        pickup_slots=selectable_pickup_slots,
+        current_service_time=current_service_time,
         selected_date=selected_date,
         today=_now().date(),
         event_at=event_at,
@@ -370,7 +429,13 @@ def update_order_internal_note():
     saved_note = save_order_internal_note(
         database_path, selected_date, order_id, normalized_note
     )
-    return jsonify(ok=True, note=saved_note)
+    return jsonify(
+        ok=True,
+        note=saved_note,
+        board_content_revision=load_board_content_revision(
+            database_path, selected_date
+        ),
+    )
 
 
 @blueprint.post("/scheduled-pickup-time")
@@ -413,6 +478,9 @@ def update_scheduled_pickup_time():
             ok=True,
             overridden=False,
             pickup_at=_local_service_time(order.pickup_at).isoformat(),
+            board_content_revision=load_board_content_revision(
+                database_path, selected_date
+            ),
         )
 
     if not raw_pickup_at:
@@ -423,6 +491,9 @@ def update_scheduled_pickup_time():
         return jsonify(ok=False, error="The pickup time is invalid."), 400
     if pickup_at.date() != selected_date:
         return jsonify(ok=False, error="The pickup time is on another day."), 400
+    current_service_time = _now().replace(tzinfo=None)
+    if selected_date == current_service_time.date() and pickup_at < current_service_time:
+        return jsonify(ok=False, error="Choose a pickup time that has not passed."), 400
 
     configuration = load_configuration(database_path)
     allowed_slots = {
@@ -449,6 +520,102 @@ def update_scheduled_pickup_time():
         ok=True,
         overridden=overridden,
         pickup_at=pickup_at.isoformat(),
+        board_content_revision=load_board_content_revision(
+            database_path, selected_date
+        ),
+    )
+
+
+def _pie_state_payload(state) -> dict[str, object]:
+    return {
+        "timer_status": state.timer_status,
+        "timer_remaining_ms": state.timer_remaining_ms,
+        "timer_end_at_ms": state.timer_end_at_ms,
+        "oven_position": state.oven_position,
+        "updated_at": state.updated_at.isoformat(),
+    }
+
+
+def _live_production_payload(selected_date: date) -> dict[str, object]:
+    database_path = _database_path()
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    return {
+        "ok": True,
+        "server_now_ms": int(datetime.now(UTC).timestamp() * 1000),
+        "pies": {
+            pie_key: _pie_state_payload(state)
+            for pie_key, state in load_pie_production_states(
+                database_path, selected_date
+            ).items()
+        },
+        "boxed_orders": {
+            order_id: boxed_at.astimezone(timezone).isoformat()
+            for order_id, boxed_at in load_order_ready_states(
+                database_path, selected_date
+            ).items()
+        },
+    }
+
+
+@blueprint.get("/live-production-state")
+def live_production_state():
+    selected_date = _parse_service_date(request.args.get("date"))
+    return jsonify(_live_production_payload(selected_date))
+
+
+@blueprint.post("/pie-production-state")
+def update_shared_pie_state():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    pie_key = str(payload.get("pie_key", "")).strip()
+    if not pie_key or len(pie_key) > 500:
+        return jsonify(ok=False, error="A valid pie key is required."), 400
+    if not pie_key.startswith(f"{selected_date.isoformat()}|"):
+        return jsonify(ok=False, error="The pie key is for another service date."), 400
+    action = str(payload.get("timer_action", "")).strip().lower() or None
+    try:
+        duration_ms = int(payload.get("duration_ms", 480_000))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="The timer duration is invalid."), 400
+    kwargs: dict[str, object] = {
+        "timer_action": action,
+        "duration_ms": duration_ms,
+    }
+    if "oven_position" in payload:
+        raw_position = payload.get("oven_position")
+        kwargs["oven_position"] = (
+            str(raw_position).strip() if raw_position not in (None, "") else None
+        )
+    try:
+        update_pie_production_state(
+            _database_path(), selected_date, pie_key, **kwargs
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(_live_production_payload(selected_date))
+
+
+@blueprint.post("/order-ready")
+def update_order_ready():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+    database_path = _database_path()
+    if load_order_for_date(database_path, selected_date, order_id) is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    boxed_at = save_order_ready_state(
+        database_path, selected_date, order_id, boxed=bool(payload.get("boxed"))
+    )
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    return jsonify(
+        ok=True,
+        boxed_at=(boxed_at.astimezone(timezone).isoformat() if boxed_at else None),
     )
 
 
@@ -652,6 +819,9 @@ def update_walk_in_assignment():
             return jsonify(ok=False, error="The pickup time is invalid."), 400
         if pickup_at.date() != selected_date:
             return jsonify(ok=False, error="The pickup time is on another day."), 400
+        current_service_time = _now().replace(tzinfo=None)
+        if selected_date == current_service_time.date() and pickup_at < current_service_time:
+            return jsonify(ok=False, error="Choose a pickup time that has not passed."), 400
 
         configuration = load_configuration(_database_path())
         allowed_slots = {
@@ -664,7 +834,12 @@ def update_walk_in_assignment():
     save_order_slot_assignment(
         _database_path(), selected_date, order_id, pickup_at
     )
-    return jsonify(ok=True)
+    return jsonify(
+        ok=True,
+        board_content_revision=load_board_content_revision(
+            _database_path(), selected_date
+        ),
+    )
 
 
 def _refresh_customer_history_after_order_sync(*, force: bool = False):
@@ -688,6 +863,7 @@ def quick_sync():
     if not isinstance(payload, Mapping):
         payload = request.form
     selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    client_board_revision = str(payload.get("board_content_revision", ""))
     if selected_date < _now().date():
         return jsonify(
             ok=False,
@@ -717,6 +893,12 @@ def quick_sync():
         customer_history_changed=(
             history_result.changed_count if history_result is not None else 0
         ),
+        board_content_revision=(
+            current_board_revision := load_board_content_revision(
+                _database_path(), selected_date
+            )
+        ),
+        board_content_changed=(current_board_revision != client_board_revision),
     )
 
 

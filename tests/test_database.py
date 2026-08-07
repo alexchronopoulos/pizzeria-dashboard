@@ -6,20 +6,26 @@ from pathlib import Path
 from pizzeria_dashboard.database import (
     delete_order_slot_assignment,
     initialize_database,
+    load_board_content_revision,
+    load_order_ready_states,
     load_order_slot_assignment_overrides,
     load_order_slot_assignments,
     load_order_for_date,
     load_order_internal_note,
     load_order_internal_notes_for_date,
     load_orders_for_date,
+    load_pie_production_states,
     load_service_state_payload,
     load_sync_info,
     merge_orders_for_date,
     migrate_legacy_service_state,
+    prune_pie_production_states,
     replace_orders_for_date,
     save_order_internal_note,
+    save_order_ready_state,
     save_order_slot_assignment,
     save_service_state_payload,
+    update_pie_production_state,
 )
 from pizzeria_dashboard.sample_data import build_sample_orders
 
@@ -43,6 +49,8 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "app_metadata",
         "order_slot_assignments",
         "order_internal_notes",
+        "pie_production_states",
+        "order_ready_states",
     } <= tables
 
 
@@ -282,3 +290,96 @@ def test_incremental_merge_preserves_untouched_orders_and_removes_changed_candid
     assert result.changed_count == 1
     assert result.removed_count == 1
     assert result.info.order_count == 2
+
+
+def test_shared_pie_timer_auto_assigns_oven_positions_and_can_reset(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    first_key = "2026-08-06|order-1|plain|0"
+    second_key = "2026-08-06|order-2|white|0"
+
+    first = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="start", duration_ms=480_000
+    )
+    second = update_pie_production_state(
+        database_path, service_date, second_key, timer_action="start", duration_ms=480_000
+    )
+
+    assert first.timer_status == "running"
+    assert first.oven_position == "top-left"
+    assert second.oven_position == "top-right"
+
+    paused = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="pause", duration_ms=480_000
+    )
+    assert paused.timer_status == "paused"
+    assert 0 < paused.timer_remaining_ms <= 480_000
+
+    reset = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="reset", duration_ms=480_000
+    )
+    assert reset.timer_status == "idle"
+    assert reset.oven_position is None
+
+
+def test_manual_oven_assignment_replaces_existing_occupant(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    first_key = "2026-08-06|order-1|plain|0"
+    second_key = "2026-08-06|order-2|white|0"
+    update_pie_production_state(
+        database_path, service_date, first_key, oven_position="bottom-left"
+    )
+    update_pie_production_state(
+        database_path, service_date, second_key, oven_position="bottom-left"
+    )
+
+    states = load_pie_production_states(database_path, service_date)
+    assert states[first_key].oven_position is None
+    assert states[second_key].oven_position == "bottom-left"
+
+
+def test_shared_boxed_ready_state_can_be_set_and_cleared(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+
+    boxed_at = save_order_ready_state(
+        database_path, service_date, "order-1", boxed=True
+    )
+    assert boxed_at is not None
+    assert load_order_ready_states(database_path, service_date)["order-1"] == boxed_at
+
+    save_order_ready_state(database_path, service_date, "order-1", boxed=False)
+    assert load_order_ready_states(database_path, service_date) == {}
+
+
+def test_board_content_revision_changes_when_note_is_cleared(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+
+    save_order_internal_note(database_path, service_date, "order-1", "Allergy")
+    first_revision = load_board_content_revision(database_path, service_date)
+    save_order_internal_note(database_path, service_date, "order-2", "Substitution")
+    second_revision = load_board_content_revision(database_path, service_date)
+    save_order_internal_note(database_path, service_date, "order-1", "")
+    cleared_revision = load_board_content_revision(database_path, service_date)
+
+    assert first_revision
+    assert len({first_revision, second_revision, cleared_revision}) == 3
+
+
+def test_stale_pie_states_are_pruned_to_current_board_keys(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    current_key = "2026-08-06|order-1|plain|0"
+    stale_key = "2026-08-06|removed|plain|0"
+    update_pie_production_state(database_path, service_date, current_key, oven_position="top-left")
+    update_pie_production_state(database_path, service_date, stale_key, oven_position="top-right")
+
+    assert prune_pie_production_states(database_path, service_date, (current_key,)) == 1
+    assert set(load_pie_production_states(database_path, service_date)) == {current_key}

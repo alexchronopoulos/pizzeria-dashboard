@@ -425,6 +425,32 @@ class ServiceBoard:
         return tuple(summary)
 
     @property
+    def modifier_counts(self) -> Counter[str]:
+        """Pizza add-on modifiers grouped for ingredient prep.
+
+        Removal instructions and order-level salad/side/cookie modifiers are
+        intentionally excluded. Modifier quantities are multiplied by the pizza
+        line quantity so a two-pie line contributes two portions of pesto.
+        """
+        counts: Counter[str] = Counter()
+        for order in self.all_orders:
+            for item in order.production_items:
+                if item.category != "pizza":
+                    continue
+                for modifier in item.production_modifiers:
+                    if modifier.is_removal:
+                        continue
+                    counts[modifier.display_name] += item.quantity * modifier.quantity
+        return counts
+
+    @property
+    def modifier_summary(self) -> tuple[tuple[str, int], ...]:
+        summary = list(self.modifier_counts.items())
+        summary.sort(key=lambda entry: entry[0].casefold())
+        summary.sort(key=lambda entry: entry[1], reverse=True)
+        return tuple(summary)
+
+    @property
     def salad_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
         for order in self.all_orders:
