@@ -1,52 +1,142 @@
 (() => {
-    const STORAGE_KEY = "pizzeria-dashboard:viewport-anchor";
+    const STORAGE_KEY = "pizzeria-dashboard:viewport-lock";
 
-    const visibleSlot = () => Array.from(
-        document.querySelectorAll(".pickup-window[data-pickup-at]:not([hidden])")
-    ).find((slot) => slot.getBoundingClientRect().bottom > 0);
+    if ("scrollRestoration" in window.history) {
+        window.history.scrollRestoration = "manual";
+    }
+
+    const visible = (element) => {
+        if (!element || element.hidden) {
+            return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight;
+    };
+
+    const nearestVisible = (elements) => {
+        const candidates = Array.from(elements)
+            .filter(visible)
+            .map((element) => ({element, rect: element.getBoundingClientRect()}));
+        if (!candidates.length) {
+            return null;
+        }
+        return candidates.sort((left, right) => {
+            const leftTop = left.rect.top >= 0 ? left.rect.top : Math.abs(left.rect.top) + 10000;
+            const rightTop = right.rect.top >= 0 ? right.rect.top : Math.abs(right.rect.top) + 10000;
+            return leftTop - rightTop;
+        })[0].element;
+    };
+
+    const parentSlotPickupAt = (element) => (
+        element?.closest?.(".pickup-window[data-pickup-at]")?.dataset.pickupAt || ""
+    );
+
+    const capture = () => {
+        const allVisibleTimers = Array.from(document.querySelectorAll("[data-bake-timer][data-bake-timer-key]"))
+            .filter(visible);
+        const activeVisibleTimers = allVisibleTimers.filter((timer) => (
+            timer.dataset.timerStatus === "running"
+            || timer.dataset.timerStatus === "paused"
+            || timer.dataset.timerStatus === "done"
+        ));
+        const timer = nearestVisible(activeVisibleTimers.length ? activeVisibleTimers : allVisibleTimers);
+        const order = timer?.closest(".order-row[data-order-id]")
+            || nearestVisible(document.querySelectorAll("#production-board .order-row[data-order-id]"));
+        const slot = order?.closest(".pickup-window[data-pickup-at]")
+            || timer?.closest(".pickup-window[data-pickup-at]")
+            || nearestVisible(document.querySelectorAll(".pickup-window[data-pickup-at]:not([hidden])"));
+        const anchor = timer || order || slot;
+        const rect = anchor?.getBoundingClientRect();
+
+        return {
+            timerKey: timer?.dataset.bakeTimerKey || "",
+            orderId: order?.dataset.orderId || "",
+            pickupAt: slot?.dataset.pickupAt || parentSlotPickupAt(anchor),
+            top: rect ? rect.top : null,
+            scrollY: window.scrollY,
+        };
+    };
+
+    const elementFor = (snapshot) => {
+        if (!snapshot) {
+            return null;
+        }
+        if (snapshot.timerKey) {
+            const timer = Array.from(document.querySelectorAll("[data-bake-timer][data-bake-timer-key]"))
+                .find((element) => element.dataset.bakeTimerKey === snapshot.timerKey);
+            if (timer && !timer.hidden) {
+                return timer;
+            }
+        }
+        if (snapshot.orderId) {
+            const order = Array.from(document.querySelectorAll("#production-board .order-row[data-order-id]"))
+                .find((element) => element.dataset.orderId === snapshot.orderId);
+            if (order && !order.closest(".pickup-window[hidden]")) {
+                return order;
+            }
+        }
+        if (snapshot.pickupAt) {
+            const slots = Array.from(document.querySelectorAll(".pickup-window[data-pickup-at]:not([hidden])"));
+            return slots.find((element) => element.dataset.pickupAt === snapshot.pickupAt)
+                || slots.find((element) => (element.dataset.pickupAt || "") > snapshot.pickupAt)
+                || null;
+        }
+        return null;
+    };
+
+    const restore = (snapshot, {defer = true} = {}) => {
+        if (!snapshot) {
+            return;
+        }
+        const apply = () => {
+            const anchor = elementFor(snapshot);
+            const savedTop = Number(snapshot.top);
+            if (anchor && Number.isFinite(savedTop)) {
+                const delta = anchor.getBoundingClientRect().top - savedTop;
+                if (Math.abs(delta) > 0.5) {
+                    window.scrollTo(0, Math.max(0, window.scrollY + delta));
+                }
+                return;
+            }
+            const savedScrollY = Number(snapshot.scrollY);
+            if (Number.isFinite(savedScrollY)) {
+                window.scrollTo(0, Math.max(0, savedScrollY));
+            }
+        };
+
+        if (!defer) {
+            apply();
+            return;
+        }
+        window.requestAnimationFrame(() => window.requestAnimationFrame(apply));
+    };
 
     const remember = () => {
-        const slot = visibleSlot();
-        if (!slot) {
-            return;
-        }
         try {
-            window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-                pickupAt: slot.dataset.pickupAt || "",
-                top: slot.getBoundingClientRect().top,
-            }));
+            window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(capture()));
         } catch (_error) {
-            // Browser scroll restoration remains the fallback.
+            // A reload can still proceed if browser storage is unavailable.
         }
     };
 
-    const restore = () => {
-        let saved = null;
+    const restoreSaved = () => {
+        let snapshot = null;
         try {
-            saved = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "null");
+            snapshot = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "null");
             window.sessionStorage.removeItem(STORAGE_KEY);
         } catch (_error) {
-            saved = null;
+            snapshot = null;
         }
-        if (!saved?.pickupAt || !Number.isFinite(Number(saved.top))) {
-            return;
-        }
-        const slots = Array.from(document.querySelectorAll(".pickup-window[data-pickup-at]"));
-        const anchor = slots.find((slot) => slot.dataset.pickupAt === saved.pickupAt)
-            || slots.find((slot) => (slot.dataset.pickupAt || "") > saved.pickupAt);
-        if (!anchor) {
-            return;
-        }
-        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-            const delta = anchor.getBoundingClientRect().top - Number(saved.top);
-            if (Math.abs(delta) > 1) {
-                window.scrollBy(0, delta);
-            }
-        }));
+        restore(snapshot, {defer: false});
     };
 
-    window.PizzeriaDashboardViewport = {remember, restore};
-    restore();
+    const preserve = (mutation) => {
+        const snapshot = capture();
+        mutation();
+        restore(snapshot, {defer: false});
+    };
+
+    window.PizzeriaDashboardViewport = {capture, remember, preserve, restore, restoreSaved};
 })();
 
 (() => {
@@ -101,10 +191,11 @@
 
     toggle.checked = savedPreference();
     applyPrepView();
+    window.PizzeriaDashboardViewport?.restoreSaved();
 
     toggle.addEventListener("change", () => {
         savePreference(toggle.checked);
-        applyPrepView();
+        window.PizzeriaDashboardViewport?.preserve(applyPrepView);
     });
 })();
 
@@ -768,6 +859,9 @@
             const display = timer.querySelector("[data-bake-timer-display]");
             const toggle = timer.querySelector("[data-bake-timer-toggle]");
             const status = state.timer_status || "idle";
+            timer.dataset.timerStatus = status;
+            timer.dataset.timerRemainingMs = String(Math.max(0, Number(state.timer_remaining_ms || 0)));
+            timer.dataset.timerEndAtMs = state.timer_end_at_ms ? String(state.timer_end_at_ms) : "";
             timer.classList.toggle("bake-timer--running", status === "running");
             timer.classList.toggle("bake-timer--paused", status === "paused");
             timer.classList.toggle("bake-timer--done", status === "done");
@@ -905,7 +999,9 @@
         }
         pieStates = {...pieStates, ...(payload.pies || {})};
         boxedOrders = payload.boxed_orders || {};
+        const viewportSnapshot = window.PizzeriaDashboardViewport?.capture();
         renderAll();
+        window.PizzeriaDashboardViewport?.restore(viewportSnapshot, {defer: false});
     };
 
     const postPieUpdate = async (pieKey, changes) => {

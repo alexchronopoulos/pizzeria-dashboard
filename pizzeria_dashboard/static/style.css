@@ -3420,3 +3420,17 @@ h2 {
         font-size: 0.68rem;
     }
 }
+
+/* Service stabilization 0.5.10: the dashboard owns viewport locking. */
+html,
+body,
+#production-board,
+.window-list,
+.pickup-window,
+.order-row {
+    overflow-anchor: none;
+}
+
+html {
+    scroll-behavior: auto !important;
+}
