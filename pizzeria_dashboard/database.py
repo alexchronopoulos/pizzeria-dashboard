@@ -193,14 +193,32 @@ def replace_orders_for_date(
     sync_time = synced_at or _utc_now()
     date_key = service_date.isoformat()
 
+    serialized_orders: dict[str, str] = {
+        order.order_id: json.dumps(
+            order_to_payload(order),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        for order in order_list
+    }
+
     with _connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        existing_rows = connection.execute(
+            """
+            SELECT order_id, source_payload_json
+            FROM orders
+            WHERE service_date = ?
+            """,
+            (date_key,),
+        ).fetchall()
+        existing_payloads = {
+            str(row["order_id"]): str(row["source_payload_json"])
+            for row in existing_rows
+        }
+
         for order in order_list:
-            payload = json.dumps(
-                order_to_payload(order),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
+            payload = serialized_orders[order.order_id]
             connection.execute(
                 """
                 INSERT INTO orders (
@@ -276,6 +294,11 @@ def replace_orders_for_date(
             """,
             (date_key, source, sync_time.isoformat(), len(order_list)),
         )
+        # Only publish a shared revision when the actual board content changed.
+        # Sync timestamps alone should not make other displays reload; this also
+        # preserves a staff-note revision across an otherwise no-op full refresh.
+        if existing_payloads != serialized_orders:
+            _touch_board_content_revision(connection, date_key)
 
     return SyncInfo(service_date, source, sync_time, len(order_list))
 
@@ -410,6 +433,8 @@ def merge_orders_for_date(
             """,
             (date_key, source, sync_time.isoformat(), order_count),
         )
+        if changed_count or removed_count:
+            _touch_board_content_revision(connection, date_key)
 
     return MergeResult(
         info=SyncInfo(service_date, source, sync_time, order_count),

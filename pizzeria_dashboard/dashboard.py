@@ -57,7 +57,7 @@ blueprint = Blueprint("dashboard", __name__)
 
 AUTO_REFRESH_ENABLED_KEY = "square_auto_refresh_enabled"
 AUTO_REFRESH_SECONDS_KEY = "square_auto_refresh_seconds"
-AUTO_REFRESH_INTERVALS = (15, 30, 60, 120, 300)
+AUTO_REFRESH_INTERVALS = (10, 15, 30, 60, 120, 300)
 
 
 def _now() -> datetime:
@@ -103,6 +103,11 @@ def _ensure_cached_orders(service_date: date, source: str) -> None:
 
 
 def _production_pie_keys(service_date: date, orders: tuple[Order, ...]) -> tuple[str, ...]:
+    """Return one persistent production-state key for every physical pizza.
+
+    Keep the historical line-item key for the first unit so existing single-pie
+    timer state survives upgrades; additional quantity units receive a suffix.
+    """
     keys: list[str] = []
     for order in orders:
         order_key = order.square_order_id or order.order_id
@@ -110,15 +115,17 @@ def _production_pie_keys(service_date: date, orders: tuple[Order, ...]) -> tuple
             if item.category != "pizza":
                 continue
             item_key = item.catalog_object_id or item.name
-            keys.append(f"{service_date.isoformat()}|{order_key}|{item_key}|{index}")
+            base_key = f"{service_date.isoformat()}|{order_key}|{item_key}|{index}"
+            for unit_index in range(item.quantity):
+                keys.append(base_key if unit_index == 0 else f"{base_key}|{unit_index}")
     return tuple(keys)
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
     database_path = _database_path()
-    configured_seconds = int(current_app.config.get("SQUARE_AUTO_REFRESH_SECONDS", 30))
+    configured_seconds = int(current_app.config.get("SQUARE_AUTO_REFRESH_SECONDS", 10))
     if configured_seconds not in AUTO_REFRESH_INTERVALS:
-        configured_seconds = 30
+        configured_seconds = 10
     stored_enabled = load_app_metadata(database_path, AUTO_REFRESH_ENABLED_KEY)
     stored_seconds = load_app_metadata(database_path, AUTO_REFRESH_SECONDS_KEY)
     enabled = stored_enabled != "false"
@@ -554,6 +561,9 @@ def _live_production_payload(selected_date: date) -> dict[str, object]:
                 database_path, selected_date
             ).items()
         },
+        "board_content_revision": load_board_content_revision(
+            database_path, selected_date
+        ),
     }
 
 

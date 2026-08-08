@@ -83,6 +83,8 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b"3 pizzas" in response.data
     assert response.data.count(b'class="pickup-window') == 16
     assert response.data.count(b'class="order-row') >= 3
+    assert b'data-order-pizza-units=' in response.data
+    assert b'data-total-pizzas="16"' in response.data
     assert len(load_orders_for_date(Path(app.config["DATABASE_PATH"]), date(2026, 7, 31))) == 14
 
 
@@ -791,8 +793,8 @@ def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path:
     response = app.test_client().get(f"/?date={today.isoformat()}")
 
     service = build_sample_service(today)
-    pizza_line_items = sum(
-        1
+    physical_pizzas = sum(
+        item.quantity
         for window in service.windows
         for order in window.orders
         for item in order.production_items
@@ -800,13 +802,13 @@ def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path:
     )
 
     assert response.status_code == 200
-    assert response.data.count(b"data-bake-timer-key=") == pizza_line_items
-    assert response.data.count(b"data-oven-position-key=") == pizza_line_items
-    assert response.data.count(b'data-oven-position-choice="top-left"') == pizza_line_items
-    assert response.data.count(b'data-oven-position-choice="top-right"') == pizza_line_items
-    assert response.data.count(b'data-oven-position-choice="bottom-left"') == pizza_line_items
-    assert response.data.count(b'data-oven-position-choice="bottom-right"') == pizza_line_items
-    assert response.data.count(b'data-bake-duration-seconds="480"') == pizza_line_items
+    assert response.data.count(b"data-bake-timer-key=") == physical_pizzas
+    assert response.data.count(b"data-oven-position-key=") == physical_pizzas
+    assert response.data.count(b'data-oven-position-choice="top-left"') == physical_pizzas
+    assert response.data.count(b'data-oven-position-choice="top-right"') == physical_pizzas
+    assert response.data.count(b'data-oven-position-choice="bottom-left"') == physical_pizzas
+    assert response.data.count(b'data-oven-position-choice="bottom-right"') == physical_pizzas
+    assert response.data.count(b'data-bake-duration-seconds="480"') == physical_pizzas
     assert b"data-bake-timer-toggle" in response.data
     assert b"data-bake-timer-reset" in response.data
     assert b">8:00<" in response.data

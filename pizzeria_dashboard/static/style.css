@@ -3249,3 +3249,174 @@ h2 {
         gap: 3px;
     }
 }
+
+/* Service feedback 0.5.7: stable prep view, per-pizza controls, countdown, alerts. */
+.pizza-bake-controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.pizza-bake-unit {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.pizza-unit-label,
+.oven-unit-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.oven-unit-label {
+    display: block;
+    max-width: 108px;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pizza-countdown {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 60;
+    display: grid;
+    width: 132px;
+    height: 132px;
+    place-items: center;
+    align-content: center;
+    gap: 4px;
+    padding: 12px;
+    border: 4px solid var(--black);
+    border-radius: 50%;
+    background: var(--brand-yellow);
+    box-shadow: 0 10px 28px rgba(0, 35, 56, 0.3);
+    color: var(--text);
+    pointer-events: none;
+    text-align: center;
+}
+
+.pizza-countdown strong {
+    color: var(--brand-blue);
+    font-size: 3rem;
+    font-weight: 950;
+    line-height: 0.86;
+    letter-spacing: -0.04em;
+}
+
+.pizza-countdown span {
+    color: var(--black);
+    font-size: 0.72rem;
+    font-weight: 950;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.pizza-countdown--finished {
+    background: var(--brand-green);
+    color: white;
+}
+
+.pizza-countdown--finished strong,
+.pizza-countdown--finished span {
+    color: white;
+}
+
+.new-order-toast-region {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 80;
+    display: grid;
+    width: min(380px, calc(100vw - 36px));
+    gap: 10px;
+    pointer-events: none;
+}
+
+.new-order-toast {
+    display: grid;
+    gap: 4px;
+    padding: 13px 14px;
+    border: 4px solid var(--black);
+    border-radius: 12px;
+    background: var(--brand-yellow);
+    box-shadow: 0 12px 30px rgba(0, 35, 56, 0.32);
+    color: var(--text);
+    pointer-events: auto;
+}
+
+.new-order-toast-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.new-order-toast-heading strong {
+    color: var(--brand-red);
+    font-size: 0.86rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+}
+
+.new-order-toast-heading button {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 2px solid var(--black);
+    border-radius: 50%;
+    background: white;
+    color: var(--black);
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: 950;
+    line-height: 1;
+}
+
+.new-order-toast > span {
+    font-size: 1.05rem;
+    font-weight: 950;
+}
+
+.new-order-toast > small {
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+@media (max-width: 720px) {
+    .pizza-bake-controls {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .pizza-countdown {
+        right: 10px;
+        bottom: 10px;
+        width: 110px;
+        height: 110px;
+    }
+
+    .pizza-countdown-logo {
+        inset: 6px;
+    }
+
+    .pizza-countdown-copy {
+        inset: 0;
+        padding: 8px;
+    }
+
+    .pizza-countdown strong {
+        font-size: 2.3rem;
+    }
+
+    .pizza-countdown span {
+        font-size: 0.68rem;
+    }
+}

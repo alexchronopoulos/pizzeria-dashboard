@@ -60,28 +60,6 @@
     }
 
     const storageKey = "pizzeria-dashboard:prep-view";
-    const serviceTimezone = board.dataset.serviceTimezone || "America/New_York";
-
-    const serviceNow = () => {
-        try {
-            const parts = new Intl.DateTimeFormat("en-US", {
-                timeZone: serviceTimezone,
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-                hourCycle: "h23",
-            }).formatToParts(new Date());
-            const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-            return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
-        } catch (_error) {
-            const now = new Date();
-            const offsetNow = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-            return offsetNow.toISOString().slice(0, 19);
-        }
-    };
 
     const savedPreference = () => {
         try {
@@ -101,41 +79,20 @@
 
     const applyPrepView = () => {
         const enabled = toggle.checked;
-        const now = serviceNow();
         let visibleSlots = 0;
-        const plan = slots.map((slot) => {
-            const pickupAt = slot.dataset.pickupAt || "";
-            const isPast = pickupAt ? pickupAt < now : slot.dataset.slotPast === "true";
-            const isEmpty = slot.dataset.slotEmpty === "true";
-            return {slot, isPast, hidden: enabled && (isEmpty || isPast)};
-        });
-        const anchorPlan = plan.find(({slot, hidden}) => (
-            !hidden && !slot.hidden && slot.getBoundingClientRect().bottom > 0
-        )) || plan.find(({slot, hidden}) => (
-            !hidden && slot.getBoundingClientRect().bottom > 0
-        ));
-        const anchorTop = anchorPlan?.slot.getBoundingClientRect().top;
-
-        plan.forEach(({slot, isPast, hidden}) => {
-            slot.dataset.slotPast = isPast ? "true" : "false";
+        slots.forEach((slot) => {
+            // Past slots deliberately stay in place. Removing them during service
+            // shifts the board underneath active timers and oven controls.
+            const hidden = enabled && slot.dataset.slotEmpty === "true";
             slot.hidden = hidden;
             if (!hidden) {
                 visibleSlots += 1;
             }
         });
 
-        if (anchorPlan && Number.isFinite(anchorTop)) {
-            window.requestAnimationFrame(() => {
-                const delta = anchorPlan.slot.getBoundingClientRect().top - anchorTop;
-                if (Math.abs(delta) > 1) {
-                    window.scrollBy(0, delta);
-                }
-            });
-        }
-
         control.classList.toggle("prep-view-control--active", enabled);
         control.setAttribute("aria-label", enabled
-            ? "Prep view on. Empty and past slots are hidden."
+            ? "Prep view on. Empty slots are hidden; past orders stay visible."
             : "Prep view off. All service slots are shown.");
         if (emptyState) {
             emptyState.hidden = !enabled || visibleSlots > 0;
@@ -149,8 +106,6 @@
         savePreference(toggle.checked);
         applyPrepView();
     });
-
-    window.setInterval(applyPrepView, 30_000);
 })();
 
 (() => {
@@ -652,9 +607,90 @@
 
 (() => {
     const board = document.getElementById("production-board");
+    const region = document.querySelector("[data-new-order-toast-region]");
+    const rows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
+    const serviceDate = board?.dataset.serviceDate;
+    if (!board || !region || !serviceDate) {
+        return;
+    }
+
+    const rowsById = new Map(rows.map((row) => [row.dataset.orderId, row]));
+    const currentIds = Array.from(rowsById.keys());
+    const storageKey = `pizzeria-dashboard:known-orders:${serviceDate}`;
+    let knownIds = null;
+    try {
+        const raw = window.sessionStorage.getItem(storageKey);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                knownIds = new Set(parsed.map(String));
+            }
+        }
+        window.sessionStorage.setItem(storageKey, JSON.stringify(currentIds));
+    } catch (_error) {
+        return;
+    }
+
+    // The first load establishes a baseline. Subsequent automatic/manual reloads
+    // can then distinguish truly new orders from the existing service board.
+    if (!knownIds) {
+        return;
+    }
+
+    const summarizeItems = (row) => {
+        const labels = Array.from(row.querySelectorAll(".item-row .item-label"))
+            .map((label) => label.textContent.replace(/\s+/g, " ").trim())
+            .filter(Boolean);
+        if (labels.length <= 3) {
+            return labels.join(" · ");
+        }
+        return `${labels.slice(0, 3).join(" · ")} · +${labels.length - 3} more`;
+    };
+
+    const showToast = (row) => {
+        const toast = document.createElement("div");
+        toast.className = "new-order-toast";
+        const name = row.querySelector(".customer-name")?.textContent.trim() || "New order";
+        const pickup = row.dataset.orderPickupLabel || "Pickup time unavailable";
+        const summary = summarizeItems(row) || "Production order";
+
+        const heading = document.createElement("div");
+        heading.className = "new-order-toast-heading";
+        const title = document.createElement("strong");
+        title.textContent = `NEW ORDER · ${pickup}`;
+        const close = document.createElement("button");
+        close.type = "button";
+        close.setAttribute("aria-label", "Dismiss new order alert");
+        close.textContent = "×";
+        heading.append(title, close);
+
+        const customer = document.createElement("span");
+        customer.textContent = name;
+        const items = document.createElement("small");
+        items.textContent = summary;
+        toast.append(heading, customer, items);
+
+        const dismiss = () => toast.remove();
+        close.addEventListener("click", dismiss);
+        region.appendChild(toast);
+        window.setTimeout(dismiss, 12_000);
+    };
+
+    currentIds
+        .filter((orderId) => !knownIds.has(orderId))
+        .map((orderId) => rowsById.get(orderId))
+        .filter(Boolean)
+        .slice(-4)
+        .forEach(showToast);
+})();
+
+
+(() => {
+    const board = document.getElementById("production-board");
     const timers = Array.from(document.querySelectorAll("[data-bake-timer]"));
     const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
     const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
+    const countdown = document.querySelector("[data-pizza-countdown]");
     if (!board || (!timers.length && !selectors.length && !orderRows.length)) {
         return;
     }
@@ -796,6 +832,27 @@
             second: "2-digit",
         });
     };
+    const renderPizzaCountdown = () => {
+        if (!countdown) {
+            return;
+        }
+        const total = Math.max(0, Number.parseInt(board.dataset.totalPizzas || "0", 10) || 0);
+        let boxedPizzas = 0;
+        rowsByOrderId.forEach((row, orderId) => {
+            if (!boxedOrders[orderId]) {
+                return;
+            }
+            boxedPizzas += Math.max(0, Number.parseInt(row.dataset.orderPizzaUnits || "0", 10) || 0);
+        });
+        const remaining = Math.max(total - boxedPizzas, 0);
+        const value = countdown.querySelector("[data-pizza-countdown-value]");
+        if (value) {
+            value.textContent = String(remaining);
+        }
+        countdown.classList.toggle("pizza-countdown--finished", remaining === 0 && total > 0);
+        countdown.setAttribute("aria-label", `${remaining} pizza${remaining === 1 ? "" : "s"} remaining today`);
+    };
+
     const renderBoxedOrders = () => {
         rowsByOrderId.forEach((row, orderId) => {
             const boxedAt = boxedOrders[orderId] || null;
@@ -817,6 +874,7 @@
                 time.textContent = boxedAt ? formatBoxedAt(boxedAt) : "";
             }
         });
+        renderPizzaCountdown();
     };
 
     const renderAll = () => {
@@ -825,9 +883,25 @@
         renderBoxedOrders();
     };
 
+    const shouldHoldBoardReload = () => (
+        Boolean(document.querySelector("dialog[open]"))
+        || document.body.classList.contains("walk-in-assignment-pending")
+    );
+
     const applyPayload = (payload) => {
         if (Number.isFinite(Number(payload.server_now_ms))) {
             serverOffsetMs = Number(payload.server_now_ms) - Date.now();
+        }
+        const remoteRevision = String(payload.board_content_revision || "");
+        const localRevision = String(board.dataset.boardContentRevision || "");
+        if (remoteRevision && localRevision && remoteRevision !== localRevision) {
+            if (!shouldHoldBoardReload()) {
+                window.PizzeriaDashboardViewport?.remember();
+                window.location.reload();
+                return;
+            }
+        } else if (remoteRevision && !localRevision) {
+            board.dataset.boardContentRevision = remoteRevision;
         }
         pieStates = {...pieStates, ...(payload.pies || {})};
         boxedOrders = payload.boxed_orders || {};

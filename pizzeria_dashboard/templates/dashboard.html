@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.6">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.9">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -73,10 +73,19 @@
     data-service-date="{{ selected_date.isoformat() }}"
     data-auto-sync-seconds="{{ auto_sync_seconds }}"
     data-service-timezone="{{ service_timezone.key }}"
+    data-total-pizzas="{{ service.total_pizzas }}"
 >
     {% include "_production_board.html" %}
 </div>
 
+{% if selected_date == today %}
+<aside class="pizza-countdown" data-pizza-countdown aria-live="polite" aria-label="Pizzas remaining today">
+    <strong data-pizza-countdown-value>{{ service.total_pizzas }}</strong>
+    <span>pizzas all day</span>
+</aside>
+{% endif %}
+
+<div class="new-order-toast-region" data-new-order-toast-region aria-live="polite" aria-atomic="false"></div>
 
 <dialog id="order-details-dialog" class="order-details-dialog" aria-labelledby="order-details-dialog-title">
     <div class="order-details-dialog-shell">
@@ -92,5 +101,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.6') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.8') }}" defer></script>
 {% endblock %}

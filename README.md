@@ -24,9 +24,9 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Retains Square order version and fulfillment identifiers needed to complete eligible pickup orders from the Release candidate badge.
 - Opens every order in a compact modal with pickup controls and the cached kitchen view. Raw Square debug data is not exposed in the dashboard.
 - Displays customer names as first name plus last initial, and removes Ticket Name pickup times from visible customer labels.
-- Adds an independent eight-minute timer to every pizza line item. Timers can be started, paused, resumed, and reset.
+- Adds an independent eight-minute timer and oven position to every physical pizza, including one set of controls for each unit on multi-quantity line items. Timers can be started, paused, resumed, and reset.
 - Stores timer and oven-position state in SQLite and synchronizes it across prep and expo displays every two seconds. Starting a timer automatically claims the first open oven position from top-left to bottom-right; resetting it clears that position.
-- Detects completed orders with no actual pickup timestamp as walk-ins when their local `created_at` or `closed_at` date matches the selected service date.
+- Detects completed orders with no actual pickup timestamp as walk-ins when their local `created_at` or `closed_at` date matches the selected service date, including Square `IN_STORE` / For Here fulfillments as well as ordinary To Go counter orders.
 - Shows new walk-ins in an **Unscheduled** lane using Square ticket names when available.
 - Parses configured pickup times from Ticket Names such as `Sam 7:30` or `5:45 Peter` and automatically places the walk-in into the matching service slot.
 - Supports dragging walk-ins into configured service slots or back to the Unscheduled lane.
@@ -34,8 +34,9 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Lets scheduled pickup orders be moved to another configured dashboard slot while retaining a one-click return to the original Square time.
 - Shows each destination slot's current pizza load before a scheduled order is moved and marks adjusted order cards with their original pickup time.
 - Stores scheduled-order adjustments, manual walk-in assignments, explicit Unscheduled overrides, and staff notes in SQLite so a Square refresh preserves them.
-- Marks boxed-and-ready orders across every display with a gray card and a shared timestamp.
-- Summarizes pizza add-on modifiers for ingredient prep and hides elapsed pickup slots from today's operational selectors.
+- Marks boxed-and-ready orders across every display with a gray card and a shared timestamp, and drives a fixed circular pizzas-remaining countdown from those shared ready states.
+- Summarizes pizza add-on modifiers for ingredient prep and hides elapsed pickup slots from today's operational selectors. Prep View hides empty slots only; populated past orders remain in place so active timer positions do not jump during service.
+- Publishes order-cache and staff-note revisions to all open displays every two seconds; when one display finds a new Square order, the others reload automatically and show a new-order toast with pickup time and item summary.
 - Does not write timer, oven-position, boxed-ready, staff-note, or pickup-time override state back to Square.
 
 The active database remains:
@@ -255,12 +256,12 @@ manually released through Square.
 
 ## Live service refresh
 
-When the dashboard is open on today's service date, it checks Square every 30 seconds. After the initial full-day pull, each check searches only orders whose `updated_at` timestamp changed since the last successful refresh, with a short overlap to avoid missing orders during an in-flight request. New online orders and newly completed walk-ins are merged into SQLite without replacing untouched orders. The regular button remains a full-day rebuild.
+When the dashboard is open on today's service date, it checks Square every 10 seconds by default. After the initial full-day pull, each check searches only orders whose `updated_at` timestamp changed since the last successful refresh, with a short overlap to avoid missing orders during an in-flight request. New online orders and newly completed walk-ins are merged into SQLite without replacing untouched orders. The regular button remains a full-day rebuild.
 
 Configure the cadence in `.env` when needed:
 
 ```dotenv
-SQUARE_AUTO_REFRESH_SECONDS=30
+SQUARE_AUTO_REFRESH_SECONDS=10
 SQUARE_INCREMENTAL_OVERLAP_SECONDS=120
 ```
 

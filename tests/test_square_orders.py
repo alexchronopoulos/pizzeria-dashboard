@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Mapping
 
 import pytest
@@ -22,6 +23,7 @@ from pizzeria_dashboard.square_orders import (
     build_receipt_number_index,
     convert_square_orders,
     service_date_search_range,
+    _raw_order_matches_service_date,
 )
 from pizzeria_dashboard.sync_service import sync_orders_for_date
 
@@ -593,6 +595,54 @@ def test_pickup_fulfillment_without_pickup_time_is_unscheduled() -> None:
     assert orders[0].is_walk_in is True
     assert orders[0].pickup_at.strftime("%-I:%M %p") == "1:07 PM"
 
+
+
+def test_in_store_fulfillment_is_captured_as_for_here_walk_in() -> None:
+    raw_order = {
+        "id": "for-here-1",
+        "location_id": "LOCATION-1",
+        "state": "COMPLETED",
+        "created_at": "2026-07-31T20:05:00Z",
+        "closed_at": "2026-07-31T20:07:00Z",
+        "ticket_name": "Table 1",
+        "creation_source": {"product": "SQUARE_POS"},
+        "fulfillments": [
+            {
+                "uid": "in-store-1",
+                "type": "IN_STORE",
+                "state": "COMPLETED",
+                "in_store_details": {"note": "For here"},
+            }
+        ],
+        "line_items": [
+            {
+                "uid": "line-plain",
+                "catalog_object_id": "variation-plain",
+                "name": "Plain Pie",
+                "quantity": "1",
+            }
+        ],
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].is_walk_in is True
+    assert orders[0].customer_name == "Table 1"
+    assert orders[0].note == "For here"
+    assert orders[0].pickup_at.strftime("%-I:%M %p") == "4:07 PM"
+    assert _raw_order_matches_service_date(
+        raw_order,
+        service_date=SERVICE_DATE,
+        timezone=ZoneInfo("America/New_York"),
+    ) is True
 
 def test_generic_order_with_delivery_fulfillment_is_not_a_walk_in() -> None:
     raw_order = {

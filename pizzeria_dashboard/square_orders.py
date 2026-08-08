@@ -218,10 +218,14 @@ def _raw_order_matches_service_date(
         return False
 
     has_pickup_time = False
-    has_non_pickup_fulfillment = False
+    has_blocking_fulfillment = False
     for fulfillment in _mapping_list(raw_order.get("fulfillments")):
-        if str(fulfillment.get("type", "")) != "PICKUP":
-            has_non_pickup_fulfillment = True
+        fulfillment_type = str(fulfillment.get("type", "")).upper()
+        if fulfillment_type != "PICKUP":
+            # Square POS can represent a For Here sale as IN_STORE. Treat it as
+            # an unscheduled counter order; delivery/shipment remain off-board.
+            if fulfillment_type != "IN_STORE":
+                has_blocking_fulfillment = True
             continue
         if str(fulfillment.get("state", "")) in {"CANCELED", "FAILED"}:
             continue
@@ -235,7 +239,7 @@ def _raw_order_matches_service_date(
         if pickup_at.astimezone(timezone).date() == service_date:
             return True
 
-    if has_pickup_time or has_non_pickup_fulfillment:
+    if has_pickup_time or has_blocking_fulfillment:
         return False
     return (
         _walk_in_event_at(
@@ -645,10 +649,12 @@ def convert_square_orders(
         raw_fulfillments = _mapping_list(raw_order.get("fulfillments"))
         matching_fulfillments: list[tuple[Mapping[str, object], datetime]] = []
         has_pickup_time = False
-        has_non_pickup_fulfillment = False
+        has_blocking_fulfillment = False
         for fulfillment in raw_fulfillments:
-            if str(fulfillment.get("type", "")) != "PICKUP":
-                has_non_pickup_fulfillment = True
+            fulfillment_type = str(fulfillment.get("type", "")).upper()
+            if fulfillment_type != "PICKUP":
+                if fulfillment_type != "IN_STORE":
+                    has_blocking_fulfillment = True
                 continue
             state = str(fulfillment.get("state", ""))
             if state in {"CANCELED", "FAILED"}:
@@ -749,7 +755,7 @@ def convert_square_orders(
         receipt_number = _receipt_number_for_order(
             raw_order, square_order_id, receipt_numbers_by_order_id
         )
-        if walk_in_at is None or has_non_pickup_fulfillment:
+        if walk_in_at is None or has_blocking_fulfillment:
             continue
 
         items = _convert_line_items(

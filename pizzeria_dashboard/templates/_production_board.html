@@ -14,6 +14,8 @@
     role="button"
     data-order-id="{{ order.order_id }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
+    data-order-pizza-units="{{ order.pizza_units }}"
+    data-order-pickup-label="{% if unscheduled %}Unscheduled walk-in{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
     tabindex="0"
     data-order-details-url="{{ url_for('dashboard.order_details', date=selected_date.isoformat(), order_id=order.order_id) }}"
     {% if order.is_walk_in %}
@@ -116,8 +118,8 @@
     {% endif %}
     <ul class="item-list">
         {% for item in order.production_items %}
-        {% set pie_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ loop.index0 %}
-        {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
+        {% set item_index = loop.index0 %}
+        {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
         <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}">
             <div class="item-main">
                 <div class="item-label">
@@ -126,32 +128,39 @@
                 </div>
                 {% if item.category == "pizza" and selected_date >= today %}
                 <div class="pizza-bake-controls">
-                    <div
-                        class="bake-timer"
-                        data-bake-timer
-                        data-bake-duration-seconds="480"
-                        data-bake-timer-key="{{ pie_key }}"
-                        data-timer-status="{{ pie_state.timer_status if pie_state else 'idle' }}"
-                        data-timer-remaining-ms="{{ pie_state.timer_remaining_ms if pie_state else 480000 }}"
-                        data-timer-end-at-ms="{{ pie_state.timer_end_at_ms if pie_state and pie_state.timer_end_at_ms else '' }}"
-                    >
-                        <button
-                            class="bake-timer-button"
-                            type="button"
-                            data-bake-timer-toggle
-                            aria-label="Start an eight-minute bake timer for {{ item.quantity }} {{ item.display_name }}"
+                    {% for unit_index in range(item.quantity) %}
+                    {% set pie_key = pie_base_key if unit_index == 0 else pie_base_key ~ '|' ~ unit_index %}
+                    {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
+                    <div class="pizza-bake-unit">
+                        {% if item.quantity > 1 %}<span class="pizza-unit-label">{{ unit_index + 1 }}/{{ item.quantity }}</span>{% endif %}
+                        <div
+                            class="bake-timer"
+                            data-bake-timer
+                            data-bake-duration-seconds="480"
+                            data-bake-timer-key="{{ pie_key }}"
+                            data-timer-status="{{ pie_state.timer_status if pie_state else 'idle' }}"
+                            data-timer-remaining-ms="{{ pie_state.timer_remaining_ms if pie_state else 480000 }}"
+                            data-timer-end-at-ms="{{ pie_state.timer_end_at_ms if pie_state and pie_state.timer_end_at_ms else '' }}"
                         >
-                            <span data-bake-timer-action>Start</span>
-                            <strong data-bake-timer-display aria-live="polite">8:00</strong>
-                        </button>
-                        <button
-                            class="bake-timer-reset"
-                            type="button"
-                            data-bake-timer-reset
-                            aria-label="Reset bake timer for {{ item.quantity }} {{ item.display_name }}"
-                            title="Reset timer"
-                        >↺</button>
+                            <button
+                                class="bake-timer-button"
+                                type="button"
+                                data-bake-timer-toggle
+                                aria-label="Start an eight-minute bake timer for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
+                            >
+                                <span data-bake-timer-action>Start</span>
+                                <strong data-bake-timer-display aria-live="polite">8:00</strong>
+                            </button>
+                            <button
+                                class="bake-timer-reset"
+                                type="button"
+                                data-bake-timer-reset
+                                aria-label="Reset bake timer for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
+                                title="Reset timer"
+                            >↺</button>
+                        </div>
                     </div>
+                    {% endfor %}
                 </div>
                 {% endif %}
             </div>
@@ -171,10 +180,14 @@
     {% if selected_date >= today and order.pizza_units %}
     <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">
         {% for item in order.production_items %}
+        {% set item_index = loop.index0 %}
         {% if item.category == "pizza" %}
-        {% set pie_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ loop.index0 %}
+        {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
+        {% for unit_index in range(item.quantity) %}
+        {% set pie_key = pie_base_key if unit_index == 0 else pie_base_key ~ '|' ~ unit_index %}
         {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
         <div class="order-oven-entry">
+            {% if item.quantity > 1 %}<span class="oven-unit-label">{{ item.display_name }} {{ unit_index + 1 }}/{{ item.quantity }}</span>{% endif %}
             <div
                 class="oven-position-selector"
                 data-oven-position
@@ -182,7 +195,7 @@
                 data-oven-position-key="{{ pie_key }}"
                 data-selected-oven-position="{{ pie_state.oven_position if pie_state and pie_state.oven_position else '' }}"
                 role="group"
-                aria-label="Oven position for {{ item.quantity }} {{ item.display_name }}"
+                aria-label="Oven position for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
             >
                 <button type="button" draggable="false" data-oven-position-choice="top-left" aria-label="Assign {{ item.display_name }} to the top-left oven position" title="Top left"></button>
                 <button type="button" draggable="false" data-oven-position-choice="top-right" aria-label="Assign {{ item.display_name }} to the top-right oven position" title="Top right"></button>
@@ -190,6 +203,7 @@
                 <button type="button" draggable="false" data-oven-position-choice="bottom-right" aria-label="Assign {{ item.display_name }} to the bottom-right oven position" title="Bottom right"></button>
             </div>
         </div>
+        {% endfor %}
         {% endif %}
         {% endfor %}
     </aside>
@@ -358,7 +372,7 @@
                 <input type="checkbox" data-prep-view-toggle>
                 <span>
                     <strong>Prep view</strong>
-                    <small>Hide empty &amp; past slots</small>
+                    <small>Hide empty slots</small>
                 </span>
             </label>
             {% endif %}
@@ -386,7 +400,7 @@
                 <label class="auto-refresh-interval">
                     <span>Every</span>
                     <select data-auto-sync-interval aria-label="Automatic refresh interval" {% if not auto_sync_available %}disabled{% endif %}>
-                        {% for seconds, label in ((15, '15 sec'), (30, '30 sec'), (60, '1 min'), (120, '2 min'), (300, '5 min')) %}
+                        {% for seconds, label in ((10, '10 sec'), (15, '15 sec'), (30, '30 sec'), (60, '1 min'), (120, '2 min'), (300, '5 min')) %}
                         <option value="{{ seconds }}" {% if auto_sync_seconds == seconds %}selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                     </select>
@@ -497,7 +511,7 @@
         {% endfor %}
     </div>
     <p class="prep-view-empty" data-prep-view-empty hidden>
-        No upcoming slots with pizzas.
+        No service slots currently contain pizzas.
     </p>
     {% elif service.unscheduled_orders %}
     <p class="board-empty-state">

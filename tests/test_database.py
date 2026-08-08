@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from pizzeria_dashboard.database import (
@@ -27,6 +27,7 @@ from pizzeria_dashboard.database import (
     save_service_state_payload,
     update_pie_production_state,
 )
+from pizzeria_dashboard.domain import Item, Order
 from pizzeria_dashboard.sample_data import build_sample_orders
 
 
@@ -290,6 +291,59 @@ def test_incremental_merge_preserves_untouched_orders_and_removes_changed_candid
     assert result.changed_count == 1
     assert result.removed_count == 1
     assert result.info.order_count == 2
+
+
+
+def test_order_cache_changes_publish_board_revision(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    service_date = date(2026, 8, 7)
+    first = Order(
+        "order-1",
+        "A",
+        datetime(2026, 8, 7, 16, 0),
+        (Item("Plain Pie", 1, "pizza"),),
+    )
+    second = Order(
+        "order-2",
+        "B",
+        datetime(2026, 8, 7, 16, 15),
+        (Item("White Pie", 1, "pizza"),),
+    )
+
+    replace_orders_for_date(database_path, service_date, (first,), source="sample")
+    first_revision = load_board_content_revision(database_path, service_date)
+    assert first_revision
+
+    merge_orders_for_date(
+        database_path,
+        service_date,
+        (second,),
+        candidate_square_order_ids=("order-2",),
+        source="square",
+    )
+    second_revision = load_board_content_revision(database_path, service_date)
+    assert second_revision
+    assert second_revision != first_revision
+
+def test_noop_full_order_refresh_preserves_board_revision(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    service_date = date(2026, 8, 7)
+    order = Order(
+        "order-1",
+        "A",
+        datetime(2026, 8, 7, 16, 0),
+        (Item("Plain Pie", 1, "pizza"),),
+    )
+
+    replace_orders_for_date(database_path, service_date, (order,), source="sample")
+    save_order_internal_note(database_path, service_date, "order-1", "Allergy")
+    note_revision = load_board_content_revision(database_path, service_date)
+
+    replace_orders_for_date(database_path, service_date, (order,), source="sample")
+
+    assert load_board_content_revision(database_path, service_date) == note_revision
 
 
 def test_shared_pie_timer_auto_assigns_oven_positions_and_can_reset(tmp_path: Path) -> None:
