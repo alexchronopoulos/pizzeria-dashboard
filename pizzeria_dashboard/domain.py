@@ -284,6 +284,28 @@ class Order:
         return sum(item.pizza_units for item in self.items)
 
     @property
+    def pizza_counts(self) -> Counter[str]:
+        """Whole-pie quantities in this order grouped by kitchen display name."""
+        counts: Counter[str] = Counter()
+        for item in self.production_items:
+            if item.category == "pizza":
+                counts[item.display_name] += item.quantity
+        return counts
+
+    @property
+    def modifier_counts(self) -> Counter[str]:
+        """Prep-relevant pizza modifier portions contributed by this order."""
+        counts: Counter[str] = Counter()
+        for item in self.production_items:
+            if item.category != "pizza":
+                continue
+            for modifier in item.production_modifiers:
+                if modifier.is_removal:
+                    continue
+                counts[modifier.display_name] += item.quantity * modifier.quantity
+        return counts
+
+    @property
     def cookie_count(self) -> int:
         return sum(
             item.cookie_units + item.modifier_cookie_units
@@ -551,6 +573,11 @@ def build_service_board(
     for pickup_at in configured_pickup_times:
         grouped[_service_wall_time(pickup_at)]
     for order in orders:
+        # The production dashboard is centered on whole-pie work. Counter-only
+        # walk-ins (cookies, drinks, slices, etc.) remain cached for reporting but
+        # should not create a kitchen order card when there is no pizza to make.
+        if order.is_walk_in and order.pizza_units <= 0:
+            continue
         if not order.production_items:
             continue
         if order.order_id in assignments:

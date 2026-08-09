@@ -175,7 +175,7 @@ def test_scheduled_order_uses_local_pickup_override_for_board_capacity() -> None
     assert board.windows[1].pizza_units == 2
 
 
-def test_slice_only_walk_in_is_hidden_but_mixed_walk_in_remains() -> None:
+def test_non_pizza_walk_ins_are_hidden_but_mixed_walk_in_remains() -> None:
     service_date = date(2026, 7, 31)
     event_at = datetime(2026, 7, 31, 13, 15, tzinfo=ZoneInfo("America/New_York"))
     slice_only = Order(
@@ -183,6 +183,13 @@ def test_slice_only_walk_in_is_hidden_but_mixed_walk_in_remains() -> None:
         "Counter 1",
         event_at,
         (Item("Plain Slice", 2, "slice"),),
+        is_walk_in=True,
+    )
+    cookie_only = Order(
+        "cookie-only",
+        "Counter cookie",
+        event_at,
+        (Item("TCHO Miso Chocolate Chip Cookie", 2, "cookie"),),
         is_walk_in=True,
     )
     mixed = Order(
@@ -196,11 +203,37 @@ def test_slice_only_walk_in_is_hidden_but_mixed_walk_in_remains() -> None:
         is_walk_in=True,
     )
 
-    board = build_service_board(service_date, (slice_only, mixed))
+    board = build_service_board(service_date, (slice_only, cookie_only, mixed))
 
     assert board.unscheduled_orders == (mixed,)
     assert mixed.production_items == (mixed.items[0],)
     assert slice_only.production_items == ()
+    assert cookie_only.production_items == cookie_only.items
+
+
+def test_order_all_day_counts_match_service_summary_rules() -> None:
+    order = Order(
+        "order-all-day",
+        "Alex",
+        datetime(2026, 7, 31, 16, 0),
+        (
+            Item(
+                "Plain Pie",
+                2,
+                "pizza",
+                modifiers=(
+                    Modifier("Pesto", quantity=1),
+                    Modifier("Hot Honey", quantity=2),
+                    Modifier("No Basil"),
+                    Modifier("Side Ranch", category="side"),
+                ),
+            ),
+            Item("White Pie", 1, "pizza", modifiers=(Modifier("Pesto"),)),
+        ),
+    )
+
+    assert order.pizza_counts == {"Plain Pie": 2, "White Pie": 1}
+    assert order.modifier_counts == {"Pesto": 3, "Hot Honey": 4}
 
 
 def test_ticket_name_times_resolve_against_configured_slots() -> None:

@@ -15,6 +15,8 @@
     data-order-id="{{ order.order_id }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
     data-order-pizza-units="{{ order.pizza_units }}"
+    data-order-pizza-counts="{{ order.pizza_counts | tojson | forceescape }}"
+    data-order-modifier-counts="{{ order.modifier_counts | tojson | forceescape }}"
     data-order-pickup-label="{% if unscheduled %}Unscheduled walk-in{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
     tabindex="0"
     data-order-details-url="{{ url_for('dashboard.order_details', date=selected_date.isoformat(), order_id=order.order_id) }}"
@@ -225,13 +227,13 @@
         </div>
         <div class="dough-pizza-breakdown" aria-labelledby="dough-pizza-breakdown-heading">
             <div class="dough-pizza-breakdown-heading">
-                <strong id="dough-pizza-breakdown-heading">Pie breakdown</strong>
-                <span>{{ service.total_pizzas }} total</span>
+                <strong id="dough-pizza-breakdown-heading">Pies all day</strong>
+                <span data-pie-all-day-total data-full-count="{{ service.total_pizzas }}">{{ service.total_pizzas }}{% if selected_date == today %} remaining{% else %} total{% endif %}</span>
             </div>
             {% if service.pizza_summary %}
             <ul class="dough-pizza-list">
                 {% for pizza_name, pizza_count in service.pizza_summary %}
-                <li>{{ pizza_count }}× {{ pizza_name }}</li>
+                <li data-pie-all-day-row data-summary-name="{{ pizza_name }}" data-full-count="{{ pizza_count }}"><span data-summary-count>{{ pizza_count }}× {{ pizza_name }}</span></li>
                 {% endfor %}
             </ul>
             {% else %}
@@ -240,13 +242,13 @@
         </div>
         <div class="modifier-prep-breakdown" aria-labelledby="modifier-prep-heading">
             <div class="dough-pizza-breakdown-heading">
-                <strong id="modifier-prep-heading">Modifier prep</strong>
-                <span>{{ service.modifier_counts.values() | sum }} portions</span>
+                <strong id="modifier-prep-heading">Modifiers all day</strong>
+                <span data-modifier-all-day-total data-full-count="{{ service.modifier_counts.values() | sum }}">{{ service.modifier_counts.values() | sum }} portions{% if selected_date == today %} remaining{% endif %}</span>
             </div>
             {% if service.modifier_summary %}
             <ul class="modifier-prep-list">
                 {% for modifier_name, modifier_count in service.modifier_summary %}
-                <li>{{ modifier_count }}× {{ modifier_name }}</li>
+                <li data-modifier-all-day-row data-summary-name="{{ modifier_name }}" data-full-count="{{ modifier_count }}"><span data-summary-count>{{ modifier_count }}× {{ modifier_name }}</span></li>
                 {% endfor %}
             </ul>
             {% else %}

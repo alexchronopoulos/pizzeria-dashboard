@@ -3349,6 +3349,7 @@ h2 {
     background: var(--brand-yellow);
     box-shadow: 0 12px 30px rgba(0, 35, 56, 0.32);
     color: var(--text);
+    cursor: pointer;
     pointer-events: auto;
 }
 
@@ -3388,6 +3389,14 @@ h2 {
 .new-order-toast > small {
     font-size: 0.82rem;
     font-weight: 800;
+}
+
+.new-order-toast > .new-order-toast-hint {
+    margin-top: 3px;
+    opacity: 0.72;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 @media (max-width: 720px) {

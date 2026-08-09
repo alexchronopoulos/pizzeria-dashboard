@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.10">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.11">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -74,6 +74,7 @@
     data-auto-sync-seconds="{{ auto_sync_seconds }}"
     data-service-timezone="{{ service_timezone.key }}"
     data-total-pizzas="{{ service.total_pizzas }}"
+    data-decrement-all-day-counts="{{ 'true' if selected_date == today else 'false' }}"
 >
     {% include "_production_board.html" %}
 </div>
@@ -101,5 +102,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.10') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.12') }}" defer></script>
 {% endblock %}

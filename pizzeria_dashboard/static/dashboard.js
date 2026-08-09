@@ -707,26 +707,56 @@
 
     const rowsById = new Map(rows.map((row) => [row.dataset.orderId, row]));
     const currentIds = Array.from(rowsById.keys());
-    const storageKey = `pizzeria-dashboard:known-orders:${serviceDate}`;
+    const knownStorageKey = `pizzeria-dashboard:known-orders:${serviceDate}`;
+    const pendingStorageKey = `pizzeria-dashboard:pending-order-toasts:${serviceDate}`;
+    const dismissedStorageKey = `pizzeria-dashboard:dismissed-order-toasts:${serviceDate}`;
+
+    const loadStringSet = (storage, key) => {
+        try {
+            const raw = storage.getItem(key);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+        } catch (_error) {
+            return new Set();
+        }
+    };
+    const saveStringSet = (storage, key, values) => {
+        try {
+            storage.setItem(key, JSON.stringify(Array.from(values)));
+        } catch (_error) {
+            // Device-local alert persistence is helpful but not required for service.
+        }
+    };
+
     let knownIds = null;
     try {
-        const raw = window.sessionStorage.getItem(storageKey);
+        const raw = window.sessionStorage.getItem(knownStorageKey);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
                 knownIds = new Set(parsed.map(String));
             }
         }
-        window.sessionStorage.setItem(storageKey, JSON.stringify(currentIds));
+        window.sessionStorage.setItem(knownStorageKey, JSON.stringify(currentIds));
     } catch (_error) {
         return;
     }
 
-    // The first load establishes a baseline. Subsequent automatic/manual reloads
-    // can then distinguish truly new orders from the existing service board.
-    if (!knownIds) {
-        return;
+    const pendingIds = loadStringSet(window.localStorage, pendingStorageKey);
+    const dismissedIds = loadStringSet(window.localStorage, dismissedStorageKey);
+
+    // The first load establishes a device-local baseline. After that, newly seen
+    // orders become persistent alerts on this browser until this browser dismisses
+    // them. Prep and expo therefore manage their alerts independently.
+    if (knownIds) {
+        currentIds
+            .filter((orderId) => !knownIds.has(orderId) && !dismissedIds.has(orderId))
+            .forEach((orderId) => pendingIds.add(orderId));
     }
+    Array.from(pendingIds)
+        .filter((orderId) => !rowsById.has(orderId))
+        .forEach((orderId) => pendingIds.delete(orderId));
+    saveStringSet(window.localStorage, pendingStorageKey, pendingIds);
 
     const summarizeItems = (row) => {
         const labels = Array.from(row.querySelectorAll(".item-row .item-label"))
@@ -738,9 +768,20 @@
         return `${labels.slice(0, 3).join(" · ")} · +${labels.length - 3} more`;
     };
 
-    const showToast = (row) => {
+    const dismissOrder = (orderId) => {
+        pendingIds.delete(orderId);
+        dismissedIds.add(orderId);
+        saveStringSet(window.localStorage, pendingStorageKey, pendingIds);
+        saveStringSet(window.localStorage, dismissedStorageKey, dismissedIds);
+        renderToasts();
+    };
+
+    const createToast = (row) => {
+        const orderId = row.dataset.orderId;
         const toast = document.createElement("div");
         toast.className = "new-order-toast";
+        toast.dataset.orderId = orderId;
+        toast.setAttribute("aria-label", "New order alert. Click to dismiss.");
         const name = row.querySelector(".customer-name")?.textContent.trim() || "New order";
         const pickup = row.dataset.orderPickupLabel || "Pickup time unavailable";
         const summary = summarizeItems(row) || "Production order";
@@ -759,22 +800,33 @@
         customer.textContent = name;
         const items = document.createElement("small");
         items.textContent = summary;
-        toast.append(heading, customer, items);
+        const hint = document.createElement("small");
+        hint.className = "new-order-toast-hint";
+        hint.textContent = "Click to dismiss";
+        toast.append(heading, customer, items, hint);
 
-        const dismiss = () => toast.remove();
+        const dismiss = (event) => {
+            event?.preventDefault();
+            event?.stopPropagation();
+            dismissOrder(orderId);
+        };
         close.addEventListener("click", dismiss);
-        region.appendChild(toast);
-        window.setTimeout(dismiss, 12_000);
+        toast.addEventListener("click", dismiss);
+        return toast;
     };
 
-    currentIds
-        .filter((orderId) => !knownIds.has(orderId))
-        .map((orderId) => rowsById.get(orderId))
-        .filter(Boolean)
-        .slice(-4)
-        .forEach(showToast);
-})();
+    function renderToasts() {
+        region.replaceChildren();
+        Array.from(pendingIds)
+            .filter((orderId) => !dismissedIds.has(orderId))
+            .map((orderId) => rowsById.get(orderId))
+            .filter(Boolean)
+            .slice(-4)
+            .forEach((row) => region.appendChild(createToast(row)));
+    }
 
+    renderToasts();
+})();
 
 (() => {
     const board = document.getElementById("production-board");
@@ -782,6 +834,11 @@
     const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
     const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
     const countdown = document.querySelector("[data-pizza-countdown]");
+    const decrementAllDayCounts = board?.dataset.decrementAllDayCounts === "true";
+    const pieAllDayRows = Array.from(document.querySelectorAll("[data-pie-all-day-row]"));
+    const modifierAllDayRows = Array.from(document.querySelectorAll("[data-modifier-all-day-row]"));
+    const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
+    const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
     if (!board || (!timers.length && !selectors.length && !orderRows.length)) {
         return;
     }
@@ -947,6 +1004,65 @@
         countdown.setAttribute("aria-label", `${remaining} pizza${remaining === 1 ? "" : "s"} remaining today`);
     };
 
+    const parseOrderCounts = (row, datasetKey) => {
+        try {
+            const parsed = JSON.parse(row.dataset[datasetKey] || "{}");
+            return parsed && typeof parsed === "object" ? parsed : {};
+        } catch (_error) {
+            return {};
+        }
+    };
+
+    const boxedCountsFor = (datasetKey) => {
+        const counts = new Map();
+        if (!decrementAllDayCounts) {
+            return counts;
+        }
+        rowsByOrderId.forEach((row, orderId) => {
+            if (!boxedOrders[orderId]) {
+                return;
+            }
+            Object.entries(parseOrderCounts(row, datasetKey)).forEach(([name, quantity]) => {
+                const units = Math.max(0, Number.parseInt(quantity, 10) || 0);
+                counts.set(name, (counts.get(name) || 0) + units);
+            });
+        });
+        return counts;
+    };
+
+    const renderAllDaySummaryRows = (rows, boxedCounts) => {
+        rows.forEach((row) => {
+            const fullCount = Math.max(0, Number.parseInt(row.dataset.fullCount || "0", 10) || 0);
+            const boxedCount = boxedCounts.get(row.dataset.summaryName || "") || 0;
+            const remaining = decrementAllDayCounts ? Math.max(fullCount - boxedCount, 0) : fullCount;
+            const count = row.querySelector("[data-summary-count]");
+            if (count) {
+                const summaryName = row.dataset.summaryName || "";
+                count.textContent = `${remaining}× ${summaryName}`;
+            }
+        });
+    };
+
+    const renderAllDayCounts = () => {
+        const boxedPies = boxedCountsFor("orderPizzaCounts");
+        const boxedModifiers = boxedCountsFor("orderModifierCounts");
+        renderAllDaySummaryRows(pieAllDayRows, boxedPies);
+        renderAllDaySummaryRows(modifierAllDayRows, boxedModifiers);
+
+        if (pieAllDayTotal) {
+            const full = Math.max(0, Number.parseInt(pieAllDayTotal.dataset.fullCount || "0", 10) || 0);
+            const boxed = Array.from(boxedPies.values()).reduce((total, value) => total + value, 0);
+            const remaining = decrementAllDayCounts ? Math.max(full - boxed, 0) : full;
+            pieAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} remaining` : `${remaining} total`;
+        }
+        if (modifierAllDayTotal) {
+            const full = Math.max(0, Number.parseInt(modifierAllDayTotal.dataset.fullCount || "0", 10) || 0);
+            const boxed = Array.from(boxedModifiers.values()).reduce((total, value) => total + value, 0);
+            const remaining = decrementAllDayCounts ? Math.max(full - boxed, 0) : full;
+            modifierAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} portions remaining` : `${remaining} portions`;
+        }
+    };
+
     const renderBoxedOrders = () => {
         rowsByOrderId.forEach((row, orderId) => {
             const boxedAt = boxedOrders[orderId] || null;
@@ -969,6 +1085,7 @@
             }
         });
         renderPizzaCountdown();
+        renderAllDayCounts();
     };
 
     const renderAll = () => {

@@ -65,7 +65,7 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b'id="service-setup-dialog"' in response.data
     assert b'Weekly pickup hours' in response.data
     assert "Tomato Pie" in visible_text
-    assert "Pie breakdown" in visible_text
+    assert "Pies all day" in visible_text
     assert "16 total" in visible_text
     assert b'class="pizza-summary-card"' not in response.data
     dough_card_start = response.data.index(b'class="operations-card operations-card--dough"')
@@ -348,7 +348,7 @@ def test_modifiers_and_salads_render_from_cached_documents(tmp_path: Path) -> No
     assert b"Pepperoni" in response.data
     assert b"Pickled chiles" in response.data
     assert b"Basil" in response.data
-    assert b"Modifier prep" in response.data
+    assert b"Modifiers all day" in response.data
     assert b"portions" in response.data
     assert b'class="modifier-prep-list"' in response.data
     assert "1× Cucumber Salad".encode() in response.data
@@ -863,6 +863,9 @@ def test_shared_timer_oven_and_boxed_state_routes(
     assert 'data-live-production-state-url="/live-production-state"' in html
     assert 'data-pie-production-state-url="/pie-production-state"' in html
     assert 'data-order-ready-url="/order-ready"' in html
+    assert 'data-decrement-all-day-counts="true"' in html
+    assert 'data-order-pizza-counts=' in html
+    assert 'data-order-modifier-counts=' in html
 
     first = client.post(
         "/pie-production-state",
@@ -1003,6 +1006,55 @@ def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
     )
     assert unassigned.status_code == 200
     assert load_order_slot_assignments(database_path, selected) == {}
+
+
+def test_non_pizza_walk_in_does_not_render_on_production_board(tmp_path: Path) -> None:
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    event_at = datetime.fromisoformat("2026-07-31T13:07:00-04:00")
+    cookie_only = Order(
+        order_id="walk-in-cookie-only",
+        customer_name="Cookie ticket",
+        pickup_at=event_at,
+        items=(Item("TCHO Miso Chocolate Chip Cookie", 1, "cookie"),),
+        square_order_id="walk-in-cookie-only",
+        is_walk_in=True,
+        source_closed_at=event_at,
+        creation_product="SQUARE_POS",
+        ticket_name="Cookie ticket",
+    )
+    pizza_walk_in = Order(
+        order_id="walk-in-pizza",
+        customer_name="Pizza ticket",
+        pickup_at=event_at,
+        items=(
+            Item("Plain Pie", 1, "pizza"),
+            Item("TCHO Miso Chocolate Chip Cookie", 1, "cookie"),
+        ),
+        square_order_id="walk-in-pizza",
+        is_walk_in=True,
+        source_closed_at=event_at,
+        creation_product="SQUARE_POS",
+        ticket_name="Pizza ticket",
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]),
+        selected,
+        (cookie_only, pizza_walk_in),
+        source="square",
+    )
+
+    response = app.test_client().get(f"/?date={selected.isoformat()}")
+    visible_text = _visible_text(response)
+
+    assert response.status_code == 200
+    assert "Cookie ticket" not in visible_text
+    assert "Pizza ticket" in visible_text
+    assert b'data-walk-in-order-id="walk-in-cookie-only"' not in response.data
+    assert b'data-walk-in-order-id="walk-in-pizza"' in response.data
 
 
 def test_walk_in_assignment_rejects_non_service_slot(tmp_path: Path) -> None:
