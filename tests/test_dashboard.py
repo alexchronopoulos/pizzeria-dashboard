@@ -1,4 +1,6 @@
+import base64
 import re
+import secrets
 import sqlite3
 from html import unescape
 from html.parser import HTMLParser
@@ -785,10 +787,12 @@ def test_health_endpoint(tmp_path: Path) -> None:
 
 
 def test_basic_auth_protects_dashboard_when_configured(tmp_path: Path) -> None:
+    generated_user = secrets.token_urlsafe(12)
+    generated_secret = secrets.token_urlsafe(24)
     app = _test_app(
         tmp_path,
-        DASHBOARD_AUTH_USERNAME="mari",
-        DASHBOARD_AUTH_PASSWORD="very-secret",
+        DASHBOARD_AUTH_USERNAME=generated_user,
+        DASHBOARD_AUTH_PASSWORD=generated_secret,
     )
     client = app.test_client()
 
@@ -797,9 +801,12 @@ def test_basic_auth_protects_dashboard_when_configured(tmp_path: Path) -> None:
     assert unauthorized.headers["WWW-Authenticate"].startswith("Basic ")
     assert client.get("/healthz").status_code == 200
 
+    encoded_credentials = base64.b64encode(
+        f"{generated_user}:{generated_secret}".encode("utf-8")
+    ).decode("ascii")
     authorized = client.get(
         "/?date=2026-07-31",
-        headers={"Authorization": "Basic bWFyaTp2ZXJ5LXNlY3JldA=="},
+        headers={"Authorization": f"Basic {encoded_credentials}"},
     )
     assert authorized.status_code == 200
     assert authorized.headers["X-Content-Type-Options"] == "nosniff"
