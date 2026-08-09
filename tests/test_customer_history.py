@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pizzeria_dashboard.customer_history import CustomerHistoryOrder, CustomerSummary
+from pizzeria_dashboard.customer_history import (
+    CustomerHistoryOrder,
+    CustomerSummary,
+    build_customer_visit_summary,
+)
 from pizzeria_dashboard.customer_history_sync import sync_customer_history
 from pizzeria_dashboard.database import (
     initialize_database,
@@ -11,7 +15,7 @@ from pizzeria_dashboard.database import (
     merge_customer_history,
     replace_customer_history,
 )
-from pizzeria_dashboard.domain import Item, Modifier
+from pizzeria_dashboard.domain import Item, Modifier, Order
 
 
 def _history_order(
@@ -36,6 +40,41 @@ def _history_order(
             ),
         ),
     )
+
+
+
+
+def test_customer_visit_summary_counts_walk_in_pie_orders_separately() -> None:
+    service_date = datetime(2026, 8, 9, 12, 0)
+    orders = (
+        Order(
+            "preorder",
+            "A",
+            service_date,
+            (Item("Plain Pie", 1, "pizza"),),
+            square_order_id="preorder",
+        ),
+        Order(
+            "walk-in-pie",
+            "Walk-in",
+            service_date,
+            (Item("White Pie", 1, "pizza"),),
+            is_walk_in=True,
+        ),
+        Order(
+            "walk-in-cookie",
+            "Walk-in",
+            service_date,
+            (Item("Cookie", 1, "cookie"),),
+            is_walk_in=True,
+        ),
+    )
+
+    summary = build_customer_visit_summary(orders, {})
+
+    assert summary.total_orders == 1
+    assert summary.unavailable == 1
+    assert summary.walk_in_pie_orders == 1
 
 
 def test_customer_summary_labels() -> None:

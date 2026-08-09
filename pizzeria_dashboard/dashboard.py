@@ -25,6 +25,7 @@ from .database import (
     load_customer_history_for_order,
     load_customer_history_sync_info,
     load_customer_summaries_for_orders,
+    load_latest_service_state_before,
     load_order_slot_assignment_overrides,
     load_order_for_date,
     load_order_internal_note,
@@ -32,6 +33,7 @@ from .database import (
     load_order_ready_states,
     load_orders_for_date,
     load_pie_production_states,
+    load_service_state_payload,
     load_sync_info,
     merge_orders_for_date,
     prune_pie_production_states,
@@ -49,7 +51,14 @@ from .service_config import (
     load_configuration,
     save_configuration,
 )
-from .service_state import build_inventory_summary, load_state, save_state, state_from_form
+from .service_state import (
+    build_inventory_summary,
+    carryover_state,
+    load_state,
+    save_state,
+    state_from_form,
+    state_from_payload,
+)
 from .square_api import SquareClient, SquareError, SquareSettings
 from .sync_service import configured_order_source, sync_orders_for_date, sync_sample_orders
 
@@ -177,16 +186,46 @@ def index() -> str:
     inventory_side_types = tuple(
         dict.fromkeys((*service_configuration.side_types, *service.side_counts.keys()))
     )
+    saved_state_payload = load_service_state_payload(database_path, selected_date)
+    if saved_state_payload is not None:
+        inventory_state = state_from_payload(
+            saved_state_payload, inventory_salad_types, inventory_side_types
+        )
+    else:
+        previous_saved_state = load_latest_service_state_before(
+            database_path, selected_date
+        )
+        if previous_saved_state is None:
+            inventory_state = load_state(
+                database_path,
+                selected_date,
+                inventory_salad_types,
+                inventory_side_types,
+            )
+        else:
+            previous_date, previous_payload = previous_saved_state
+            previous_state = state_from_payload(
+                previous_payload,
+                service_configuration.salad_types,
+                service_configuration.side_types,
+            )
+            inventory_state = carryover_state(
+                previous_state,
+                load_orders_for_date(database_path, previous_date),
+                service_configuration.salad_types,
+                service_configuration.side_types,
+            )
+        # Freeze the inherited opening inventory once the service date actually
+        # arrives. This gives the next service day a reliable carryover source
+        # even when today's inherited counts need no manual adjustment.
+        if selected_date == now.date():
+            save_state(database_path, selected_date, inventory_state)
     inventory = build_inventory_summary(
         service,
-        load_state(
-            database_path,
-            selected_date,
-            inventory_salad_types,
-            inventory_side_types,
-        ),
+        inventory_state,
         inventory_salad_types,
         inventory_side_types,
+        orders=orders,
     )
     sync_info = load_sync_info(database_path, selected_date)
     # Customer visit reporting covers every cached online order for the selected

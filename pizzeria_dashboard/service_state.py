@@ -4,10 +4,10 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .database import load_service_state_payload, save_service_state_payload
-from .domain import ServiceBoard, production_display_name
+from .domain import Order, ServiceBoard, production_display_name
 from .service_config import DEFAULT_SALAD_TYPES, DEFAULT_SIDE_TYPES
 
 
@@ -142,6 +142,80 @@ def _state_from_payload(
     )
 
 
+def state_from_payload(
+    raw: object,
+    salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
+    side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+) -> ServiceState:
+    """Hydrate a service state payload using the current configured lineup."""
+    return _state_from_payload(raw, salad_types, side_types)
+
+
+def _inventory_demand_from_orders(
+    orders: Iterable[Order],
+) -> tuple[dict[str, int], dict[str, int], int]:
+    salads: dict[str, int] = {}
+    sides: dict[str, int] = {}
+    cookies = 0
+    for order in orders:
+        for name, quantity in order.salad_counts.items():
+            salads[name] = salads.get(name, 0) + quantity
+        for name, quantity in order.side_counts.items():
+            sides[name] = sides.get(name, 0) + quantity
+        cookies += order.cookie_count
+    return salads, sides, cookies
+
+
+def _casefold_value(values: Mapping[str, int], name: str) -> int | None:
+    wanted = name.casefold()
+    for key, value in values.items():
+        if key.casefold() == wanted:
+            return value
+    return None
+
+
+def carryover_state(
+    previous_state: ServiceState,
+    previous_orders: Iterable[Order],
+    salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
+    side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+) -> ServiceState:
+    """Start a new service day with yesterday's unsold prepared food.
+
+    Dough is intentionally not carried because dough production is planned per
+    service. Only currently configured salad/side names are inherited, so a
+    removed menu item does not reappear on the next day's prep sheet.
+    """
+    salad_names = _unique_names(tuple(salad_types))
+    side_names = _unique_names(tuple(side_types))
+    demand_salads, demand_sides, demand_cookies = _inventory_demand_from_orders(
+        tuple(previous_orders)
+    )
+
+    def remaining(
+        prepared_values: Mapping[str, int], demand_values: Mapping[str, int], name: str
+    ) -> int:
+        prepared = _casefold_value(prepared_values, name)
+        if prepared is None:
+            return 0
+        ordered = _casefold_value(demand_values, name) or 0
+        return max(prepared - ordered, 0)
+
+    defaults = default_state(salad_names, side_names)
+    return ServiceState(
+        dough_balls_prepared=defaults.dough_balls_prepared,
+        salad_prepared={
+            name: remaining(previous_state.salad_prepared, demand_salads, name)
+            for name in salad_names
+        },
+        side_prepared={
+            name: remaining(previous_state.side_prepared, demand_sides, name)
+            for name in side_names
+        },
+        cookie_prepared=max(previous_state.cookie_prepared - demand_cookies, 0),
+    )
+
+
 def load_state(
     path: Path,
     service_date: date | None = None,
@@ -229,20 +303,30 @@ def build_inventory_summary(
     state: ServiceState,
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    *,
+    orders: Iterable[Order] | None = None,
 ) -> InventorySummary:
+    if orders is None:
+        observed_salads = dict(service.salad_counts)
+        observed_sides = dict(service.side_counts)
+        observed_cookies = service.total_cookies
+    else:
+        observed_salads, observed_sides, observed_cookies = _inventory_demand_from_orders(
+            tuple(orders)
+        )
     return InventorySummary(
         dough_prepared=state.dough_balls_prepared,
         dough_ordered=service.total_pizzas,
         dough_remaining=state.dough_balls_prepared - service.total_pizzas,
         salads=_stock_rows(
             configured_names=salad_types,
-            observed_counts=service.salad_counts,
+            observed_counts=observed_salads,
             prepared_counts=state.salad_prepared,
             field_name=salad_field_name,
         ),
         sides=_stock_rows(
             configured_names=side_types,
-            observed_counts=service.side_counts,
+            observed_counts=observed_sides,
             prepared_counts=state.side_prepared,
             field_name=side_field_name,
         ),
@@ -251,8 +335,8 @@ def build_inventory_summary(
                 name="Cookies",
                 field_name="cookie_prepared",
                 prepared=state.cookie_prepared,
-                ordered=service.total_cookies,
-                remaining=state.cookie_prepared - service.total_cookies,
+                ordered=observed_cookies,
+                remaining=state.cookie_prepared - observed_cookies,
             ),
         ),
     )

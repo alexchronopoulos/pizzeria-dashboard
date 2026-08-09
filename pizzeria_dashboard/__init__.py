@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, Response, request
 
 from .database import initialize_database, migrate_legacy_service_state
 from .square_api import DEFAULT_SQUARE_API_VERSION
@@ -24,6 +25,11 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_list(name: str) -> list[str] | None:
+    values = [value.strip() for value in os.getenv(name, "").split(",") if value.strip()]
+    return values or None
+
+
 def create_app(test_config: dict[str, object] | None = None) -> Flask:
     """Create and configure the Flask application."""
     load_dotenv(Path.cwd() / ".env")
@@ -31,7 +37,11 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     data_directory = Path(app.root_path).parent / "data"
     app.config.from_mapping(
-        SECRET_KEY=os.getenv("SECRET_KEY", "development-only-change-me"),
+        SECRET_KEY=os.getenv("SECRET_KEY") or secrets.token_hex(32),
+        DASHBOARD_AUTH_USERNAME=os.getenv("DASHBOARD_AUTH_USERNAME", ""),
+        DASHBOARD_AUTH_PASSWORD=os.getenv("DASHBOARD_AUTH_PASSWORD", ""),
+        DASHBOARD_HSTS=_env_bool("DASHBOARD_HSTS", False),
+        TRUSTED_HOSTS=_env_list("DASHBOARD_TRUSTED_HOSTS"),
         SERVICE_TIMEZONE=os.getenv("SERVICE_TIMEZONE", "America/New_York"),
         DATABASE_PATH=str(data_directory / "pizza_dashboard.db"),
         LEGACY_SERVICE_STATE_PATH=str(data_directory / "service_state.json"),
@@ -97,6 +107,45 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
 
     if test_config:
         app.config.update(test_config)
+
+    auth_username = str(app.config.get("DASHBOARD_AUTH_USERNAME", "")).strip()
+    auth_password = str(app.config.get("DASHBOARD_AUTH_PASSWORD", ""))
+    if bool(auth_username) != bool(auth_password):
+        raise RuntimeError(
+            "Set both DASHBOARD_AUTH_USERNAME and DASHBOARD_AUTH_PASSWORD, or leave both blank."
+        )
+
+    @app.before_request
+    def _require_dashboard_authentication():
+        if request.path == "/healthz":
+            return None
+        if not auth_username:
+            return None
+        authorization = request.authorization
+        supplied_username = authorization.username if authorization else ""
+        supplied_password = authorization.password if authorization else ""
+        if secrets.compare_digest(supplied_username or "", auth_username) and secrets.compare_digest(
+            supplied_password or "", auth_password
+        ):
+            return None
+        return Response(
+            "Authentication required.",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Pizzeria Mari Dashboard", charset="UTF-8"'},
+        )
+
+    @app.after_request
+    def _apply_dashboard_security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        if request.endpoint != "static":
+            response.headers.setdefault("Cache-Control", "no-store")
+        if app.config.get("DASHBOARD_HSTS"):
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
 
     database_path = Path(app.config["DATABASE_PATH"])
     initialize_database(database_path)

@@ -586,6 +586,28 @@ def _epoch_ms(value: datetime | None = None) -> int:
     return int((value or _utc_now()).timestamp() * 1000)
 
 
+def _expire_completed_pie_timers(
+    connection: sqlite3.Connection, service_date_key: str, *, now: datetime
+) -> int:
+    """Persist completed timers and free their shared oven positions."""
+    cursor = connection.execute(
+        """
+        UPDATE pie_production_states
+        SET timer_status = 'done',
+            timer_remaining_ms = 0,
+            timer_end_at_ms = NULL,
+            oven_position = NULL,
+            updated_at = ?
+        WHERE service_date = ?
+          AND timer_status = 'running'
+          AND timer_end_at_ms IS NOT NULL
+          AND timer_end_at_ms <= ?
+        """,
+        (now.isoformat(), service_date_key, _epoch_ms(now)),
+    )
+    return max(cursor.rowcount, 0)
+
+
 def _normalized_pie_state(
     row: sqlite3.Row | None,
     pie_key: str,
@@ -613,7 +635,7 @@ def _normalized_pie_state(
             status = "done"
             end_at_ms = None
     oven_position = str(row["oven_position"]) if row["oven_position"] else None
-    if oven_position not in OVEN_POSITIONS:
+    if oven_position not in OVEN_POSITIONS or status == "done":
         oven_position = None
     try:
         updated_at = datetime.fromisoformat(str(row["updated_at"]))
@@ -655,8 +677,12 @@ def prune_pie_production_states(
 def load_pie_production_states(
     path: Path, service_date: date
 ) -> dict[str, PieProductionState]:
-    now_ms = _epoch_ms()
+    now = _utc_now()
+    now_ms = _epoch_ms(now)
     with _connect(path) as connection:
+        _expire_completed_pie_timers(
+            connection, service_date.isoformat(), now=now
+        )
         rows = connection.execute(
             """
             SELECT pie_key, timer_status, timer_remaining_ms, timer_end_at_ms,
@@ -701,6 +727,7 @@ def update_pie_production_state(
     now_ms = _epoch_ms(now)
     with _connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        _expire_completed_pie_timers(connection, date_key, now=now)
         row = connection.execute(
             """
             SELECT pie_key, timer_status, timer_remaining_ms, timer_end_at_ms,
@@ -761,6 +788,9 @@ def update_pie_production_state(
                     """,
                     (now.isoformat(), date_key, selected_position, pie_key),
                 )
+
+        if status == "done":
+            selected_position = None
 
         connection.execute(
             """
@@ -976,6 +1006,33 @@ def load_service_state_payload(path: Path, service_date: date) -> dict[str, obje
     except (TypeError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def load_latest_service_state_before(
+    path: Path, service_date: date
+) -> tuple[date, dict[str, object]] | None:
+    """Return the most recent saved prep state before ``service_date``."""
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT service_date, state_json
+            FROM service_states
+            WHERE service_date < ?
+            ORDER BY service_date DESC
+            LIMIT 1
+            """,
+            (service_date.isoformat(),),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        previous_date = date.fromisoformat(str(row["service_date"]))
+        payload = json.loads(str(row["state_json"]))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return previous_date, payload
 
 
 def save_service_state_payload(

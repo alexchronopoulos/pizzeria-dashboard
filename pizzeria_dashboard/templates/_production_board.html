@@ -278,10 +278,10 @@
     </article>
 
     <article class="operations-card operations-card--release">
-        <span class="summary-label">Open pizza capacity</span>
+        <span class="summary-label">Available pickup slots</span>
         <div class="availability-group">
             <div class="availability-heading">
-                <strong>2-pie orders</strong>
+                <strong>Slots available for up to 2 pies</strong>
                 <span>{{ future_two_pie_windows | length }} slots</span>
             </div>
             {% if future_two_pie_windows %}
@@ -304,7 +304,7 @@
         </div>
         <div class="availability-group availability-group--one">
             <div class="availability-heading">
-                <strong>1-pie orders</strong>
+                <strong>Slots available for only 1 pie</strong>
                 <span>{{ future_one_pie_windows | length }} slots</span>
             </div>
             {% if future_one_pie_windows %}
@@ -328,7 +328,7 @@
     </article>
 </div>
 
-{% if customer_visit_summary.total_orders %}
+{% if customer_visit_summary.total_orders or customer_visit_summary.walk_in_pie_orders %}
 <article class="customer-visit-summary" aria-label="Online customer visit summary">
     <div class="customer-visit-summary-heading">
         <div>
@@ -350,13 +350,18 @@
         </div>
         <div class="customer-visit-metric customer-visit-metric--regular">
             <strong>{{ customer_visit_summary.regulars }}</strong>
-            <span>Regulars</span>
+            <span>5+ orders</span>
             <small>{{ customer_visit_summary.percent(customer_visit_summary.regulars) }}%</small>
         </div>
         <div class="customer-visit-metric customer-visit-metric--unknown">
             <strong>{{ customer_visit_summary.unavailable }}</strong>
             <span>History unavailable</span>
             <small>{{ customer_visit_summary.percent(customer_visit_summary.unavailable) }}%</small>
+        </div>
+        <div class="customer-visit-metric customer-visit-metric--walk-in">
+            <strong>{{ customer_visit_summary.walk_in_pie_orders }}</strong>
+            <span>Walk-in pie orders</span>
+            <small>vs {{ customer_visit_summary.total_orders }} pre-orders</small>
         </div>
     </div>
 </article>

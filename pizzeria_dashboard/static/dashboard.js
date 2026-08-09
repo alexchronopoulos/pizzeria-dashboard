@@ -866,6 +866,7 @@
     let polling = false;
     let pieStates = {};
     let boxedOrders = {};
+    let lastPizzaCountdownRemaining = null;
 
     const initialPieState = (key) => {
         const timer = timersByKey.get(key);
@@ -900,13 +901,22 @@
         const raw = pieStates[key] || initialPieState(key);
         if (raw.timer_status === "running" && raw.timer_end_at_ms) {
             const remaining = Math.max(Number(raw.timer_end_at_ms) - adjustedNow(), 0);
+            if (remaining <= 0) {
+                return {
+                    ...raw,
+                    timer_status: "done",
+                    timer_remaining_ms: 0,
+                    timer_end_at_ms: null,
+                    oven_position: null,
+                };
+            }
             return {
                 ...raw,
-                timer_status: remaining > 0 ? "running" : "done",
+                timer_status: "running",
                 timer_remaining_ms: remaining,
             };
         }
-        return raw;
+        return raw.timer_status === "done" ? {...raw, oven_position: null} : raw;
     };
 
     const renderTimers = () => {
@@ -944,13 +954,14 @@
 
     const renderOven = () => {
         const occupants = {};
-        Object.entries(pieStates).forEach(([key, state]) => {
+        Object.keys(pieStates).forEach((key) => {
+            const state = effectiveTimerState(key);
             if (state.oven_position) {
                 occupants[state.oven_position] = key;
             }
         });
         selectorsByKey.forEach((selector, key) => {
-            const selectedPosition = pieStates[key]?.oven_position || null;
+            const selectedPosition = effectiveTimerState(key).oven_position || null;
             selector.dataset.selectedOvenPosition = selectedPosition || "";
             selector.classList.toggle("oven-position-selector--assigned", Boolean(selectedPosition));
             selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
@@ -983,6 +994,35 @@
             second: "2-digit",
         });
     };
+    const triggerPizzaFinale = () => {
+        if (!countdown || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+            return;
+        }
+        const rect = countdown.getBoundingClientRect();
+        const burst = document.createElement("div");
+        burst.className = "pizza-finale-burst";
+        burst.style.left = `${rect.left + rect.width / 2}px`;
+        burst.style.top = `${rect.top + rect.height / 2}px`;
+        for (let index = 0; index < 32; index += 1) {
+            const particle = document.createElement("span");
+            const angle = (Math.PI * 2 * index) / 32;
+            const distance = 70 + (index % 5) * 16;
+            particle.style.setProperty("--burst-x", `${Math.cos(angle) * distance}px`);
+            particle.style.setProperty("--burst-y", `${Math.sin(angle) * distance}px`);
+            particle.style.setProperty("--burst-spin", `${180 + (index % 7) * 55}deg`);
+            particle.style.setProperty("--burst-delay", `${(index % 4) * 18}ms`);
+            burst.appendChild(particle);
+        }
+        document.body.appendChild(burst);
+        countdown.classList.remove("pizza-countdown--celebrate");
+        void countdown.offsetWidth;
+        countdown.classList.add("pizza-countdown--celebrate");
+        window.setTimeout(() => {
+            burst.remove();
+            countdown.classList.remove("pizza-countdown--celebrate");
+        }, 1700);
+    };
+
     const renderPizzaCountdown = () => {
         if (!countdown) {
             return;
@@ -1002,6 +1042,10 @@
         }
         countdown.classList.toggle("pizza-countdown--finished", remaining === 0 && total > 0);
         countdown.setAttribute("aria-label", `${remaining} pizza${remaining === 1 ? "" : "s"} remaining today`);
+        if (lastPizzaCountdownRemaining !== null && lastPizzaCountdownRemaining > 0 && remaining === 0 && total > 0) {
+            triggerPizzaFinale();
+        }
+        lastPizzaCountdownRemaining = remaining;
     };
 
     const parseOrderCounts = (row, datasetKey) => {
@@ -1242,7 +1286,10 @@
 
     renderAll();
     poll();
-    window.setInterval(renderTimers, 250);
+    window.setInterval(() => {
+        renderTimers();
+        renderOven();
+    }, 250);
     window.setInterval(poll, 2_000);
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {

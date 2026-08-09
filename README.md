@@ -311,3 +311,36 @@ Customer tags use linked Square payments:
 Open an order and select **Customer history** to see the five most recent linked orders. Older
 orders are available in an expandable section. Orders without a reliable `Payment.customer_id`
 show **History unavailable** rather than being matched by name.
+
+## Internet access and dashboard authentication
+
+The dashboard can require a single shared username and password using HTTP Basic
+Authentication. Add both values to `.env` and restart the service:
+
+```dotenv
+DASHBOARD_AUTH_USERNAME=mari
+DASHBOARD_AUTH_PASSWORD=use-a-long-unique-password-here
+```
+
+Authentication remains disabled when both values are blank. If only one is set,
+the application refuses to start rather than accidentally running with a partial
+configuration.
+
+For a public hostname, you may also restrict accepted `Host` headers:
+
+```dotenv
+DASHBOARD_TRUSTED_HOSTS=dashboard.example.com,localhost,127.0.0.1
+```
+
+Basic Authentication protects access but does **not** encrypt credentials on its
+own. Put the dashboard behind an HTTPS reverse proxy (for example nginx, Caddy,
+or another TLS-terminating proxy) instead of forwarding the Flask port directly
+to the Internet. Once the public endpoint is HTTPS-only, HSTS can be enabled:
+
+```dotenv
+DASHBOARD_HSTS=true
+```
+
+The app also sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer`, and `Cache-Control: no-store` for dashboard
+responses. The bundled launch commands run with Flask debug mode disabled.

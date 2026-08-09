@@ -51,13 +51,14 @@ class CustomerSummary:
 
 @dataclass(frozen=True, slots=True)
 class CustomerVisitSummary:
-    """One-day mix of scheduled customers by visit number."""
+    """One-day mix of scheduled customers plus whole-pie walk-ins."""
 
     total_orders: int
     first_timers: int
     returning: int
     regulars: int
     unavailable: int
+    walk_in_pie_orders: int = 0
 
     @property
     def matched_orders(self) -> int:
@@ -75,18 +76,23 @@ def build_customer_visit_summary(
 ) -> CustomerVisitSummary:
     """Classify scheduled orders using their visit count at that order.
 
-    Walk-ins are intentionally excluded because the production workflow does not
-    reliably identify those customers. Orders without a Square customer link are
-    shown as unavailable so the card also communicates history coverage.
+    Visit-frequency buckets apply to scheduled orders because walk-ins do not
+    reliably identify customers. Whole-pie walk-ins are counted separately so
+    historical dashboards still show the preorder versus walk-in service mix.
+    Orders without a Square customer link are shown as unavailable so the card
+    also communicates history coverage.
     """
     total_orders = 0
     first_timers = 0
     returning = 0
     regulars = 0
     unavailable = 0
+    walk_in_pie_orders = 0
 
     for order in orders:
         if order.is_walk_in:
+            if order.pizza_units > 0:
+                walk_in_pie_orders += 1
             continue
         total_orders += 1
         key = order.square_order_id or order.order_id
@@ -106,6 +112,7 @@ def build_customer_visit_summary(
         returning=returning,
         regulars=regulars,
         unavailable=unavailable,
+        walk_in_pie_orders=walk_in_pie_orders,
     )
 
 

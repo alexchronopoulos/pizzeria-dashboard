@@ -15,6 +15,7 @@ from pizzeria_dashboard.database import (
     load_order_internal_notes_for_date,
     load_orders_for_date,
     load_pie_production_states,
+    load_latest_service_state_before,
     load_service_state_payload,
     load_sync_info,
     merge_orders_for_date,
@@ -219,6 +220,17 @@ def test_service_state_round_trips_as_json_document(tmp_path: Path) -> None:
     assert load_service_state_payload(database_path, service_date) == payload
 
 
+def test_latest_service_state_before_returns_most_recent_saved_day(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    save_service_state_payload(database_path, date(2026, 8, 7), {"cookie_prepared": 4})
+    save_service_state_payload(database_path, date(2026, 8, 8), {"cookie_prepared": 2})
+
+    previous = load_latest_service_state_before(database_path, date(2026, 8, 9))
+
+    assert previous == (date(2026, 8, 8), {"cookie_prepared": 2})
+
+
 def test_legacy_date_based_json_state_migrates_once(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"
     legacy_path = tmp_path / "service_state.json"
@@ -375,6 +387,38 @@ def test_shared_pie_timer_auto_assigns_oven_positions_and_can_reset(tmp_path: Pa
     )
     assert reset.timer_status == "idle"
     assert reset.oven_position is None
+
+
+def test_completed_timer_frees_oven_position_for_next_pie(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    first_key = "2026-08-06|order-1|plain|0"
+    second_key = "2026-08-06|order-2|white|0"
+
+    first = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="start", duration_ms=1_000
+    )
+    assert first.oven_position == "top-left"
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE pie_production_states
+            SET timer_end_at_ms = 1
+            WHERE service_date = ? AND pie_key = ?
+            """,
+            (service_date.isoformat(), first_key),
+        )
+
+    completed = load_pie_production_states(database_path, service_date)[first_key]
+    assert completed.timer_status == "done"
+    assert completed.oven_position is None
+
+    second = update_pie_production_state(
+        database_path, service_date, second_key, timer_action="start", duration_ms=480_000
+    )
+    assert second.oven_position == "top-left"
 
 
 def test_manual_oven_assignment_replaces_existing_occupant(tmp_path: Path) -> None:

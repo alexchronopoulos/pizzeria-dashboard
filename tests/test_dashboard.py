@@ -325,14 +325,14 @@ def test_release_candidates_consider_total_slot_capacity() -> None:
 
 def test_open_capacity_card_lists_one_and_two_pie_slots(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
-    assert b"Open pizza capacity" in response.data
+    assert b"Available pickup slots" in response.data
     assert b'operations-card--sides' not in response.data
     assert b"Salads, sides &amp; cookies" in response.data
     assert b"Cucumber Salad" in response.data
     assert b"Side Ranch" in response.data
     assert b"Cookies" in response.data
-    assert b"2-pie orders" in response.data
-    assert b"1-pie orders" in response.data
+    assert b"Slots available for up to 2 pies" in response.data
+    assert b"Slots available for only 1 pie" in response.data
     assert b'aria-label="Slots available for one-pie orders"' in response.data
     assert b'data-capacity-drop-zone' in response.data
     assert b'data-open-pizza-spaces="2"' in response.data
@@ -782,6 +782,29 @@ def test_health_endpoint(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/healthz")
     assert response.status_code == 200
     assert response.get_json() == {"status": "ok"}
+
+
+def test_basic_auth_protects_dashboard_when_configured(tmp_path: Path) -> None:
+    app = _test_app(
+        tmp_path,
+        DASHBOARD_AUTH_USERNAME="mari",
+        DASHBOARD_AUTH_PASSWORD="very-secret",
+    )
+    client = app.test_client()
+
+    unauthorized = client.get("/?date=2026-07-31")
+    assert unauthorized.status_code == 401
+    assert unauthorized.headers["WWW-Authenticate"].startswith("Basic ")
+    assert client.get("/healthz").status_code == 200
+
+    authorized = client.get(
+        "/?date=2026-07-31",
+        headers={"Authorization": "Basic bWFyaTp2ZXJ5LXNlY3JldA=="},
+    )
+    assert authorized.status_code == 200
+    assert authorized.headers["X-Content-Type-Options"] == "nosniff"
+    assert authorized.headers["X-Frame-Options"] == "DENY"
+    assert authorized.headers["Cache-Control"] == "no-store"
 
 
 def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path: Path) -> None:
@@ -1489,6 +1512,7 @@ def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
     assert "Regular · 5 orders".encode() in dashboard.data
     assert b"Customer visits" in dashboard.data
     assert b"14 online orders" in dashboard.data
+    assert b"Walk-in pie orders" in dashboard.data
     assert b"1 with history" in dashboard.data
     assert b"First timers" in dashboard.data
     assert "2nd–4th orders".encode() in dashboard.data
