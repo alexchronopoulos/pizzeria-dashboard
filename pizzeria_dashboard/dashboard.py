@@ -59,7 +59,7 @@ from .service_state import (
     state_from_form,
     state_from_payload,
 )
-from .square_api import SquareClient, SquareError, SquareSettings
+from .square_api import SquareAPIError, SquareClient, SquareError, SquareSettings
 from .sync_service import configured_order_source, sync_orders_for_date, sync_sample_orders
 
 blueprint = Blueprint("dashboard", __name__)
@@ -99,6 +99,36 @@ def _requested_service_date() -> date:
 
 def _order_source() -> str:
     return configured_order_source(current_app.config)
+
+
+def _raw_square_order_is_unpaid_open(raw_order: Mapping[str, object]) -> bool:
+    """Return whether Square currently shows an OPEN order with no tenders."""
+    if str(raw_order.get("state", "")).upper() != "OPEN":
+        return False
+    raw_tenders = raw_order.get("tenders", [])
+    if not isinstance(raw_tenders, list):
+        return True
+    return not any(isinstance(value, Mapping) for value in raw_tenders)
+
+
+def _raw_square_order_payment_ids(raw_order: Mapping[str, object]) -> tuple[str, ...]:
+    """Return unique Payment IDs attached to the Square order's tenders."""
+    raw_tenders = raw_order.get("tenders", [])
+    if not isinstance(raw_tenders, list):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            payment_id
+            for tender in raw_tenders
+            if isinstance(tender, Mapping)
+            and (payment_id := str(tender.get("payment_id") or "").strip())
+        )
+    )
+
+
+def _raw_square_order_reference_id(raw_order: Mapping[str, object]) -> str | None:
+    value = str(raw_order.get("reference_id") or "").strip()
+    return value or None
 
 
 def _ensure_cached_orders(service_date: date, source: str) -> None:
@@ -415,6 +445,56 @@ def order_details():
         if is_walk_in
         else (str(order.customer_name or "").strip() or "Guest")
     )
+    can_remove_unpaid_order = bool(
+        not is_walk_in
+        and order.square_order_id
+        and order.square_order_state == "OPEN"
+        and order.is_paid is False
+    )
+    debug_order_id = order.square_order_id or order.order_id
+    debug_reference_id = order.reference_id
+    debug_payment_ids = order.payment_ids
+
+    # Order details are also the debugging view. Older cache documents predate
+    # reference/payment identifiers, so retrieve the current Square document when
+    # those values are missing. Reuse the same lookup for unpaid-order eligibility
+    # rather than making a second API request.
+    live_order: Mapping[str, object] | None = None
+    needs_live_square_order = bool(
+        order.square_order_id
+        and source == "square"
+        and (
+            order.reference_id is None
+            or not order.payment_ids
+            or (
+                not is_walk_in
+                and (order.square_order_state is None or order.is_paid is None)
+            )
+        )
+    )
+    if needs_live_square_order:
+        square_client = SquareClient(
+            SquareSettings.from_mapping(current_app.config)
+        )
+        retrieve_order = getattr(square_client, "retrieve_order", None)
+        if callable(retrieve_order):
+            try:
+                live_order = retrieve_order(order.square_order_id)
+            except SquareError:
+                pass
+
+    if live_order is not None:
+        debug_reference_id = (
+            _raw_square_order_reference_id(live_order) or debug_reference_id
+        )
+        live_payment_ids = _raw_square_order_payment_ids(live_order)
+        if live_payment_ids:
+            debug_payment_ids = live_payment_ids
+        if (
+            not is_walk_in
+            and (order.square_order_state is None or order.is_paid is None)
+        ):
+            can_remove_unpaid_order = _raw_square_order_is_unpaid_open(live_order)
 
     return render_template(
         "_order_details.html",
@@ -436,6 +516,10 @@ def order_details():
         internal_note=load_order_internal_note(
             database_path, selected_date, order_id
         ),
+        can_remove_unpaid_order=can_remove_unpaid_order,
+        debug_order_id=debug_order_id,
+        debug_reference_id=debug_reference_id,
+        debug_payment_ids=debug_payment_ids,
     )
 
 
@@ -839,6 +923,52 @@ def complete_square_order():
         already_completed=False,
         order_state=str(updated_raw.get("state", "")).upper() or None,
         fulfillment_state=fulfillment_state,
+    )
+
+
+@blueprint.post("/order-remove-unpaid")
+def remove_unpaid_square_order():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    if order.is_walk_in:
+        return jsonify(ok=False, error="Walk-in orders cannot be removed with this action."), 400
+    if not order.square_order_id:
+        return jsonify(ok=False, error="This order is not linked to Square."), 400
+
+    try:
+        client = SquareClient(SquareSettings.from_mapping(current_app.config))
+        updated_raw = client.cancel_unpaid_order(order.square_order_id)
+    except SquareAPIError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except SquareError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+    merge_result = merge_orders_for_date(
+        database_path,
+        selected_date,
+        (),
+        candidate_square_order_ids=(order.square_order_id,),
+        source="square",
+        synced_at=datetime.now(UTC),
+    )
+    return jsonify(
+        ok=True,
+        order_state=str(updated_raw.get("state", "")).upper() or "CANCELED",
+        removed_count=merge_result.removed_count,
+        board_content_revision=load_board_content_revision(
+            database_path, selected_date
+        ),
     )
 
 

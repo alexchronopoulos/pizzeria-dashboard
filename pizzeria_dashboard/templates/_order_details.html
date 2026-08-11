@@ -30,6 +30,26 @@
         </p>
       </div>
     </header>
+    <section class="detail-summary-grid" aria-label="Square identifiers">
+      <div>
+        <span>Order ID</span>
+        <strong>{{ debug_order_id or "Not available" }}</strong>
+      </div>
+      <div>
+        <span>Reference ID</span>
+        <strong>{{ debug_reference_id or "Not provided" }}</strong>
+      </div>
+      <div>
+        <span>{% if debug_payment_ids|length == 1 %}Payment ID{% else %}Payment IDs{% endif %}</span>
+        <strong>
+          {% if debug_payment_ids %}
+            {% for payment_id in debug_payment_ids %}{{ payment_id }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+          {% else %}
+            Not provided
+          {% endif %}
+        </strong>
+      </div>
+    </section>
     {% if not is_walk_in %}
     <section class="order-details-section scheduled-slot-editor">
       <div class="scheduled-slot-editor-heading">
@@ -71,6 +91,32 @@
         <button type="submit">Save pickup time</button>
         <span class="scheduled-slot-status" data-scheduled-pickup-time-status aria-live="polite"></span>
       </form>
+    </section>
+    {% endif %}
+    {% if can_remove_unpaid_order %}
+    <section class="order-details-section unpaid-order-removal">
+      <div>
+        <h3>Abandoned unpaid order</h3>
+        <p>
+          Square still has this order as open, but no processed payment is attached to it.
+          Use this only for an abandoned order that should no longer be produced.
+        </p>
+      </div>
+      <div class="unpaid-order-removal-actions">
+        <button
+          type="button"
+          class="unpaid-order-removal-button"
+          data-remove-unpaid-order
+          data-remove-unpaid-url="{{ url_for('dashboard.remove_unpaid_square_order') }}"
+          data-service-date="{{ selected_date.isoformat() }}"
+          data-order-id="{{ order.order_id }}"
+          data-order-label="{{ modal_customer_name }}"
+        >Remove unpaid order</button>
+        <span data-remove-unpaid-status aria-live="polite"></span>
+      </div>
+      <p class="unpaid-order-removal-warning">
+        This cancels the order in Square and removes it from the production dashboard. It cannot be undone.
+      </p>
     </section>
     {% endif %}
     <section class="order-details-section internal-note-editor">

@@ -300,6 +300,88 @@ class SquareClient:
             raise SquareAPIError("Square did not return the updated order document.")
         return updated
 
+    def cancel_unpaid_order(self, order_id: str) -> Mapping[str, object]:
+        """Cancel an OPEN order only when Square shows no processed tenders.
+
+        This is intentionally stricter than a generic cancel action. The dashboard
+        uses it only for abandoned/API-only orders that never completed payment.
+        Square requires every fulfillment on a canceled order to be canceled too,
+        so all active fulfillments are canceled in the same sparse update.
+        """
+        current = self.retrieve_order(order_id)
+        order_state = str(current.get("state", "")).upper()
+        if order_state == "CANCELED":
+            return current
+        if order_state != "OPEN":
+            raise SquareAPIError(
+                f"Square order {order_id} is {order_state or 'not open'} and cannot be removed as unpaid."
+            )
+
+        raw_tenders = current.get("tenders", [])
+        tenders = (
+            [value for value in raw_tenders if isinstance(value, Mapping)]
+            if isinstance(raw_tenders, list)
+            else []
+        )
+        if tenders:
+            raise SquareAPIError(
+                "Square shows a processed payment for this order. It was not canceled."
+            )
+
+        raw_version = current.get("version")
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError) as exc:
+            raise SquareAPIError(
+                "Square did not provide an order version. Orders without a version cannot be canceled through the Orders API."
+            ) from exc
+
+        raw_fulfillments = current.get("fulfillments", [])
+        fulfillments = (
+            [value for value in raw_fulfillments if isinstance(value, Mapping)]
+            if isinstance(raw_fulfillments, list)
+            else []
+        )
+        fulfillment_updates: list[dict[str, str]] = []
+        for fulfillment in fulfillments:
+            uid = str(fulfillment.get("uid", "")).strip()
+            state = str(fulfillment.get("state", "PROPOSED")).upper()
+            if state == "CANCELED":
+                continue
+            if state in {"COMPLETED", "FAILED"}:
+                raise SquareAPIError(
+                    "This order has a fulfillment that is already terminal and cannot be safely canceled as an abandoned unpaid order."
+                )
+            if not uid:
+                raise SquareAPIError(
+                    "Square returned a fulfillment without a UID. Refresh the dashboard and try again."
+                )
+            fulfillment_updates.append({"uid": uid, "state": "CANCELED"})
+
+        sparse_order: dict[str, object] = {
+            "version": version,
+            "state": "CANCELED",
+        }
+        if fulfillment_updates:
+            sparse_order["fulfillments"] = fulfillment_updates
+
+        response = self._request(
+            "PUT",
+            f"/v2/orders/{quote(order_id, safe='')}",
+            {
+                "idempotency_key": str(uuid4()),
+                "order": sparse_order,
+            },
+        )
+        updated = response.get("order")
+        if not isinstance(updated, Mapping):
+            raise SquareAPIError("Square did not return the canceled order document.")
+        if str(updated.get("state", "")).upper() != "CANCELED":
+            raise SquareAPIError(
+                "Square did not confirm that the order was canceled. Refresh the dashboard before trying again."
+            )
+        return updated
+
     def batch_retrieve_orders(
         self,
         order_ids: Sequence[str],

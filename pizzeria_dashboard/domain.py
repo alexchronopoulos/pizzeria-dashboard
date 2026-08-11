@@ -252,6 +252,10 @@ class Order:
     creation_product: str | None = None
     ticket_name: str | None = None
     note: str | None = None
+    square_order_state: str | None = None
+    is_paid: bool | None = None
+    reference_id: str | None = None
+    payment_ids: tuple[str, ...] = ()
 
     @property
     def display_customer_name(self) -> str:
@@ -659,6 +663,10 @@ def order_to_payload(order: Order) -> dict[str, object]:
         "creation_product": order.creation_product,
         "ticket_name": order.ticket_name,
         "note": order.note,
+        "square_order_state": order.square_order_state,
+        "is_paid": order.is_paid,
+        "reference_id": order.reference_id,
+        "payment_ids": list(order.payment_ids),
         "items": [
             {
                 "name": item.name,
@@ -808,4 +816,24 @@ def order_from_payload(payload: Mapping[str, object]) -> Order:
             else None
         ),
         note=(str(payload["note"]) if payload.get("note") else None),
+        square_order_state=(
+            str(payload["square_order_state"]).upper()
+            if payload.get("square_order_state")
+            else None
+        ),
+        is_paid=(
+            bool(payload["is_paid"])
+            if payload.get("is_paid") is not None
+            else None
+        ),
+        reference_id=(
+            str(payload["reference_id"])
+            if payload.get("reference_id")
+            else None
+        ),
+        payment_ids=(
+            tuple(str(value) for value in payload.get("payment_ids", []) if value)
+            if isinstance(payload.get("payment_ids", []), list)
+            else ()
+        ),
     )

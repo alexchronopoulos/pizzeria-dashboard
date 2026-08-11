@@ -11,6 +11,7 @@ from pizzeria_dashboard.database import initialize_database, load_orders_for_dat
 from pizzeria_dashboard.domain import build_service_board
 from pizzeria_dashboard.square_api import (
     SquareClient,
+    SquareAPIError,
     SquareConfigurationError,
     SquareSettings,
 )
@@ -291,6 +292,30 @@ def test_draft_orders_are_excluded_from_production_orders() -> None:
 
     assert all(order.square_order_id != "draft-cart" for order in orders)
     assert len(orders) == 2
+
+
+def test_square_order_debug_identifiers_are_preserved() -> None:
+    raw = list(_raw_square_orders())
+    first = dict(raw[0])
+    first["reference_id"] = "web-checkout-123"
+    first["tenders"] = [
+        {"id": "tender-1", "payment_id": "payment-123"},
+        {"id": "tender-2", "payment_id": "payment-456"},
+    ]
+    raw[0] = first
+
+    orders = convert_square_orders(
+        tuple(raw),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    first_order = next(order for order in orders if order.square_order_id == "square-order-1")
+    assert first_order.reference_id == "web-checkout-123"
+    assert first_order.payment_ids == ("payment-123", "payment-456")
 
 
 def test_receipt_lookup_can_follow_order_tender_payment_id() -> None:
@@ -1437,6 +1462,83 @@ def test_square_client_completes_pickup_fulfillment_and_order() -> None:
     assert calls[0][0] == "GET"
     assert calls[1][0] == "PUT"
     assert calls[1][1].endswith("/v2/orders/order-1")
+
+
+
+def test_square_client_cancels_unpaid_open_order_and_fulfillments() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        if method == "GET":
+            return {
+                "order": {
+                    "id": "abandoned-order",
+                    "state": "OPEN",
+                    "version": 4,
+                    "tenders": [],
+                    "fulfillments": [
+                        {
+                            "uid": "pickup-1",
+                            "type": "PICKUP",
+                            "state": "PROPOSED",
+                        }
+                    ],
+                }
+            }
+        assert method == "PUT"
+        assert payload is not None
+        assert payload["order"] == {
+            "version": 4,
+            "state": "CANCELED",
+            "fulfillments": [{"uid": "pickup-1", "state": "CANCELED"}],
+        }
+        assert payload.get("idempotency_key")
+        return {
+            "order": {
+                "id": "abandoned-order",
+                "state": "CANCELED",
+                "version": 5,
+                "fulfillments": [
+                    {
+                        "uid": "pickup-1",
+                        "type": "PICKUP",
+                        "state": "CANCELED",
+                    }
+                ],
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    updated = client.cancel_unpaid_order("abandoned-order")
+
+    assert updated["state"] == "CANCELED"
+    assert len(calls) == 2
+    assert calls[1][1].endswith("/v2/orders/abandoned-order")
+
+
+def test_square_client_refuses_to_cancel_order_with_processed_tender() -> None:
+    def requester(method, url, headers, payload, timeout):
+        assert method == "GET"
+        return {
+            "order": {
+                "id": "paid-open-order",
+                "state": "OPEN",
+                "version": 9,
+                "tenders": [{"id": "payment-1", "payment_id": "payment-1"}],
+                "fulfillments": [
+                    {"uid": "pickup-1", "type": "PICKUP", "state": "RESERVED"}
+                ],
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    with pytest.raises(SquareAPIError, match="processed payment"):
+        client.cancel_unpaid_order("paid-open-order")
 
 
 def test_square_client_can_list_payments_by_updated_time_for_customer_history() -> None:

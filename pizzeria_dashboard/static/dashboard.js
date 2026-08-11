@@ -354,6 +354,66 @@
     });
 
 
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-remove-unpaid-order]");
+        if (!button || !body.contains(button)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+
+        const url = button.dataset.removeUnpaidUrl;
+        const serviceDate = button.dataset.serviceDate;
+        const orderId = button.dataset.orderId;
+        const label = button.dataset.orderLabel || "this order";
+        const status = button.parentElement?.querySelector("[data-remove-unpaid-status]");
+        if (!url || !serviceDate || !orderId) {
+            return;
+        }
+        if (!window.confirm(
+            `Remove ${label}'s unpaid order? This will cancel the Square order and remove it from the production dashboard. This cannot be undone.`
+        )) {
+            return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = "Removing…";
+        if (status) {
+            status.textContent = "Checking Square payment state…";
+        }
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: serviceDate,
+                    order_id: orderId,
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The unpaid order could not be removed.");
+            }
+            if (status) {
+                status.textContent = "Canceled in Square";
+            }
+            button.textContent = "Removed";
+            window.PizzeriaDashboardViewport?.remember();
+            window.location.reload();
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = originalText;
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
     document.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const clearButton = target?.closest("[data-order-note-clear]");

@@ -1666,6 +1666,48 @@ h2 {
     color: var(--brand-blue);
 }
 
+.unpaid-order-removal {
+    border-color: var(--brand-red);
+    background: #fff4ef;
+}
+
+.unpaid-order-removal h3 {
+    color: var(--brand-red);
+}
+
+.unpaid-order-removal p {
+    margin-bottom: 10px;
+}
+
+.unpaid-order-removal-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.unpaid-order-removal-button {
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: var(--brand-red);
+    color: white;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.unpaid-order-removal-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.unpaid-order-removal-warning {
+    margin-top: 10px;
+    margin-bottom: 0 !important;
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
 .detail-item-list {
     display: grid;
     gap: 8px;

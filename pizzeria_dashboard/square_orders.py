@@ -438,6 +438,17 @@ def build_payment_product_index(
     return index
 
 
+def _payment_ids_for_order(raw_order: Mapping[str, object]) -> tuple[str, ...]:
+    """Return unique Square Payment IDs attached to an Order's tenders."""
+    return tuple(
+        dict.fromkeys(
+            payment_id
+            for tender in _mapping_list(raw_order.get("tenders"))
+            if (payment_id := _optional_string(tender.get("payment_id")))
+        )
+    )
+
+
 def _receipt_number_for_order(
     raw_order: Mapping[str, object],
     square_order_id: str,
@@ -645,6 +656,9 @@ def convert_square_orders(
         square_order_id = _optional_string(raw_order.get("id"))
         if not square_order_id:
             continue
+        is_paid = order_state == "COMPLETED" or bool(
+            _mapping_list(raw_order.get("tenders"))
+        )
 
         raw_fulfillments = _mapping_list(raw_order.get("fulfillments"))
         matching_fulfillments: list[tuple[Mapping[str, object], datetime]] = []
@@ -679,6 +693,8 @@ def convert_square_orders(
         creation_product = _creation_product(raw_order)
         ticket_name = _optional_string(raw_order.get("ticket_name"))
         order_note = _optional_string(raw_order.get("note"))
+        reference_id = _optional_string(raw_order.get("reference_id"))
+        payment_ids = _payment_ids_for_order(raw_order)
 
         for fulfillment, pickup_at in matching_fulfillments:
             uid = _optional_string(fulfillment.get("uid"))
@@ -737,6 +753,10 @@ def convert_square_orders(
                     creation_product=creation_product,
                     ticket_name=ticket_name,
                     note=note,
+                    square_order_state=order_state,
+                    is_paid=is_paid,
+                    reference_id=reference_id,
+                    payment_ids=payment_ids,
                 )
             )
 
@@ -787,6 +807,10 @@ def convert_square_orders(
                 creation_product=creation_product,
                 ticket_name=ticket_name,
                 note=_first_fulfillment_note(raw_fulfillments) or order_note,
+                square_order_state=order_state,
+                is_paid=is_paid,
+                reference_id=reference_id,
+                payment_ids=payment_ids,
             )
         )
 

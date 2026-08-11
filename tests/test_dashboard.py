@@ -1,6 +1,7 @@
 import base64
 import re
 import secrets
+from dataclasses import replace
 import sqlite3
 from html import unescape
 from html.parser import HTMLParser
@@ -16,6 +17,7 @@ from pizzeria_dashboard.database import (
     load_orders_for_date,
     load_pie_production_states,
     load_service_state_payload,
+    replace_orders_for_date,
 )
 from pizzeria_dashboard.sample_data import build_sample_service
 from pizzeria_dashboard.service_config import load_configuration
@@ -88,6 +90,43 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b'data-order-pizza-units=' in response.data
     assert b'data-total-pizzas="16"' in response.data
     assert len(load_orders_for_date(Path(app.config["DATABASE_PATH"]), date(2026, 7, 31))) == 14
+
+
+def test_order_details_show_square_debug_identifiers(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = date(2026, 7, 31)
+    assert client.get(f"/?date={selected.isoformat()}").status_code == 200
+
+    database_path = Path(app.config["DATABASE_PATH"])
+    orders = load_orders_for_date(database_path, selected)
+    target = orders[0]
+    updated = replace(
+        target,
+        square_order_id="square-debug-order",
+        reference_id="reference-debug-123",
+        payment_ids=("payment-debug-1", "payment-debug-2"),
+    )
+    replace_orders_for_date(
+        database_path,
+        selected,
+        (updated, *orders[1:]),
+        source="sample",
+    )
+
+    response = client.get(
+        f"/order-details?date={selected.isoformat()}&order_id={target.order_id}"
+    )
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Order ID" in html
+    assert "square-debug-order" in html
+    assert "Reference ID" in html
+    assert "reference-debug-123" in html
+    assert "Payment IDs" in html
+    assert "payment-debug-1" in html
+    assert "payment-debug-2" in html
 
 
 def test_prep_view_toggle_marks_empty_and_past_slots(
@@ -1470,6 +1509,109 @@ def test_open_square_order_can_be_marked_completed(tmp_path: Path, monkeypatch) 
     refreshed = client.get("/?date=2026-07-31")
     assert b'data-order-complete-button' not in refreshed.data
     assert b"Capacity released" in refreshed.data
+
+
+
+def test_unpaid_open_square_order_can_be_removed_from_details(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from datetime import datetime
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    class FakeSquareClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def cancel_unpaid_order(self, order_id):
+            assert order_id == "square-abandoned-1"
+            return {
+                "id": order_id,
+                "state": "CANCELED",
+                "version": 3,
+                "fulfillments": [
+                    {
+                        "uid": "pickup-1",
+                        "type": "PICKUP",
+                        "state": "CANCELED",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
+    app = _test_app(
+        tmp_path,
+        AUTO_SEED_SAMPLE_DATA=False,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="test-token",
+    )
+    selected = date(2026, 7, 31)
+    order = Order(
+        order_id="cached-abandoned-1",
+        customer_name="Abandoned Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 0),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-abandoned-1",
+        square_version=2,
+        fulfillment_uid="pickup-1",
+        fulfillment_state="PROPOSED",
+        square_order_state="OPEN",
+        is_paid=False,
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (order,), source="square"
+    )
+    client = app.test_client()
+
+    details = client.get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": order.order_id},
+    )
+    assert details.status_code == 200
+    assert b"Abandoned unpaid order" in details.data
+    assert b"data-remove-unpaid-order" in details.data
+
+    removed = client.post(
+        "/order-remove-unpaid",
+        json={"service_date": selected.isoformat(), "order_id": order.order_id},
+    )
+    assert removed.status_code == 200
+    payload = removed.get_json()
+    assert payload["ok"] is True
+    assert payload["order_state"] == "CANCELED"
+    assert payload["removed_count"] == 1
+    assert load_orders_for_date(Path(app.config["DATABASE_PATH"]), selected) == ()
+
+
+def test_paid_open_square_order_does_not_offer_unpaid_removal(tmp_path: Path) -> None:
+    from datetime import datetime
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    order = Order(
+        order_id="cached-paid-open",
+        customer_name="Paid Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 0),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-paid-open",
+        fulfillment_uid="pickup-1",
+        fulfillment_state="RESERVED",
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (order,), source="square"
+    )
+
+    details = app.test_client().get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": order.order_id},
+    )
+    assert details.status_code == 200
+    assert b"data-remove-unpaid-order" not in details.data
 
 
 def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
