@@ -1,9 +1,9 @@
 # Pizzeria Mari Production Dashboard
 
-A local, single-user production board for Pizzeria Mari. Square remains the
-system of record; this application pulls pickup orders into SQLite, groups them
-by service time, calculates pizza load, tracks prep inventory, and will later
-release capacity by marking eligible Square orders as picked up.
+A local production board for Pizzeria Mari. Square remains the system of record
+for Square orders; the dashboard can also hold intentionally local verbal/manual
+orders that never touch Square. It groups orders by service time, calculates pizza
+load, tracks prep inventory, and coordinates production state across displays.
 
 ## Sprint 3.8
 
@@ -37,7 +37,8 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Marks boxed-and-ready orders across every display with a gray card and a shared timestamp, and drives a fixed circular pizzas-remaining countdown from those shared ready states.
 - Summarizes pizza add-on modifiers for ingredient prep and hides elapsed pickup slots from today's operational selectors. Prep View hides empty slots only; populated past orders remain in place so active timer positions do not jump during service.
 - Publishes order-cache and staff-note revisions to all open displays every two seconds; when one display finds a new Square order, the others reload automatically and show a new-order toast with pickup time and item summary.
-- Does not write timer, oven-position, boxed-ready, staff-note, or pickup-time override state back to Square.
+- Adds dashboard-only manual orders for verbal/phone orders: customer name, pickup date/time, quantity, free-form item name, and item type. Manual orders live in a separate SQLite table so Square refreshes cannot delete them, and they participate in normal timers, prep counts, boxed-ready state, and cross-device sync.
+- Does not write timer, oven-position, boxed-ready, staff-note, pickup-time override, or manual-order state back to Square.
 
 The active database remains:
 
@@ -168,7 +169,9 @@ uv run python -m pizzeria_dashboard
 ```
 
 Open `http://localhost:5000`, select a service date, and press **Pull from
-Square**. Click any order card to open the pickup-time and kitchen-details modal.
+Square**. Use **Add order** for a verbal/phone order that should exist only on the
+dashboard; enter the customer name, pickup date/time, and one or more free-form
+item rows. Click any order card to open the pickup-time and kitchen-details modal.
 Each pizza row also includes an eight-minute bake timer. Timer state and oven position are shared through SQLite, so prep and expo displays stay synchronized. Starting a timer automatically assigns the first free oven position in top-left to bottom-right order; the oven map can still be adjusted manually. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
 
 Use **Mark boxed** when the complete order is packed. Every display will gray the card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.

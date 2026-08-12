@@ -22,6 +22,7 @@ from pizzeria_dashboard.database import (
     migrate_legacy_service_state,
     prune_pie_production_states,
     replace_orders_for_date,
+    save_manual_order,
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
@@ -46,6 +47,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
 
     assert {
         "orders",
+        "manual_orders",
         "service_states",
         "sync_runs",
         "app_metadata",
@@ -83,6 +85,48 @@ def test_one_cached_order_can_be_loaded_for_details(tmp_path: Path) -> None:
 
     assert loaded == original[0]
     assert load_order_for_date(database_path, service_date, "missing") is None
+
+
+
+def test_manual_order_survives_square_snapshot_replacement(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 14)
+    initialize_database(database_path)
+    square_orders = build_sample_orders(service_date)
+    manual = Order(
+        order_id="manual-test-1",
+        customer_name="Phone Alex",
+        pickup_at=datetime(2026, 8, 14, 18, 15),
+        items=(
+            Item(name="Plain Pie", quantity=1, category="pizza"),
+            Item(name="T-Shirt", quantity=1, category="merch"),
+        ),
+        creation_product="MANUAL_DASHBOARD",
+    )
+
+    save_manual_order(database_path, service_date, manual)
+    save_order_slot_assignment(
+        database_path,
+        service_date,
+        manual.order_id,
+        datetime(2026, 8, 14, 18, 30),
+    )
+    replace_orders_for_date(
+        database_path, service_date, square_orders, source="sample"
+    )
+
+    cached = load_orders_for_date(database_path, service_date)
+    assert manual in cached
+    assert len(cached) == len(square_orders) + 1
+    assert load_order_for_date(database_path, service_date, manual.order_id) == manual
+    assert load_order_slot_assignments(database_path, service_date)[manual.order_id] == datetime(2026, 8, 14, 18, 30)
+
+    replace_orders_for_date(
+        database_path, service_date, square_orders[:2], source="sample"
+    )
+    cached = load_orders_for_date(database_path, service_date)
+    assert manual in cached
+    assert len(cached) == 3
 
 
 def test_internal_order_notes_survive_order_refresh_and_can_be_cleared(

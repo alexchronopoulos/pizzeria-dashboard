@@ -274,6 +274,11 @@ class Order:
     payment_ids: tuple[str, ...] = ()
 
     @property
+    def is_manual(self) -> bool:
+        """Whether this order was entered directly in the dashboard."""
+        return str(self.creation_product or "").upper() == "MANUAL_DASHBOARD"
+
+    @property
     def display_customer_name(self) -> str:
         """Return the label shown on the production dashboard.
 
@@ -284,6 +289,9 @@ class Order:
         if self.is_walk_in:
             value = str(self.ticket_name or self.customer_name or "Walk-in").strip()
             return value or "Walk-in"
+        if self.is_manual:
+            value = str(self.customer_name or "Manual order").strip()
+            return value or "Manual order"
         return customer_display_name(self.customer_name)
 
     @property
@@ -636,7 +644,7 @@ def build_service_board(
         # merch now keep a walk-in visible on the board.
         if order.is_walk_in and not order.walk_in_requires_production_card:
             continue
-        if not order.production_items:
+        if not order.production_items and not order.is_manual:
             continue
         if order.order_id in assignments:
             assigned_pickup_at = assignments[order.order_id]

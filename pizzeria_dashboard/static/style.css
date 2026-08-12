@@ -3641,3 +3641,240 @@ html {
         gap: 2px;
     }
 }
+
+/* Dashboard-only verbal orders. */
+.manual-order-button {
+    min-height: 42px;
+    padding: 8px 13px;
+    border: 2px solid var(--brand-blue);
+    border-radius: 8px;
+    background: var(--brand-blue);
+    color: white;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.manual-order-button:hover,
+.manual-order-button:focus-visible {
+    background: white;
+    color: var(--brand-blue);
+    outline: 3px solid rgba(0, 85, 134, 0.22);
+    outline-offset: 2px;
+}
+
+.manual-order-dialog {
+    width: min(940px, calc(100vw - 28px));
+    max-height: calc(100vh - 28px);
+    padding: 0;
+    overflow: hidden;
+    border: 4px solid var(--black);
+    border-radius: var(--radius);
+    background: var(--brand-cream);
+    box-shadow: 0 24px 70px rgba(0, 20, 32, 0.45);
+}
+
+.manual-order-dialog::backdrop {
+    background: rgba(0, 35, 56, 0.72);
+}
+
+.manual-order-dialog-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    max-height: calc(100vh - 36px);
+}
+
+.manual-order-dialog-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 14px 18px;
+    border-bottom: 3px solid var(--black);
+    background: var(--brand-blue);
+    color: white;
+}
+
+.manual-order-dialog-toolbar > div {
+    display: grid;
+    gap: 2px;
+}
+
+.manual-order-dialog-toolbar strong {
+    font-size: 1.2rem;
+}
+
+.manual-order-dialog-toolbar span {
+    font-size: 0.8rem;
+    font-weight: 800;
+    opacity: 0.9;
+}
+
+.manual-order-close {
+    padding: 7px 12px;
+    border: 2px solid white;
+    border-radius: 7px;
+    background: white;
+    color: var(--brand-blue);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.manual-order-dialog-body {
+    overflow: auto;
+    padding: 18px;
+}
+
+.manual-order-form {
+    display: grid;
+    gap: 18px;
+}
+
+.manual-order-callout {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 2px solid var(--brand-blue);
+    border-radius: 8px;
+    background: white;
+}
+
+.manual-order-callout strong {
+    color: var(--brand-blue);
+    white-space: nowrap;
+}
+
+.manual-order-callout span {
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.manual-order-basics {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 0.8fr) minmax(130px, 0.7fr);
+    gap: 12px;
+}
+
+.manual-order-form label {
+    display: grid;
+    gap: 5px;
+    font-weight: 800;
+}
+
+.manual-order-form label > span {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.manual-order-form input,
+.manual-order-form select {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 2px solid var(--black);
+    border-radius: 7px;
+    background: white;
+    color: var(--text);
+    font: inherit;
+}
+
+.manual-order-items {
+    display: grid;
+    gap: 10px;
+}
+
+.manual-order-items-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.manual-order-items-heading > div {
+    display: grid;
+    gap: 2px;
+}
+
+.manual-order-items-heading span {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.manual-order-add-item,
+.manual-order-remove-item {
+    border: 2px solid var(--black);
+    border-radius: 7px;
+    background: white;
+    color: var(--text);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.manual-order-add-item {
+    padding: 7px 10px;
+}
+
+.manual-order-item-list {
+    display: grid;
+    gap: 9px;
+}
+
+.manual-order-item-row {
+    display: grid;
+    grid-template-columns: 80px minmax(220px, 1fr) minmax(130px, 0.45fr) auto;
+    align-items: end;
+    gap: 9px;
+    padding: 10px;
+    border: 2px solid rgba(17, 17, 17, 0.22);
+    border-radius: 8px;
+    background: white;
+}
+
+.manual-order-remove-item {
+    min-height: 42px;
+    padding: 8px 10px;
+}
+
+.manual-order-submit {
+    min-height: 46px;
+    padding: 9px 16px;
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    background: var(--brand-yellow);
+    color: var(--text);
+    font-weight: 950;
+    cursor: pointer;
+}
+
+.manual-order-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.badge--manual {
+    border-color: var(--brand-blue);
+    background: var(--brand-blue);
+    color: white;
+}
+
+@media (max-width: 760px) {
+    .manual-order-basics,
+    .manual-order-item-row {
+        grid-template-columns: 1fr;
+    }
+
+    .manual-order-items-heading,
+    .manual-order-callout {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .manual-order-actions,
+    .manual-order-submit,
+    .manual-order-add-item,
+    .manual-order-remove-item {
+        width: 100%;
+    }
+}

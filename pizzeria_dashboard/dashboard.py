@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 from flask import (
     Blueprint,
@@ -38,12 +39,13 @@ from .database import (
     merge_orders_for_date,
     prune_pie_production_states,
     save_app_metadata,
+    save_manual_order,
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
     update_pie_production_state,
 )
-from .domain import Order, build_service_board, parse_ticket_pickup_time
+from .domain import Item, Order, build_service_board, parse_ticket_pickup_time
 from .customer_history import build_customer_visit_summary
 from .customer_history_sync import sync_customer_history
 from .service_config import (
@@ -67,6 +69,15 @@ blueprint = Blueprint("dashboard", __name__)
 AUTO_REFRESH_ENABLED_KEY = "square_auto_refresh_enabled"
 AUTO_REFRESH_SECONDS_KEY = "square_auto_refresh_seconds"
 AUTO_REFRESH_INTERVALS = (10, 15, 30, 60, 120, 300)
+MANUAL_ITEM_CATEGORIES = {
+    "pizza",
+    "salad",
+    "side",
+    "dessert",
+    "merch",
+    "drink",
+    "other",
+}
 
 
 def _now() -> datetime:
@@ -347,7 +358,86 @@ def index() -> str:
             order.order_id: _local_service_time(order.pickup_at)
             for order in orders
         },
+        manual_order_default_date=(
+            selected_date if selected_date >= now.date() else now.date()
+        ),
     )
+
+
+@blueprint.post("/manual-order")
+def create_manual_order():
+    """Create a dashboard-only verbal order without touching Square."""
+    customer_name = str(request.form.get("customer_name", "")).strip()
+    if not customer_name:
+        flash("Enter a customer name for the manual order.", "error")
+        return redirect(url_for("dashboard.index", date=_requested_service_date().isoformat()), code=303)
+    if len(customer_name) > 120:
+        flash("Customer name must be 120 characters or fewer.", "error")
+        return redirect(url_for("dashboard.index", date=_requested_service_date().isoformat()), code=303)
+
+    raw_date = str(request.form.get("pickup_date", "")).strip()
+    raw_time = str(request.form.get("pickup_time", "")).strip()
+    try:
+        pickup_date = date.fromisoformat(raw_date)
+        pickup_at = datetime.fromisoformat(f"{raw_date}T{raw_time}")
+    except ValueError:
+        flash("Enter a valid pickup date and time.", "error")
+        return redirect(url_for("dashboard.index", date=_requested_service_date().isoformat()), code=303)
+
+    now = _now()
+    current_service_time = now.replace(tzinfo=None)
+    if pickup_date < now.date() or pickup_at < current_service_time:
+        flash("Manual orders must use a pickup time that has not passed.", "error")
+        return redirect(url_for("dashboard.index", date=max(pickup_date, now.date()).isoformat()), code=303)
+
+    item_names = request.form.getlist("item_name")
+    item_quantities = request.form.getlist("item_quantity")
+    item_categories = request.form.getlist("item_category")
+    if not (len(item_names) == len(item_quantities) == len(item_categories)):
+        flash("The manual order item rows were incomplete. Please try again.", "error")
+        return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
+
+    items: list[Item] = []
+    for raw_name, raw_quantity, raw_category in zip(
+        item_names, item_quantities, item_categories
+    ):
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if len(name) > 160:
+            flash("Manual item names must be 160 characters or fewer.", "error")
+            return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
+        category = str(raw_category).strip().lower()
+        if category not in MANUAL_ITEM_CATEGORIES:
+            flash(f"Choose a valid item type for {name}.", "error")
+            return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
+        try:
+            quantity = int(raw_quantity)
+        except (TypeError, ValueError):
+            quantity = 0
+        if quantity < 1 or quantity > 50:
+            flash(f"Quantity for {name} must be between 1 and 50.", "error")
+            return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
+        items.append(Item(name=name, quantity=quantity, category=category))
+
+    if not items:
+        flash("Add at least one item to the manual order.", "error")
+        return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
+
+    order = Order(
+        order_id=f"manual-{uuid4().hex}",
+        customer_name=customer_name,
+        pickup_at=pickup_at,
+        items=tuple(items),
+        source_created_at=now,
+        creation_product="MANUAL_DASHBOARD",
+    )
+    save_manual_order(_database_path(), pickup_date, order)
+    flash(
+        f"Added manual order for {order.display_customer_name} at {pickup_at.strftime('%-I:%M %p')}.",
+        "success",
+    )
+    return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
 
 
 def _effective_walk_in_assignment(
@@ -410,6 +500,7 @@ def order_details():
         and order.source_closed_at
         and order.fulfillment_uid is None
     )
+    is_manual = order.is_manual
     assigned_pickup_at, assignment_source = _effective_walk_in_assignment(
         order, selected_date, pickup_slots, assignment_overrides
     )
@@ -501,6 +592,7 @@ def order_details():
         order=order,
         modal_customer_name=modal_customer_name,
         is_walk_in=is_walk_in,
+        is_manual=is_manual,
         assigned_pickup_at=assigned_pickup_at,
         assignment_source=assignment_source,
         original_pickup_at=original_pickup_at,

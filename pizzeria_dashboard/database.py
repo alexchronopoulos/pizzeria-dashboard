@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -85,6 +85,20 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_orders_service_pickup
                 ON orders (service_date, pickup_at);
+
+            CREATE TABLE IF NOT EXISTS manual_orders (
+                order_id TEXT NOT NULL,
+                service_date TEXT NOT NULL,
+                pickup_at TEXT NOT NULL,
+                customer_name TEXT NOT NULL,
+                source_payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (order_id, service_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_manual_orders_service_pickup
+                ON manual_orders (service_date, pickup_at);
 
             CREATE TABLE IF NOT EXISTS service_states (
                 service_date TEXT PRIMARY KEY,
@@ -270,8 +284,15 @@ def replace_orders_for_date(
                 DELETE FROM order_slot_assignments
                 WHERE service_date = ?
                   AND order_id NOT IN ({placeholders})
+                  AND order_id NOT IN (
+                      SELECT order_id FROM manual_orders WHERE service_date = ?
+                  )
                 """,
-                (date_key, *(order.order_id for order in order_list)),
+                (
+                    date_key,
+                    *(order.order_id for order in order_list),
+                    date_key,
+                ),
             )
         else:
             connection.execute(
@@ -279,8 +300,14 @@ def replace_orders_for_date(
                 (date_key,),
             )
             connection.execute(
-                "DELETE FROM order_slot_assignments WHERE service_date = ?",
-                (date_key,),
+                """
+                DELETE FROM order_slot_assignments
+                WHERE service_date = ?
+                  AND order_id NOT IN (
+                      SELECT order_id FROM manual_orders WHERE service_date = ?
+                  )
+                """,
+                (date_key, date_key),
             )
 
         connection.execute(
@@ -443,12 +470,63 @@ def merge_orders_for_date(
     )
 
 
-def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:
+def save_manual_order(
+    path: Path, service_date: date, order: Order
+) -> Order:
+    """Persist one dashboard-only order independently from the Square cache."""
+    if order.pickup_at.date() != service_date:
+        raise ValueError("Manual order pickup date must match the service date.")
+    payload = json.dumps(
+        order_to_payload(order),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    now = _utc_now().isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            """
+            SELECT source_payload_json
+            FROM manual_orders
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (service_date.isoformat(), order.order_id),
+        ).fetchone()
+        connection.execute(
+            """
+            INSERT INTO manual_orders (
+                order_id, service_date, pickup_at, customer_name,
+                source_payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(order_id, service_date) DO UPDATE SET
+                pickup_at = excluded.pickup_at,
+                customer_name = excluded.customer_name,
+                source_payload_json = excluded.source_payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                order.order_id,
+                service_date.isoformat(),
+                order.pickup_at.isoformat(),
+                order.customer_name,
+                payload,
+                now,
+                now,
+            ),
+        )
+        if existing is None or str(existing["source_payload_json"]) != payload:
+            _touch_board_content_revision(connection, service_date.isoformat())
+    return order
+
+
+def load_manual_orders_for_date(
+    path: Path, service_date: date
+) -> tuple[Order, ...]:
     with _connect(path) as connection:
         rows = connection.execute(
             """
             SELECT source_payload_json
-            FROM orders
+            FROM manual_orders
             WHERE service_date = ?
             ORDER BY pickup_at, order_id
             """,
@@ -466,18 +544,56 @@ def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:
     return tuple(orders)
 
 
+def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:
+    """Load Square-cached and dashboard-only manual orders for one service date."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT pickup_at, order_id, source_payload_json
+            FROM orders
+            WHERE service_date = ?
+            UNION ALL
+            SELECT pickup_at, order_id, source_payload_json
+            FROM manual_orders
+            WHERE service_date = ?
+            ORDER BY pickup_at, order_id
+            """,
+            (service_date.isoformat(), service_date.isoformat()),
+        ).fetchall()
+
+    orders: list[Order] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["source_payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, Mapping):
+            orders.append(order_from_payload(payload))
+    return tuple(orders)
+
+
 def load_order_for_date(
     path: Path, service_date: date, order_id: str
 ) -> Order | None:
-    """Load one cached order document for the details view."""
+    """Load one Square-cached or dashboard-only order for the details view."""
     with _connect(path) as connection:
         row = connection.execute(
             """
             SELECT source_payload_json
             FROM orders
             WHERE service_date = ? AND order_id = ?
+            UNION ALL
+            SELECT source_payload_json
+            FROM manual_orders
+            WHERE service_date = ? AND order_id = ?
+            LIMIT 1
             """,
-            (service_date.isoformat(), order_id),
+            (
+                service_date.isoformat(),
+                order_id,
+                service_date.isoformat(),
+                order_id,
+            ),
         ).fetchone()
 
     if row is None:

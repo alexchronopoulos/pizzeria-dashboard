@@ -1,5 +1,5 @@
 {% macro render_order(order, window=None, unscheduled=False) -%}
-{% set release_candidate = window and service.is_release_candidate(order, window) %}
+{% set release_candidate = window and not order.is_manual and service.is_release_candidate(order, window) %}
 {% set customer_label = order.display_customer_name %}
 {% set can_complete = order.square_order_id and order.square_version is not none and order.fulfillment_uid and not order.is_walk_in and not order.released and order.fulfillment_state != "COMPLETED" %}
 {% set customer_order_key = order.square_order_id or order.order_id %}
@@ -57,7 +57,10 @@
                 draggable="false"
             >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
             {% endif %}
-            {% if customer_summary and not order.is_walk_in %}
+            {% if order.is_manual %}
+            <span class="badge badge--manual" title="Entered directly in the dashboard; no Square order exists">Manual</span>
+            {% endif %}
+            {% if customer_summary and not order.is_walk_in and not order.is_manual %}
             <span
                 class="badge badge--customer badge--customer-{{ customer_summary.tag_kind }}"
                 title="Customer history includes {{ customer_summary.order_count }} linked order{% if customer_summary.order_count != 1 %}s{% endif %}"
@@ -69,7 +72,7 @@
             {% if pickup_override %}
             <span
                 class="badge badge--pickup-adjusted"
-                title="Original Square pickup time: {{ original_pickup_at.strftime('%-I:%M %p') }}"
+                title="Original pickup time: {{ original_pickup_at.strftime('%-I:%M %p') }}"
             >Moved from {{ original_pickup_at.strftime('%-I:%M %p') }}</span>
             {% endif %}
             {% for salad_name, salad_count in order.salad_summary %}
@@ -134,7 +137,7 @@
         {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
         <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}">
             <div class="item-main">
-                <div class="item-label">
+                <div class="item-label" aria-label="{{ item.quantity }}× {{ item.display_name }}">
                     <span class="item-quantity">{{ item.quantity }}×</span>
                     <span class="item-name">{{ item.display_name }}</span>
                 </div>

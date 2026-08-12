@@ -4,6 +4,7 @@
 <div class="order-details-content">
   <nav class="order-details-tabs" aria-label="Order details sections">
     <button class="order-details-tab is-active" type="button" data-order-details-tab="order" aria-selected="true">Order</button>
+    {% if not is_manual %}
     <button
       class="order-details-tab"
       type="button"
@@ -11,12 +12,13 @@
       data-customer-history-url="{{ url_for('dashboard.customer_history_details', date=selected_date.isoformat(), order_id=order.order_id) }}"
       aria-selected="false"
     >Customer history</button>
+    {% endif %}
   </nav>
 
   <section class="order-detail-panel" data-order-details-panel="order">
     <header class="order-details-header">
       <div>
-        <p class="eyebrow">Order details</p>
+        <p class="eyebrow">{% if is_manual %}Manual dashboard order{% else %}Order details{% endif %}</p>
         <h2>{{ modal_customer_name }}</h2>
         <p class="order-details-pickup">
           {% if is_walk_in %}
@@ -30,7 +32,7 @@
         </p>
       </div>
     </header>
-    <section class="detail-summary-grid" aria-label="Square identifiers">
+    <section class="detail-summary-grid" aria-label="Order identifiers">
       <div>
         <span>Order ID</span>
         <strong>{{ debug_order_id or "Not available" }}</strong>
@@ -56,8 +58,12 @@
         <div>
           <h3>Adjust pickup time</h3>
           <p>
+            {% if is_manual %}
+            This moves the dashboard-only order to another configured service slot.
+            {% else %}
             This moves the order on the production dashboard only. Square keeps the original
             {{ original_pickup_at.strftime('%-I:%M %p') }} pickup time.
+            {% endif %}
           </p>
         </div>
       </div>
@@ -72,7 +78,7 @@
           <span>Dashboard pickup time</span>
           <select name="pickup_at">
             <option value="original"{% if not scheduled_pickup_override %} selected{% endif %}>
-              Original Square time — {{ original_pickup_at.strftime('%-I:%M %p') }}
+              {% if is_manual %}Original manual time{% else %}Original Square time{% endif %} — {{ original_pickup_at.strftime('%-I:%M %p') }}
             </option>
             {% if scheduled_pickup_override and scheduled_pickup_override not in pickup_slots %}
             <option value="{{ scheduled_pickup_override.isoformat() }}" selected>
@@ -200,10 +206,12 @@
     </section>
   </section>
 
+  {% if not is_manual %}
   <section class="order-detail-panel" data-order-details-panel="history" hidden>
     <div class="customer-history-loading" data-customer-history-body>
       <p>Select Customer history to load this customer’s previous orders.</p>
     </div>
   </section>
+  {% endif %}
 </div>
 {% endif %}

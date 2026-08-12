@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.13">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.15">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -10,6 +10,7 @@
             width="1200"
             height="225"
         >
+        <button class="manual-order-button" type="button" data-manual-order-open>Add order</button>
         <button class="service-setup-button" type="button" data-service-setup-open>Service setup</button>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
@@ -60,6 +61,21 @@
     </div>
 </dialog>
 
+<dialog id="manual-order-dialog" class="manual-order-dialog" aria-labelledby="manual-order-dialog-title">
+    <div class="manual-order-dialog-shell">
+        <div class="manual-order-dialog-toolbar">
+            <div>
+                <strong id="manual-order-dialog-title">Add manual order</strong>
+                <span>Name, pickup date/time, and free-form items</span>
+            </div>
+            <button type="button" class="manual-order-close" data-manual-order-close aria-label="Close manual order form">Close</button>
+        </div>
+        <div class="manual-order-dialog-body">
+            {% include "_manual_order.html" %}
+        </div>
+    </div>
+</dialog>
+
 <div
     id="production-board"
     data-incremental-sync-available="{{ 'true' if incremental_sync_available else 'false' }}"
@@ -102,5 +118,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.14') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.15') }}" defer></script>
 {% endblock %}

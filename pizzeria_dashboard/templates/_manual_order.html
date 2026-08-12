@@ -1,0 +1,86 @@
+<form class="manual-order-form" method="post" action="{{ url_for('dashboard.create_manual_order') }}">
+    <div class="manual-order-callout">
+        <strong>Dashboard only</strong>
+        <span>This creates a production order here. Nothing is created or changed in Square.</span>
+    </div>
+
+    <div class="manual-order-basics">
+        <label>
+            <span>Customer name</span>
+            <input type="text" name="customer_name" maxlength="120" autocomplete="name" required placeholder="Name">
+        </label>
+        <label>
+            <span>Pickup date</span>
+            <input type="date" name="pickup_date" value="{{ manual_order_default_date.isoformat() }}" min="{{ today.isoformat() }}" required>
+        </label>
+        <label>
+            <span>Pickup time</span>
+            <input type="time" name="pickup_time" step="900" required>
+        </label>
+    </div>
+
+    <section class="manual-order-items" aria-labelledby="manual-order-items-heading">
+        <div class="manual-order-items-heading">
+            <div>
+                <strong id="manual-order-items-heading">Items</strong>
+                <span>Type the item exactly how you want it to appear on the production card.</span>
+            </div>
+            <button type="button" class="manual-order-add-item" data-manual-order-add-item>+ Add item</button>
+        </div>
+        <div class="manual-order-item-list" data-manual-order-item-list>
+            <div class="manual-order-item-row" data-manual-order-item-row>
+                <label class="manual-order-quantity">
+                    <span>Qty</span>
+                    <input type="number" name="item_quantity" min="1" max="50" value="1" inputmode="numeric" required>
+                </label>
+                <label class="manual-order-item-name">
+                    <span>Item</span>
+                    <input type="text" name="item_name" maxlength="160" required placeholder="Plain Pie">
+                </label>
+                <label class="manual-order-item-type">
+                    <span>Type</span>
+                    <select name="item_category" required>
+                        <option value="pizza">Pizza</option>
+                        <option value="salad">Salad</option>
+                        <option value="side">Side</option>
+                        <option value="dessert">Dessert</option>
+                        <option value="merch">Merch</option>
+                        <option value="drink">Drink</option>
+                        <option value="other">Other</option>
+                    </select>
+                </label>
+                <button type="button" class="manual-order-remove-item" data-manual-order-remove-item aria-label="Remove this item">Remove</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="manual-order-actions">
+        <button type="submit" class="manual-order-submit">Add order to dashboard</button>
+    </div>
+</form>
+
+<template id="manual-order-item-template">
+    <div class="manual-order-item-row" data-manual-order-item-row>
+        <label class="manual-order-quantity">
+            <span>Qty</span>
+            <input type="number" name="item_quantity" min="1" max="50" value="1" inputmode="numeric" required>
+        </label>
+        <label class="manual-order-item-name">
+            <span>Item</span>
+            <input type="text" name="item_name" maxlength="160" required placeholder="Item name">
+        </label>
+        <label class="manual-order-item-type">
+            <span>Type</span>
+            <select name="item_category" required>
+                <option value="pizza">Pizza</option>
+                <option value="salad">Salad</option>
+                <option value="side">Side</option>
+                <option value="dessert">Dessert</option>
+                <option value="merch">Merch</option>
+                <option value="drink">Drink</option>
+                <option value="other">Other</option>
+            </select>
+        </label>
+        <button type="button" class="manual-order-remove-item" data-manual-order-remove-item aria-label="Remove this item">Remove</button>
+    </div>
+</template>

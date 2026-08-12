@@ -1612,3 +1612,84 @@
         }
     });
 })();
+
+(() => {
+    const dialog = document.querySelector("#manual-order-dialog");
+    const openButton = document.querySelector("[data-manual-order-open]");
+    const closeButton = dialog?.querySelector("[data-manual-order-close]");
+    const itemList = dialog?.querySelector("[data-manual-order-item-list]");
+    const addItemButton = dialog?.querySelector("[data-manual-order-add-item]");
+    const itemTemplate = document.querySelector("#manual-order-item-template");
+    if (!dialog || !openButton || !itemList || !itemTemplate) {
+        return;
+    }
+
+    const focusFirstField = () => {
+        dialog.querySelector('input[name="customer_name"]')?.focus();
+    };
+
+    const openDialog = () => {
+        if (typeof dialog.showModal === "function") {
+            dialog.showModal();
+        } else {
+            dialog.setAttribute("open", "");
+        }
+        focusFirstField();
+    };
+
+    const closeDialog = () => {
+        if (typeof dialog.close === "function") {
+            dialog.close();
+        } else {
+            dialog.removeAttribute("open");
+        }
+        openButton.focus();
+    };
+
+    const rows = () => Array.from(itemList.querySelectorAll("[data-manual-order-item-row]"));
+
+    const addItem = () => {
+        const fragment = itemTemplate.content.cloneNode(true);
+        itemList.appendChild(fragment);
+        const newest = rows().at(-1);
+        newest?.querySelector('input[name="item_name"]')?.focus();
+    };
+
+    const removeItem = (button) => {
+        const row = button.closest("[data-manual-order-item-row]");
+        if (!row) {
+            return;
+        }
+        if (rows().length <= 1) {
+            const quantity = row.querySelector('input[name="item_quantity"]');
+            const name = row.querySelector('input[name="item_name"]');
+            const category = row.querySelector('select[name="item_category"]');
+            if (quantity) quantity.value = "1";
+            if (name) name.value = "";
+            if (category) category.value = "pizza";
+            name?.focus();
+            return;
+        }
+        row.remove();
+    };
+
+    openButton.addEventListener("click", openDialog);
+    closeButton?.addEventListener("click", closeDialog);
+    addItemButton?.addEventListener("click", addItem);
+    itemList.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-manual-order-remove-item]");
+        if (button) {
+            removeItem(button);
+        }
+    });
+    dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeDialog();
+    });
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+            closeDialog();
+        }
+    });
+})();

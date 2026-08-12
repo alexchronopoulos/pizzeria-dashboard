@@ -1824,3 +1824,121 @@ def test_non_pizza_online_order_renders_main_items_and_drink_tag(tmp_path: Path)
     slot_html = response.data[slot_start:slot_end]
     assert b'data-slot-empty="false"' in slot_html
     assert b'data-order-pizza-units="0"' in slot_html
+
+
+def test_manual_order_can_be_added_without_square_and_appears_on_board(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            8,
+            12,
+            19,
+            0,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    app = _test_app(tmp_path)
+    client = app.test_client()
+
+    response = client.post(
+        "/manual-order",
+        data={
+            "customer_name": "Phone Alex",
+            "pickup_date": "2026-08-14",
+            "pickup_time": "18:15",
+            "item_quantity": ["1", "1", "2"],
+            "item_name": ["Plain Pie", "Pizzeria Mari Tee", "Mexican Coke"],
+            "item_category": ["pizza", "merch", "drink"],
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("/?date=2026-08-14")
+
+    database_path = Path(app.config["DATABASE_PATH"])
+    cached = load_orders_for_date(database_path, date(2026, 8, 14))
+    assert len(cached) == 1
+    manual = cached[0]
+    assert manual.is_manual is True
+    assert manual.square_order_id is None
+    assert manual.customer_name == "Phone Alex"
+    assert manual.pickup_at == datetime(2026, 8, 14, 18, 15)
+    assert [(item.name, item.quantity, item.category) for item in manual.items] == [
+        ("Plain Pie", 1, "pizza"),
+        ("Pizzeria Mari Tee", 1, "merch"),
+        ("Mexican Coke", 2, "drink"),
+    ]
+
+    board = client.get("/?date=2026-08-14")
+    html = board.get_data(as_text=True)
+    assert board.status_code == 200
+    assert "Phone Alex" in html
+    assert ">Manual<" in html
+    assert "1× Plain Pie" in html
+    assert "1× Pizzeria Mari Tee" in html
+    assert "2× Mexican Coke" in html
+    assert "UNPAID — DO NOT PREP" not in html
+    assert "data-bake-timer" in html
+
+
+def test_manual_order_form_is_available_from_dashboard(tmp_path: Path) -> None:
+    response = _test_app(tmp_path).test_client().get("/?date=2026-08-14")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Add order" in html
+    assert 'id="manual-order-dialog"' in html
+    assert 'action="/manual-order"' in html
+    assert "Dashboard only" in html
+    assert 'name="customer_name"' in html
+    assert 'name="pickup_date"' in html
+    assert 'name="pickup_time"' in html
+    assert 'name="item_name"' in html
+    assert 'name="item_quantity"' in html
+    assert 'name="item_category"' in html
+
+
+def test_manual_order_requires_at_least_one_item(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026,
+            8,
+            12,
+            19,
+            0,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    app = _test_app(tmp_path)
+    response = app.test_client().post(
+        "/manual-order",
+        data={
+            "customer_name": "Phone Alex",
+            "pickup_date": "2026-08-14",
+            "pickup_time": "18:15",
+            "item_quantity": ["1"],
+            "item_name": [""],
+            "item_category": ["pizza"],
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert load_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), date(2026, 8, 14)
+    ) == ()
