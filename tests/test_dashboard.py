@@ -19,7 +19,7 @@ from pizzeria_dashboard.database import (
     load_service_state_payload,
     replace_orders_for_date,
 )
-from pizzeria_dashboard.sample_data import build_sample_service
+from pizzeria_dashboard.sample_data import build_sample_orders, build_sample_service
 from pizzeria_dashboard.service_config import load_configuration
 from pizzeria_dashboard.service_state import build_inventory_summary, default_state
 
@@ -1942,3 +1942,70 @@ def test_manual_order_requires_at_least_one_item(
     assert load_orders_for_date(
         Path(app.config["DATABASE_PATH"]), date(2026, 8, 14)
     ) == ()
+
+
+def test_remove_from_dashboard_hides_source_order_without_square_mutation(tmp_path: Path, monkeypatch) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = date(2026, 7, 31)
+    assert client.get(f"/?date={selected.isoformat()}").status_code == 200
+    database_path = Path(app.config["DATABASE_PATH"])
+    target = load_orders_for_date(database_path, selected)[0]
+
+    class ExplodingSquareClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("Removing from dashboard must not instantiate SquareClient")
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", ExplodingSquareClient)
+    response = client.post(
+        "/order-remove-local",
+        json={"service_date": selected.isoformat(), "order_id": target.order_id},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["square_unchanged"] is True
+    assert target.order_id not in {order.order_id for order in load_orders_for_date(database_path, selected)}
+
+    # Re-seeding/replacing source data does not resurrect the locally hidden order.
+    replace_orders_for_date(database_path, selected, build_sample_orders(selected), source="sample")
+    assert target.order_id not in {order.order_id for order in load_orders_for_date(database_path, selected)}
+
+
+def test_manual_order_can_be_deleted_from_dashboard_only(tmp_path: Path, monkeypatch) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(2026, 8, 12, 19, 0, tzinfo=ZoneInfo("America/New_York")),
+    )
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    client.post(
+        "/manual-order",
+        data={
+            "customer_name": "Delete Me",
+            "pickup_date": "2026-08-14",
+            "pickup_time": "18:15",
+            "item_quantity": ["1"],
+            "item_name": ["Plain Pie"],
+            "item_category": ["pizza"],
+        },
+    )
+    selected = date(2026, 8, 14)
+    database_path = Path(app.config["DATABASE_PATH"])
+    manual = next(order for order in load_orders_for_date(database_path, selected) if order.is_manual)
+
+    details = client.get(f"/order-details?date={selected.isoformat()}&order_id={manual.order_id}")
+    assert details.status_code == 200
+    assert b"Remove from dashboard" in details.data
+    assert b"No Square order is involved" in details.data
+
+    response = client.post(
+        "/order-remove-local",
+        json={"service_date": selected.isoformat(), "order_id": manual.order_id},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["removal_type"] == "manual"
+    assert load_orders_for_date(database_path, selected) == ()

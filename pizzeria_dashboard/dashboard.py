@@ -38,6 +38,7 @@ from .database import (
     load_sync_info,
     merge_orders_for_date,
     prune_pie_production_states,
+    remove_order_from_dashboard,
     save_app_metadata,
     save_manual_order,
     save_order_internal_note,
@@ -469,17 +470,21 @@ def order_details():
         return render_template("_order_details.html", order=None, error="No cached order ID was supplied."), 400
 
     # Direct modal requests can arrive before the main board has been opened.
-    # In sample mode, initialize that date's disposable cache just as index()
-    # does. Square-backed dates are never fetched here; they continue to use
-    # whatever has already been cached by an explicit sync.
+    # First check the existing local/cache data so opening an already-present
+    # manual order never seeds unrelated sample orders for that date. Only if
+    # the requested order is absent do we initialize disposable sample data,
+    # matching index() behavior. Square-backed dates are never fetched here;
+    # they continue to use whatever has already been cached by an explicit sync.
     try:
         source = _order_source()
     except SquareError:
         source = "configuration-error"
-    _ensure_cached_orders(selected_date, source)
 
     database_path = _database_path()
     order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        _ensure_cached_orders(selected_date, source)
+        order = load_order_for_date(database_path, selected_date, order_id)
     if order is None:
         return render_template("_order_details.html", order=None, error="This order is no longer present in the selected date cache."), 404
 
@@ -1058,6 +1063,39 @@ def remove_unpaid_square_order():
         ok=True,
         order_state=str(updated_raw.get("state", "")).upper() or "CANCELED",
         removed_count=merge_result.removed_count,
+        board_content_revision=load_board_content_revision(
+            database_path, selected_date
+        ),
+    )
+
+
+@blueprint.post("/order-remove-local")
+def remove_local_dashboard_order():
+    """Remove an order from this dashboard only; never mutate Square."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The order is no longer present on this dashboard."), 404
+
+    removal_type = remove_order_from_dashboard(
+        database_path, selected_date, order_id
+    )
+    if removal_type is None:
+        return jsonify(ok=False, error="The order is no longer present on this dashboard."), 404
+
+    return jsonify(
+        ok=True,
+        removal_type=removal_type,
+        square_unchanged=True,
         board_content_revision=load_board_content_revision(
             database_path, selected_date
         ),

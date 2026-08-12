@@ -125,6 +125,34 @@
       </p>
     </section>
     {% endif %}
+    <section class="order-details-section dashboard-order-removal">
+      <div>
+        <h3>Remove from dashboard</h3>
+        <p>
+          {% if is_manual %}
+          This permanently deletes this dashboard-only manual order. No Square order is involved.
+          {% else %}
+          This hides the order from the production dashboard only. Square is not changed, and future Square refreshes will keep this order hidden here.
+          {% endif %}
+        </p>
+      </div>
+      <div class="dashboard-order-removal-actions">
+        <button
+          type="button"
+          class="dashboard-order-removal-button"
+          data-remove-dashboard-order
+          data-remove-dashboard-url="{{ url_for('dashboard.remove_local_dashboard_order') }}"
+          data-service-date="{{ selected_date.isoformat() }}"
+          data-order-id="{{ order.order_id }}"
+          data-order-label="{{ modal_customer_name }}"
+          data-order-manual="{{ 'true' if is_manual else 'false' }}"
+        >Remove from dashboard</button>
+        <span data-remove-dashboard-status aria-live="polite"></span>
+      </div>
+      <p class="dashboard-order-removal-warning">
+        {% if is_manual %}This cannot be undone from the dashboard.{% else %}The Square order remains exactly as it is.{% endif %}
+      </p>
+    </section>
     <section class="order-details-section internal-note-editor">
       <div class="internal-note-editor-heading">
         <div>

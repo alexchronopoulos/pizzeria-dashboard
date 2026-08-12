@@ -414,6 +414,70 @@
         }
     });
 
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-remove-dashboard-order]");
+        if (!button || !body.contains(button)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+
+        const url = button.dataset.removeDashboardUrl;
+        const serviceDate = button.dataset.serviceDate;
+        const orderId = button.dataset.orderId;
+        const label = button.dataset.orderLabel || "this order";
+        const isManual = button.dataset.orderManual === "true";
+        const status = button.parentElement?.querySelector("[data-remove-dashboard-status]");
+        if (!url || !serviceDate || !orderId) {
+            return;
+        }
+        const warning = isManual
+            ? `Delete ${label}'s manual order from the dashboard? This cannot be undone.`
+            : `Remove ${label}'s order from the dashboard? Square will not be changed, and the order will stay hidden after future Square refreshes.`;
+        if (!window.confirm(warning)) {
+            return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = "Removing…";
+        if (status) {
+            status.textContent = "Removing locally…";
+        }
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: serviceDate,
+                    order_id: orderId,
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The order could not be removed from the dashboard.");
+            }
+            if (status) {
+                status.textContent = result.removal_type === "manual"
+                    ? "Manual order deleted"
+                    : "Hidden from dashboard; Square unchanged";
+            }
+            button.textContent = "Removed";
+            window.PizzeriaDashboardViewport?.remember();
+            window.location.reload();
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = originalText;
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
     document.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const clearButton = target?.closest("[data-order-note-clear]");

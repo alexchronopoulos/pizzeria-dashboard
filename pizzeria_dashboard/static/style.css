@@ -3878,3 +3878,46 @@ html {
         width: 100%;
     }
 }
+
+/* Dashboard-only order removal: destructive locally, never mutates Square. */
+.dashboard-order-removal {
+    border-color: var(--brand-red);
+    background: #fff4ef;
+}
+
+.dashboard-order-removal h3 {
+    color: var(--brand-red);
+}
+
+.dashboard-order-removal p {
+    margin-bottom: 10px;
+}
+
+.dashboard-order-removal-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.dashboard-order-removal-button {
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: var(--brand-red);
+    color: white;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.dashboard-order-removal-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.dashboard-order-removal-warning {
+    margin-top: 10px;
+    margin-bottom: 0 !important;
+    font-size: 0.8rem;
+    font-weight: 800;
+}

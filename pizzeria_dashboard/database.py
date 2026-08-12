@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -99,6 +99,16 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_manual_orders_service_pickup
                 ON manual_orders (service_date, pickup_at);
+
+            CREATE TABLE IF NOT EXISTS dashboard_hidden_orders (
+                service_date TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                hidden_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, order_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_dashboard_hidden_orders_service_date
+                ON dashboard_hidden_orders (service_date);
 
             CREATE TABLE IF NOT EXISTS service_states (
                 service_date TEXT PRIMARY KEY,
@@ -549,9 +559,15 @@ def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:
     with _connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT pickup_at, order_id, source_payload_json
-            FROM orders
-            WHERE service_date = ?
+            SELECT o.pickup_at, o.order_id, o.source_payload_json
+            FROM orders AS o
+            WHERE o.service_date = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM dashboard_hidden_orders AS hidden
+                  WHERE hidden.service_date = o.service_date
+                    AND hidden.order_id = o.order_id
+              )
             UNION ALL
             SELECT pickup_at, order_id, source_payload_json
             FROM manual_orders
@@ -579,9 +595,15 @@ def load_order_for_date(
     with _connect(path) as connection:
         row = connection.execute(
             """
-            SELECT source_payload_json
-            FROM orders
-            WHERE service_date = ? AND order_id = ?
+            SELECT o.source_payload_json
+            FROM orders AS o
+            WHERE o.service_date = ? AND o.order_id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM dashboard_hidden_orders AS hidden
+                  WHERE hidden.service_date = o.service_date
+                    AND hidden.order_id = o.order_id
+              )
             UNION ALL
             SELECT source_payload_json
             FROM manual_orders
@@ -605,6 +627,97 @@ def load_order_for_date(
     if not isinstance(payload, Mapping):
         return None
     return order_from_payload(payload)
+
+
+def remove_order_from_dashboard(
+    path: Path, service_date: date, order_id: str
+) -> str | None:
+    """Remove one order from the local production board without touching Square.
+
+    Manual orders are deleted from their dashboard-only table. Source-backed orders
+    receive a local tombstone so future full/incremental source refreshes cannot make
+    them reappear. Returns ``"manual"``, ``"hidden"``, or ``None`` when no
+    matching visible order exists.
+    """
+    date_key = service_date.isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        manual_row = connection.execute(
+            """
+            SELECT source_payload_json
+            FROM manual_orders
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (date_key, order_id),
+        ).fetchone()
+        source_row = None
+        if manual_row is None:
+            source_row = connection.execute(
+                """
+                SELECT source_payload_json
+                FROM orders
+                WHERE service_date = ? AND order_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM dashboard_hidden_orders
+                      WHERE service_date = ? AND order_id = ?
+                  )
+                """,
+                (date_key, order_id, date_key, order_id),
+            ).fetchone()
+
+        row = manual_row or source_row
+        if row is None:
+            return None
+
+        production_order_key = order_id
+        try:
+            payload = json.loads(row["source_payload_json"])
+            if isinstance(payload, Mapping):
+                stored_order = order_from_payload(payload)
+                production_order_key = stored_order.square_order_id or stored_order.order_id
+        except (TypeError, json.JSONDecodeError, ValueError):
+            pass
+
+        if manual_row is not None:
+            connection.execute(
+                "DELETE FROM manual_orders WHERE service_date = ? AND order_id = ?",
+                (date_key, order_id),
+            )
+            result = "manual"
+        else:
+            connection.execute(
+                """
+                INSERT INTO dashboard_hidden_orders (service_date, order_id, hidden_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(service_date, order_id) DO UPDATE SET
+                    hidden_at = excluded.hidden_at
+                """,
+                (date_key, order_id, _utc_now().isoformat()),
+            )
+            result = "hidden"
+
+        for table in (
+            "order_slot_assignments",
+            "order_internal_notes",
+            "order_ready_states",
+        ):
+            connection.execute(
+                f"DELETE FROM {table} WHERE service_date = ? AND order_id = ?",
+                (date_key, order_id),
+            )
+
+        pie_prefix = f"{date_key}|{production_order_key}|"
+        connection.execute(
+            """
+            DELETE FROM pie_production_states
+            WHERE service_date = ?
+              AND substr(pie_key, 1, ?) = ?
+            """,
+            (date_key, len(pie_prefix), pie_prefix),
+        )
+        _touch_board_content_revision(connection, date_key)
+        return result
 
 
 def load_order_internal_notes_for_date(

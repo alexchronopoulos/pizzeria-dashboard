@@ -21,6 +21,7 @@ from pizzeria_dashboard.database import (
     merge_orders_for_date,
     migrate_legacy_service_state,
     prune_pie_production_states,
+    remove_order_from_dashboard,
     replace_orders_for_date,
     save_manual_order,
     save_order_internal_note,
@@ -48,6 +49,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
     assert {
         "orders",
         "manual_orders",
+        "dashboard_hidden_orders",
         "service_states",
         "sync_runs",
         "app_metadata",
@@ -525,3 +527,38 @@ def test_stale_pie_states_are_pruned_to_current_board_keys(tmp_path: Path) -> No
 
     assert prune_pie_production_states(database_path, service_date, (current_key,)) == 1
     assert set(load_pie_production_states(database_path, service_date)) == {current_key}
+
+
+def test_square_cached_order_can_be_hidden_locally_and_stays_hidden_after_refresh(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 7, 31)
+    initialize_database(database_path)
+    orders = build_sample_orders(service_date)
+    target = orders[0]
+    replace_orders_for_date(database_path, service_date, orders, source="sample")
+
+    assert remove_order_from_dashboard(database_path, service_date, target.order_id) == "hidden"
+    assert target.order_id not in {order.order_id for order in load_orders_for_date(database_path, service_date)}
+    assert load_order_for_date(database_path, service_date, target.order_id) is None
+
+    # A later source refresh may return the order again, but its local tombstone wins.
+    replace_orders_for_date(database_path, service_date, orders, source="sample")
+    assert target.order_id not in {order.order_id for order in load_orders_for_date(database_path, service_date)}
+
+
+def test_manual_order_is_deleted_locally_when_removed_from_dashboard(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 14)
+    initialize_database(database_path)
+    manual = Order(
+        order_id="manual-delete-me",
+        customer_name="Phone Order",
+        pickup_at=datetime(2026, 8, 14, 18, 15),
+        items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+        creation_product="MANUAL_DASHBOARD",
+    )
+    save_manual_order(database_path, service_date, manual)
+
+    assert remove_order_from_dashboard(database_path, service_date, manual.order_id) == "manual"
+    assert load_order_for_date(database_path, service_date, manual.order_id) is None
+    assert load_orders_for_date(database_path, service_date) == ()
