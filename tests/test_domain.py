@@ -402,3 +402,83 @@ def test_modifier_summary_counts_pizza_addons_and_excludes_removals() -> None:
 
     assert board.modifier_counts == {"Pesto": 2}
     assert board.modifier_summary == (("Pesto", 2),)
+
+
+def test_main_order_salads_and_sides_count_toward_inventory_demand() -> None:
+    order = Order(
+        "non-pizza-order",
+        "Alex",
+        datetime(2026, 8, 12, 16, 0),
+        (
+            Item("Cucumber Salad", 2, "salad"),
+            Item("Side Hot Honey", 3, "side"),
+            Item("TCHO Miso Chocolate Chip Cookie", 2, "cookie"),
+            Item("Mari T-Shirt", 1, "merch"),
+            Item("Mexican Coke", 2, "drink"),
+        ),
+    )
+
+    assert order.pizza_units == 0
+    assert order.salad_counts == {"Cucumber Salad": 2}
+    assert order.side_counts == {"Side Hot Honey": 3}
+    assert order.cookie_count == 2
+    assert order.drink_summary == (("Mexican Coke", 2),)
+    assert [item.category for item in order.production_items] == [
+        "salad",
+        "side",
+        "cookie",
+        "merch",
+    ]
+
+
+def test_scheduled_non_pizza_order_stays_on_board_and_slot_is_not_empty() -> None:
+    service_date = date(2026, 8, 12)
+    slot = datetime(2026, 8, 12, 16, 0)
+    order = Order(
+        "salad-merch-only",
+        "Alex",
+        slot,
+        (
+            Item("Cucumber Salad", 1, "salad"),
+            Item("Mari T-Shirt", 1, "merch"),
+            Item("Saratoga Water", 1, "drink"),
+        ),
+    )
+
+    board = build_service_board(service_date, (order,), pickup_times=(slot,))
+
+    assert board.windows[0].orders == (order,)
+    assert board.windows[0].pizza_units == 0
+    assert board.windows[0].is_empty is False
+    assert board.total_pizzas == 0
+
+
+def test_non_pizza_production_walk_ins_are_visible_but_cookie_only_stays_hidden() -> None:
+    service_date = date(2026, 8, 12)
+    event_at = datetime(2026, 8, 12, 13, 15)
+    salad = Order(
+        "salad-walk-in",
+        "Salad ticket",
+        event_at,
+        (Item("Cucumber Salad", 1, "salad"),),
+        is_walk_in=True,
+    )
+    merch = Order(
+        "merch-walk-in",
+        "Merch ticket",
+        event_at,
+        (Item("Mari T-Shirt", 1, "merch"),),
+        is_walk_in=True,
+    )
+    cookie = Order(
+        "cookie-walk-in",
+        "Cookie ticket",
+        event_at,
+        (Item("TCHO Miso Chocolate Chip Cookie", 1, "cookie"),),
+        is_walk_in=True,
+    )
+
+    board = build_service_board(service_date, (salad, merch, cookie))
+
+    assert board.unscheduled_orders == (merch, salad)
+    assert cookie not in board.unscheduled_orders

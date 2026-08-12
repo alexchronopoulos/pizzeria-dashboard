@@ -1562,3 +1562,60 @@ def test_square_client_can_list_payments_by_updated_time_for_customer_history() 
     assert "updated_at_begin_time=2026-08-02T12%3A00%3A00Z" in calls[0][1]
     assert "updated_at_end_time=2026-08-02T13%3A00%3A00Z" in calls[0][1]
     assert "sort_field=UPDATED_AT" in calls[0][1]
+
+
+def test_main_order_non_pizza_categories_are_classified_for_new_portal() -> None:
+    rules = ClassificationRules()
+
+    assert rules.classify_item("Cucumber Salad", ("Salads",)) == "salad"
+    assert rules.classify_item("Side Ranch", ("Sides",)) == "side"
+    assert rules.classify_item("Olive Oil Cake", ("Desserts",)) == "dessert"
+    assert rules.classify_item("Mari T-Shirt", ("Merch",)) == "merch"
+    assert rules.classify_item("TCHO Miso Chocolate Chip Cookie", ("Desserts",)) == "cookie"
+    assert rules.classify_item("Mexican Coke", ("Drinks",)) == "drink"
+
+
+def test_square_order_with_only_salad_merch_and_drink_keeps_production_items() -> None:
+    raw_order = {
+        "id": "non-pizza-online",
+        "location_id": "LOCATION-1",
+        "state": "OPEN",
+        "version": 1,
+        "line_items": [
+            {"uid": "salad", "catalog_object_id": "variation-salad", "name": "Cucumber Salad", "quantity": "2"},
+            {"uid": "merch", "catalog_object_id": "variation-shirt", "name": "Mari T-Shirt", "quantity": "1"},
+            {"uid": "drink", "catalog_object_id": "variation-coke", "name": "Mexican Coke", "quantity": "2"},
+        ],
+        "fulfillments": [
+            {
+                "uid": "pickup",
+                "type": "PICKUP",
+                "state": "RESERVED",
+                "pickup_details": {
+                    "pickup_at": "2026-07-31T20:00:00Z",
+                    "recipient": {"display_name": "Alex R."},
+                },
+            }
+        ],
+    }
+    catalog_index = {
+        "variation-salad": CatalogItemInfo("variation-salad", "Cucumber Salad", None, ("Salads",)),
+        "variation-shirt": CatalogItemInfo("variation-shirt", "Mari T-Shirt", None, ("Merch",)),
+        "variation-coke": CatalogItemInfo("variation-coke", "Mexican Coke", None, ("Drinks",)),
+    }
+
+    orders = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=catalog_index,
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+
+    assert len(orders) == 1
+    order = orders[0]
+    assert [item.category for item in order.items] == ["salad", "merch", "drink"]
+    assert [item.category for item in order.production_items] == ["salad", "merch"]
+    assert order.salad_counts == {"Cucumber Salad": 2}
+    assert order.drink_summary == (("Mexican Coke", 2),)

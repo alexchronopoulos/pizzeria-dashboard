@@ -188,8 +188,20 @@ class Item:
         return self.quantity if self.category == "pizza" else 0
 
     @property
+    def is_salad(self) -> bool:
+        return self.category == "salad"
+
+    @property
+    def is_side(self) -> bool:
+        return self.category == "side"
+
+    @property
     def is_cookie(self) -> bool:
         return self.category == "cookie" or "cookie" in self.name.casefold()
+
+    @property
+    def is_drink(self) -> bool:
+        return self.category == "drink"
 
     @property
     def cookie_units(self) -> int:
@@ -198,6 +210,8 @@ class Item:
     @property
     def salad_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
+        if self.is_salad:
+            counts[self.name] += self.quantity
         for modifier in self.modifiers:
             if modifier.is_salad:
                 counts[modifier.name] += modifier.quantity
@@ -206,6 +220,8 @@ class Item:
     @property
     def side_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
+        if self.is_side:
+            counts[self.name] += self.quantity
         for modifier in self.modifiers:
             if modifier.is_side:
                 counts[modifier.name] += modifier.quantity
@@ -274,10 +290,10 @@ class Order:
     def production_items(self) -> tuple[Item, ...]:
         """Items that require attention on the production dashboard.
 
-        Drinks and individual slices stay in the cached Square order and order
-        inspector, but do not belong on the whole-pie production board. A mixed
-        walk-in therefore remains visible when it includes a pie, while its slice
-        line items are omitted.
+        Drinks and individual slices stay in the cached Square order, but are
+        omitted from the main item list. Drinks are summarized as compact order
+        badges instead. Salads, sides, desserts, cookies, merch, and other
+        kitchen-relevant main items remain visible even when an order has no pie.
         """
         return tuple(
             item for item in self.items if item.category not in {"drink", "slice"}
@@ -363,6 +379,44 @@ class Order:
         for name, quantity in self.side_counts.items():
             counts[production_display_name(name)] += quantity
         return tuple(sorted(counts.items(), key=lambda entry: entry[0].casefold()))
+
+    @property
+    def drink_counts(self) -> Counter[str]:
+        counts: Counter[str] = Counter()
+        for item in self.items:
+            if item.is_drink:
+                counts[item.display_name] += item.quantity
+        return counts
+
+    @property
+    def drink_count(self) -> int:
+        return sum(self.drink_counts.values())
+
+    @property
+    def has_drink(self) -> bool:
+        return self.drink_count > 0
+
+    @property
+    def drink_summary(self) -> tuple[tuple[str, int], ...]:
+        return tuple(
+            sorted(self.drink_counts.items(), key=lambda entry: entry[0].casefold())
+        )
+
+    @property
+    def walk_in_requires_production_card(self) -> bool:
+        """Whether a walk-in contains work that should appear on the board.
+
+        Counter-only cookie/drink/slice purchases remain suppressed as before,
+        while salad, side, dessert, merch, and pizza walk-ins are production work
+        that staff need to see. Scheduled orders use ``production_items`` directly
+        and are not subject to this counter-only suppression.
+        """
+        if self.pizza_units > 0:
+            return True
+        return any(
+            item.category in {"salad", "side", "dessert", "merch"}
+            for item in self.production_items
+        )
 
     @property
     def display_reference(self) -> str | None:
@@ -577,10 +631,10 @@ def build_service_board(
     for pickup_at in configured_pickup_times:
         grouped[_service_wall_time(pickup_at)]
     for order in orders:
-        # The production dashboard is centered on whole-pie work. Counter-only
-        # walk-ins (cookies, drinks, slices, etc.) remain cached for reporting but
-        # should not create a kitchen order card when there is no pizza to make.
-        if order.is_walk_in and order.pizza_units <= 0:
+        # Counter-only cookie/drink/slice walk-ins remain cached for reporting,
+        # while non-pizza production items such as salads, sides, desserts, and
+        # merch now keep a walk-in visible on the board.
+        if order.is_walk_in and not order.walk_in_requires_production_card:
             continue
         if not order.production_items:
             continue

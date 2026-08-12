@@ -575,6 +575,11 @@ h2 {
     color: var(--brand-green);
 }
 
+.badge--drink {
+    background: var(--soft-blue);
+    color: var(--brand-blue);
+}
+
 .item-list {
     display: grid;
     gap: 9px;
@@ -3587,5 +3592,52 @@ html {
 @media (prefers-reduced-motion: reduce) {
     .pizza-countdown--celebrate {
         animation: none;
+    }
+}
+
+
+/* Service safety 0.5.15: make explicitly unpaid orders impossible to miss. */
+.order-row--unpaid {
+    border-left-color: var(--brand-red);
+    box-shadow: inset 0 0 0 5px var(--brand-red);
+}
+
+.order-row--unpaid .order-content {
+    background: #fff1eb;
+}
+
+.order-row--unpaid .order-oven-panel {
+    background: #f6d6c9;
+}
+
+.order-unpaid-warning {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 11px 0 5px;
+    padding: 10px 12px;
+    border: 3px solid var(--brand-red);
+    border-radius: 8px;
+    background: var(--brand-red);
+    color: white;
+}
+
+.order-unpaid-warning strong {
+    font-size: 1rem;
+    font-weight: 950;
+    letter-spacing: 0.055em;
+}
+
+.order-unpaid-warning span {
+    font-size: 0.82rem;
+    font-weight: 850;
+}
+
+@media (max-width: 720px) {
+    .order-unpaid-warning {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
     }
 }

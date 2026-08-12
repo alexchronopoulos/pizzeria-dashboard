@@ -97,8 +97,32 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         SQUARE_COOKIE_MODIFIER_KEYWORDS=os.getenv(
             "SQUARE_COOKIE_MODIFIER_KEYWORDS", "cookie"
         ),
+        SQUARE_SALAD_CATEGORY_NAMES=os.getenv(
+            "SQUARE_SALAD_CATEGORY_NAMES", "Salad,Salads"
+        ),
+        SQUARE_SALAD_ITEM_KEYWORDS=os.getenv(
+            "SQUARE_SALAD_ITEM_KEYWORDS", "salad"
+        ),
+        SQUARE_SIDE_CATEGORY_NAMES=os.getenv(
+            "SQUARE_SIDE_CATEGORY_NAMES", "Side,Sides"
+        ),
+        SQUARE_SIDE_ITEM_KEYWORDS=os.getenv(
+            "SQUARE_SIDE_ITEM_KEYWORDS", "side"
+        ),
+        SQUARE_DESSERT_CATEGORY_NAMES=os.getenv(
+            "SQUARE_DESSERT_CATEGORY_NAMES", "Dessert,Desserts"
+        ),
+        SQUARE_DESSERT_ITEM_KEYWORDS=os.getenv(
+            "SQUARE_DESSERT_ITEM_KEYWORDS", "dessert"
+        ),
+        SQUARE_MERCH_CATEGORY_NAMES=os.getenv(
+            "SQUARE_MERCH_CATEGORY_NAMES", "Merch,Merchandise"
+        ),
+        SQUARE_MERCH_ITEM_KEYWORDS=os.getenv(
+            "SQUARE_MERCH_ITEM_KEYWORDS", "merch,shirt,hat,tote"
+        ),
         SQUARE_COOKIE_CATEGORY_NAMES=os.getenv(
-            "SQUARE_COOKIE_CATEGORY_NAMES", "Cookie,Cookies,Dessert,Desserts"
+            "SQUARE_COOKIE_CATEGORY_NAMES", "Cookie,Cookies"
         ),
         SQUARE_COOKIE_ITEM_KEYWORDS=os.getenv(
             "SQUARE_COOKIE_ITEM_KEYWORDS", "cookie"

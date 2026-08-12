@@ -9,8 +9,9 @@
 {% set pickup_override = pickup_overrides.get(order.order_id) if pickup_overrides and order.order_id in pickup_overrides and not order.is_walk_in else none %}
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
+{% set is_unpaid = order.is_paid is sameas false %}
 <div
-    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
+    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
     data-order-id="{{ order.order_id }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
@@ -80,6 +81,9 @@
             {% if order.has_cookie %}
             <span class="badge badge--cookie">{{ order.cookie_count }}× Cookie</span>
             {% endif %}
+            {% for drink_name, drink_count in order.drink_summary %}
+            <span class="badge badge--drink">{{ drink_count }}× {{ drink_name }}</span>
+            {% endfor %}
             {% if order.released and selected_date >= today %}
             <span class="badge badge--released">Capacity released</span>
             {% elif release_candidate %}
@@ -106,6 +110,12 @@
         <strong>BOXED &amp; READY</strong>
         <time data-order-boxed-time datetime="{{ boxed_at.isoformat() if boxed_at else '' }}">{% if boxed_at %}{{ boxed_at.strftime('%-I:%M:%S %p') }}{% endif %}</time>
     </div>
+    {% if is_unpaid %}
+    <div class="order-unpaid-warning" role="alert" aria-label="Unpaid order. Do not prepare.">
+        <strong>UNPAID — DO NOT PREP</strong>
+        <span>Payment has not been processed.</span>
+    </div>
+    {% endif %}
     {% if internal_note %}
     <div class="order-note order-note--internal" aria-label="Staff note">
         <strong>Staff note</strong>
@@ -469,7 +479,7 @@
             class="pickup-window{% if window.is_empty %} pickup-window--empty{% endif %}{% if window.pizza_units > service.pizza_capacity_per_window %} pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %} pickup-window--full{% endif %}"
             data-walk-in-drop-zone
             data-pickup-at="{{ window.pickup_at.isoformat() }}"
-            data-slot-empty="{{ 'true' if window.pizza_units == 0 else 'false' }}"
+            data-slot-empty="{{ 'true' if window.is_empty else 'false' }}"
             data-slot-past="{{ 'true' if window.pickup_at < current_service_time else 'false' }}"
         >
             <div class="window-time">
@@ -518,7 +528,7 @@
         {% endfor %}
     </div>
     <p class="prep-view-empty" data-prep-view-empty hidden>
-        No service slots currently contain pizzas.
+        No service slots currently contain production orders.
     </p>
     {% elif service.unscheduled_orders %}
     <p class="board-empty-state">
@@ -547,7 +557,7 @@
         {% elif square_refresh_controls_visible %}
         <span class="auto-sync-status">Refresh controls are unavailable for past dates</span>
         {% else %}
-        Drinks are hidden from the production view
+        Drinks appear as compact order tags
         {% endif %}
     </span>
 </footer>

@@ -76,3 +76,40 @@ def test_inventory_counts_cookie_only_walk_ins_even_when_hidden_from_board() -> 
     assert service.total_cookies == 0
     assert inventory.cookies[0].ordered == 2
     assert inventory.cookies[0].remaining == 3
+
+
+def test_inventory_counts_main_order_salads_and_sides() -> None:
+    service_date = date(2026, 8, 12)
+    order = Order(
+        "online-non-pizza",
+        "Alex",
+        datetime(2026, 8, 12, 16, 0),
+        (
+            Item("Cucumber Salad", 2, "salad"),
+            Item("Side Hot Honey", 1, "side"),
+        ),
+    )
+    service = build_service_board(
+        service_date,
+        (order,),
+        pickup_times=(datetime(2026, 8, 12, 16, 0),),
+    )
+    state = ServiceState(
+        dough_balls_prepared=0,
+        salad_prepared={"Cucumber Salad": 5},
+        side_prepared={"Side Hot Honey": 4},
+        cookie_prepared=0,
+    )
+
+    inventory = build_inventory_summary(
+        service,
+        state,
+        salad_types=("Cucumber Salad",),
+        side_types=("Side Hot Honey",),
+        orders=(order,),
+    )
+
+    assert inventory.salads[0].ordered == 2
+    assert inventory.salads[0].remaining == 3
+    assert inventory.sides[0].ordered == 1
+    assert inventory.sides[0].remaining == 3

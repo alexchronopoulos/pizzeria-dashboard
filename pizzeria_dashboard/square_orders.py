@@ -33,7 +33,15 @@ class ClassificationRules:
     salad_modifier_keywords: tuple[str, ...] = ("salad",)
     side_modifier_keywords: tuple[str, ...] = ("side",)
     cookie_modifier_keywords: tuple[str, ...] = ("cookie",)
-    cookie_category_names: tuple[str, ...] = ("cookie", "cookies", "dessert", "desserts")
+    salad_category_names: tuple[str, ...] = ("salad", "salads")
+    salad_item_keywords: tuple[str, ...] = ("salad",)
+    side_category_names: tuple[str, ...] = ("side", "sides")
+    side_item_keywords: tuple[str, ...] = ("side",)
+    dessert_category_names: tuple[str, ...] = ("dessert", "desserts")
+    dessert_item_keywords: tuple[str, ...] = ("dessert",)
+    merch_category_names: tuple[str, ...] = ("merch", "merchandise")
+    merch_item_keywords: tuple[str, ...] = ("merch", "shirt", "hat", "tote")
+    cookie_category_names: tuple[str, ...] = ("cookie", "cookies")
     cookie_item_keywords: tuple[str, ...] = ("cookie",)
 
     @classmethod
@@ -68,9 +76,33 @@ class ClassificationRules:
             cookie_modifier_keywords=_csv(
                 values.get("SQUARE_COOKIE_MODIFIER_KEYWORDS"), ("cookie",)
             ),
+            salad_category_names=_csv(
+                values.get("SQUARE_SALAD_CATEGORY_NAMES"), ("Salad", "Salads")
+            ),
+            salad_item_keywords=_csv(
+                values.get("SQUARE_SALAD_ITEM_KEYWORDS"), ("salad",)
+            ),
+            side_category_names=_csv(
+                values.get("SQUARE_SIDE_CATEGORY_NAMES"), ("Side", "Sides")
+            ),
+            side_item_keywords=_csv(
+                values.get("SQUARE_SIDE_ITEM_KEYWORDS"), ("side",)
+            ),
+            dessert_category_names=_csv(
+                values.get("SQUARE_DESSERT_CATEGORY_NAMES"), ("Dessert", "Desserts")
+            ),
+            dessert_item_keywords=_csv(
+                values.get("SQUARE_DESSERT_ITEM_KEYWORDS"), ("dessert",)
+            ),
+            merch_category_names=_csv(
+                values.get("SQUARE_MERCH_CATEGORY_NAMES"), ("Merch", "Merchandise")
+            ),
+            merch_item_keywords=_csv(
+                values.get("SQUARE_MERCH_ITEM_KEYWORDS"), ("merch", "shirt", "hat", "tote")
+            ),
             cookie_category_names=_csv(
                 values.get("SQUARE_COOKIE_CATEGORY_NAMES"),
-                ("Cookie", "Cookies", "Dessert", "Desserts"),
+                ("Cookie", "Cookies"),
             ),
             cookie_item_keywords=_csv(
                 values.get("SQUARE_COOKIE_ITEM_KEYWORDS"), ("cookie",)
@@ -79,62 +111,66 @@ class ClassificationRules:
 
     def classify_item(self, name: str, category_names: Sequence[str]) -> str:
         normalized_categories = tuple(_normalize(value) for value in category_names)
-        hidden_categories = tuple(_normalize(value) for value in self.hidden_category_names)
-        pizza_categories = tuple(_normalize(value) for value in self.pizza_category_names)
-        slice_categories = tuple(_normalize(value) for value in self.slice_category_names)
-        cookie_categories = tuple(_normalize(value) for value in self.cookie_category_names)
         normalized_name = _normalize(name)
 
-        if _contains_configured_value(normalized_categories, hidden_categories):
-            return "drink"
-        # POS slice items can share reporting categories with whole pies. Check
-        # both the explicit slice category and the item name before pizza
-        # categories so mixed pie-and-slice orders keep the pie but suppress the
-        # slice from the production dashboard.
-        if _contains_configured_value(normalized_categories, slice_categories):
-            return "slice"
-        if _matches_configured_keyword(normalized_name, self.slice_item_keywords):
-            return "slice"
-        if _contains_configured_value(normalized_categories, pizza_categories):
-            return "pizza"
-        if _contains_configured_value(normalized_categories, cookie_categories):
-            return "cookie"
+        category_rules = (
+            ("drink", self.hidden_category_names),
+            ("slice", self.slice_category_names),
+            ("pizza", self.pizza_category_names),
+            ("salad", self.salad_category_names),
+            ("side", self.side_category_names),
+            ("merch", self.merch_category_names),
+            ("dessert", self.dessert_category_names),
+            ("cookie", self.cookie_category_names),
+        )
+
+        # Item-name rules resolve ambiguous catalog groupings such as a generic
+        # "Desserts" category or a combined "Sides & Desserts" category. A
+        # chocolate-chip cookie should remain a cookie even when its reporting
+        # category is Desserts, while "Side Ranch" should remain a side.
+        name_rules = (
+            ("drink", self.hidden_item_keywords),
+            ("slice", self.slice_item_keywords),
+            ("pizza", self.pizza_item_keywords),
+            ("cookie", self.cookie_item_keywords),
+            ("salad", self.salad_item_keywords),
+            ("side", self.side_item_keywords),
+            ("merch", self.merch_item_keywords),
+            ("dessert", self.dessert_item_keywords),
+        )
+        for category, keywords in name_rules:
+            if _matches_configured_keyword(normalized_name, keywords):
+                return category
+
+        # POS slice items can share reporting categories with whole pies, so the
+        # explicit slice category still takes precedence over pizza categories.
+        for category, configured_names in category_rules:
+            normalized_configured = tuple(_normalize(value) for value in configured_names)
+            if _contains_configured_value(normalized_categories, normalized_configured):
+                return category
 
         # Category names frequently include descriptive words, such as
-        # "Traditional Pies" or "Seasonal Special Pies". Treat the configured
-        # item keywords as category keywords too, so spaces and prefixes do not
-        # prevent otherwise obvious pizza categories from being recognized.
-        if any(
-            _normalize(keyword) in category_name
-            for category_name in normalized_categories
-            for keyword in self.hidden_item_keywords
-        ):
-            return "drink"
-        if any(
-            _normalize(keyword) in category_name
-            for category_name in normalized_categories
-            for keyword in self.slice_item_keywords
-        ):
-            return "slice"
-        if any(
-            _normalize(keyword) in category_name
-            for category_name in normalized_categories
-            for keyword in self.pizza_item_keywords
-        ):
-            return "pizza"
-        if any(
-            _normalize(keyword) in category_name
-            for category_name in normalized_categories
-            for keyword in self.cookie_item_keywords
-        ):
-            return "cookie"
-
-        if any(_normalize(keyword) in normalized_name for keyword in self.hidden_item_keywords):
-            return "drink"
-        if any(_normalize(keyword) in normalized_name for keyword in self.pizza_item_keywords):
-            return "pizza"
-        if any(_normalize(keyword) in normalized_name for keyword in self.cookie_item_keywords):
-            return "cookie"
+        # "Traditional Pies" or "Seasonal Special Pies". Treat each configured
+        # keyword set as category keywords too, so prefixes do not prevent an
+        # otherwise obvious kitchen classification.
+        keyword_category_rules = (
+            ("drink", self.hidden_item_keywords),
+            ("slice", self.slice_item_keywords),
+            ("pizza", self.pizza_item_keywords),
+            ("cookie", self.cookie_item_keywords),
+            ("salad", self.salad_item_keywords),
+            ("side", self.side_item_keywords),
+            ("merch", self.merch_item_keywords),
+            ("dessert", self.dessert_item_keywords),
+        )
+        for category, keywords in keyword_category_rules:
+            if any(
+                normalized_keyword in category_name
+                for category_name in normalized_categories
+                for keyword in keywords
+                if (normalized_keyword := _normalize(keyword))
+            ):
+                return category
         return "other"
 
     def classify_modifier(self, name: str) -> str:

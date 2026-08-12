@@ -683,12 +683,13 @@ def test_customer_names_are_compact_on_board_and_full_in_order_modal(tmp_path: P
     assert b"Alex Christopher" in details.data
 
 
-def test_drinks_and_order_numbers_are_hidden(tmp_path: Path) -> None:
+def test_drinks_render_as_compact_tags_while_order_numbers_stay_hidden(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
     visible_text = _visible_text(response)
 
-    assert "Mexican Coke" not in visible_text
-    assert "Sparkling Water" not in visible_text
+    assert "Mexican Coke" in visible_text
+    assert "Sparkling Water" in visible_text
+    assert b"badge--drink" in response.data
     assert "Jamie Q." not in visible_text
     assert "PM-1042" not in visible_text
 
@@ -1614,6 +1615,51 @@ def test_paid_open_square_order_does_not_offer_unpaid_removal(tmp_path: Path) ->
     assert b"data-remove-unpaid-order" not in details.data
 
 
+def test_unpaid_order_is_prominently_flagged_on_main_card(tmp_path: Path) -> None:
+    from pizzeria_dashboard.database import replace_orders_for_date
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    unpaid = Order(
+        order_id="cached-unpaid-main-card",
+        customer_name="Unpaid Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 0),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-unpaid-main-card",
+        square_order_state="OPEN",
+        is_paid=False,
+    )
+    paid = Order(
+        order_id="cached-paid-main-card",
+        customer_name="Paid Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 15),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-paid-main-card",
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (unpaid, paid), source="square"
+    )
+
+    response = app.test_client().get(f"/?date={selected.isoformat()}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "UNPAID — DO NOT PREP" in html
+    assert 'data-order-id="cached-unpaid-main-card"' in html
+    unpaid_start = html.index('data-order-id="cached-unpaid-main-card"')
+    unpaid_class_start = html.rfind('class="order-row', 0, unpaid_start)
+    unpaid_class_end = html.index('"', unpaid_class_start + len('class="'))
+    assert "order-row--unpaid" in html[unpaid_class_start:unpaid_class_end]
+
+    paid_start = html.index('data-order-id="cached-paid-main-card"')
+    paid_class_start = html.rfind('class="order-row', 0, paid_start)
+    paid_class_end = html.index('"', paid_class_start + len('class="'))
+    assert "order-row--unpaid" not in html[paid_class_start:paid_class_end]
+
+
 def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
@@ -1738,3 +1784,43 @@ def test_walk_in_orders_do_not_show_customer_history_tags(tmp_path: Path) -> Non
     assert b"Regular" not in response.data
     assert b"First Timer" not in response.data
     assert b"badge--customer" not in response.data
+
+
+def test_non_pizza_online_order_renders_main_items_and_drink_tag(tmp_path: Path) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    order = Order(
+        order_id="non-pizza-online",
+        customer_name="Alex R.",
+        pickup_at=datetime(2026, 7, 31, 16, 0),
+        items=(
+            Item("Cucumber Salad", 1, "salad"),
+            Item("Mari T-Shirt", 1, "merch"),
+            Item("Mexican Coke", 2, "drink"),
+        ),
+        square_order_id="non-pizza-online",
+        square_version=1,
+        fulfillment_uid="pickup-1",
+        fulfillment_state="RESERVED",
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (order,), source="square"
+    )
+
+    response = app.test_client().get(f"/?date={selected.isoformat()}")
+    visible_text = _visible_text(response)
+
+    assert response.status_code == 200
+    assert "Cucumber Salad" in visible_text
+    assert "Mari T-Shirt" in visible_text
+    assert "2× Mexican Coke" in visible_text
+    assert b'badge--drink' in response.data
+    # A zero-pizza slot with a production order is not an empty Prep View slot.
+    order_position = response.data.index(b'data-order-id="non-pizza-online"')
+    slot_start = response.data.rfind(b'class="pickup-window', 0, order_position)
+    slot_end = response.data.index(b'</article>', order_position)
+    slot_html = response.data[slot_start:slot_end]
+    assert b'data-slot-empty="false"' in slot_html
+    assert b'data-order-pizza-units="0"' in slot_html

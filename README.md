@@ -18,9 +18,9 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Follows Square pagination automatically.
 - Reads item categories from the Square Catalog when available.
 - Preserves pizza modifiers using Square kitchen names.
-- Counts named salad and `Side` modifiers against configurable prepared inventory.
-- Highlights cookie, side, salad, and removal modifiers for fast kitchen scanning.
-- Hides drink-category items and individual slice line items from the production board. Mixed pie-and-slice walk-ins remain visible, with only production-relevant items shown.
+- Counts salads, sides, and cookies whether they arrive as main line items or legacy modifiers, so the prepared-inventory cards stay accurate with the custom online ordering portal.
+- Keeps salad, side, dessert, cookie, and merch main items on the production board even when an order contains no pizza.
+- Shows drinks as compact quantity tags on the order card while individual slice line items stay hidden. Mixed pie-and-slice walk-ins remain visible with only production-relevant items shown.
 - Retains Square order version and fulfillment identifiers needed to complete eligible pickup orders from the Release candidate badge.
 - Opens every order in a compact modal with pickup controls and the cached kitchen view. Raw Square debug data is not exposed in the dashboard.
 - Displays customer names as first name plus last initial, and removes Ticket Name pickup times from visible customer labels.
@@ -99,10 +99,16 @@ Square account has unrestricted account access, so protect it carefully.
 ## Item classification
 
 The dashboard reads Square catalog categories to decide which line items are
-pizzas or drinks. Match these values to your Square item library categories:
+pizzas, salads, sides, desserts, merch, cookies, or drinks. Match these values to
+your Square item library categories:
 
 ```dotenv
 SQUARE_PIZZA_CATEGORY_NAMES=Pizza,Pizzas
+SQUARE_SALAD_CATEGORY_NAMES=Salad,Salads
+SQUARE_SIDE_CATEGORY_NAMES=Side,Sides
+SQUARE_DESSERT_CATEGORY_NAMES=Dessert,Desserts
+SQUARE_MERCH_CATEGORY_NAMES=Merch,Merchandise
+SQUARE_COOKIE_CATEGORY_NAMES=Cookie,Cookies
 SQUARE_HIDDEN_CATEGORY_NAMES=Drink,Drinks,Beverage,Beverages
 ```
 
@@ -114,12 +120,17 @@ SQUARE_PIZZA_ITEM_KEYWORDS=pizza,pie
 SQUARE_SLICE_CATEGORY_NAMES=Slice,Slices
 SQUARE_SLICE_ITEM_KEYWORDS=slice,slices
 SQUARE_HIDDEN_ITEM_KEYWORDS=drink,beverage,coke,soda,water
+SQUARE_SALAD_ITEM_KEYWORDS=salad
+SQUARE_SIDE_ITEM_KEYWORDS=side
+SQUARE_DESSERT_ITEM_KEYWORDS=dessert
+SQUARE_MERCH_ITEM_KEYWORDS=merch,shirt,hat,tote
+SQUARE_COOKIE_ITEM_KEYWORDS=cookie
 SQUARE_SALAD_MODIFIER_KEYWORDS=salad
 SQUARE_SIDE_MODIFIER_KEYWORDS=side
 SQUARE_COOKIE_MODIFIER_KEYWORDS=cookie
 ```
 
-Items in a Slice category, or whose names contain the configured slice keywords, remain in the cached Square document but are omitted from the production board. This allows a mixed whole-pie and slice walk-in to display without showing the slice line. A modifier whose name contains `salad` is treated as a named salad. Modifiers containing the word `Side` are tracked separately, and cookie modifiers trigger a cookie alert. Prepared dough, salad, and side counts are edited inside **Service setup** and summarized in read-only cards during service.
+Items in a Slice category, or whose names contain the configured slice keywords, remain in the cached Square document but are omitted from the production board. Drinks are also omitted from the main item list but appear as quantity tags on the order card. Main-order salads and sides now count directly against prepared inventory, while legacy salad/side/cookie modifiers remain supported. Prepared dough, salad, and side counts are edited inside **Service setup** and summarized in read-only cards during service.
 
 ## How date sync works
 
