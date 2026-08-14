@@ -88,6 +88,30 @@ def test_customer_summary_labels() -> None:
     assert CustomerSummary("c", 5, first, last).tag_label == "Regular · 5 orders"
 
 
+def test_customer_visit_medal_tiers_follow_visit_thresholds() -> None:
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    last = datetime(2026, 7, 1, tzinfo=UTC)
+
+    expected = {
+        1: 1,
+        2: 2,
+        4: 2,
+        5: 3,
+        9: 3,
+        10: 4,
+        24: 4,
+        25: 5,
+        49: 5,
+        50: 6,
+        99: 6,
+        100: 7,
+        250: 7,
+    }
+
+    for visits, tier in expected.items():
+        assert CustomerSummary("c", visits, first, last).medal_tier == tier
+
+
 def test_customer_history_round_trips_and_maps_current_order(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"
     initialize_database(database_path)

@@ -37,9 +37,16 @@
                 {% if is_vip %}<span class="vip-star" title="VIP customer" aria-label="VIP customer">★</span>{% endif %}
                 {% if customer_summary and not order.is_walk_in and not order.is_manual %}
                 <span
-                    class="badge badge--customer badge--customer-{{ customer_summary.tag_kind }}"
-                    title="Customer history includes {{ customer_summary.order_count }} linked order{% if customer_summary.order_count != 1 %}s{% endif %}"
-                >{{ customer_summary.tag_label }}</span>
+                    class="visit-medal visit-medal--tier-{{ customer_summary.medal_tier }}"
+                    aria-label="{{ customer_summary.order_count }}"
+                >
+                    <span class="visit-medal-ribbon visit-medal-ribbon--left" aria-hidden="true"></span>
+                    <span class="visit-medal-ribbon visit-medal-ribbon--right" aria-hidden="true"></span>
+                    <span class="visit-medal-core" aria-hidden="true"></span>
+                    <span class="visit-medal-flourish visit-medal-flourish--left" aria-hidden="true"></span>
+                    <span class="visit-medal-flourish visit-medal-flourish--right" aria-hidden="true"></span>
+                    <span class="visit-medal-number">{{ customer_summary.order_count }}</span>
+                </span>
                 {% endif %}
             </span>
             {% if order.is_walk_in %}

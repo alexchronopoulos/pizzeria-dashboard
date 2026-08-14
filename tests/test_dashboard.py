@@ -1807,7 +1807,9 @@ def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
 
     dashboard = client.get("/?date=2026-07-31")
     assert dashboard.status_code == 200
-    assert "Regular · 5 orders".encode() in dashboard.data
+    assert b'class="visit-medal visit-medal--tier-3"' in dashboard.data
+    assert b'aria-label="5"' in dashboard.data
+    assert b'<span class="visit-medal-number">5</span>' in dashboard.data
     assert b"Customer visits" in dashboard.data
     assert b"14 online orders" in dashboard.data
     assert b"Walk-in pie orders" in dashboard.data
@@ -2203,7 +2205,7 @@ def test_primary_salad_gets_same_green_card_behavior_as_salad_modifier_and_drink
     assert "1× Sparkling Water" in detail_html
 
 
-def test_boxed_action_sits_left_of_timer_stack_and_customer_history_is_gold_text(tmp_path: Path) -> None:
+def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza_themed(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     today = datetime.now(ZoneInfo(app.config["SERVICE_TIMEZONE"])).date()
     response = app.test_client().get(f"/?date={today.isoformat()}")
@@ -2216,8 +2218,13 @@ def test_boxed_action_sits_left_of_timer_stack_and_customer_history_is_gold_text
     assert controls_pos != -1
     assert controls_pos < boxed_pos < stack_pos < timer_pos
     css = Path("pizzeria_dashboard/static/style.css").read_text()
-    assert "color: #9a6a00;" in css
-    assert "background: transparent;" in css
+    assert ".visit-medal" in css
+    assert "--crust: #b86f2c;" in css
+    assert "--cheese: #f3cd54;" in css
+    assert "--sauce: #b33b2f;" in css
+    assert "--basil: #33803d;" in css
+    assert ".visit-medal--tier-7" in css
+    assert ".visit-medal-number" in css
     assert "background: #f2e5d8;" in css
 
 
@@ -2229,14 +2236,14 @@ def test_done_timer_rail_can_be_dismissed_per_device() -> None:
     assert "window.localStorage" in javascript
 
 
-def test_customer_history_badge_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:
+def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
     html = response.get_data(as_text=True)
-    # The customer-status badge belongs in the customer-name wrapper, before the
-    # generic order-badge collection used for production/status markers.
+    # The visit medal belongs in the customer-name wrapper, before the generic
+    # order-badge collection used for production/status markers.
     customer_wrap = html.find('class="customer-name-wrap"')
-    customer_badge = html.find('badge--customer', customer_wrap)
+    visit_medal = html.find('class="visit-medal', customer_wrap)
     order_badges = html.find('class="order-badges"', customer_wrap)
-    if customer_badge != -1:
-        assert customer_wrap < customer_badge < order_badges
+    if visit_medal != -1:
+        assert customer_wrap < visit_medal < order_badges
     assert 'class="order-capacity-control"' not in html

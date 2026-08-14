@@ -48,6 +48,23 @@ class CustomerSummary:
             return "returning"
         return "regular"
 
+    @property
+    def medal_tier(self) -> int:
+        visits = self.order_count
+        if visits <= 1:
+            return 1
+        if visits < 5:
+            return 2
+        if visits < 10:
+            return 3
+        if visits < 25:
+            return 4
+        if visits < 50:
+            return 5
+        if visits < 100:
+            return 6
+        return 7
+
 
 @dataclass(frozen=True, slots=True)
 class CustomerVisitSummary:
