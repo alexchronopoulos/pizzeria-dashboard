@@ -18,6 +18,7 @@ from pizzeria_dashboard.database import (
     load_latest_service_state_before,
     load_service_state_payload,
     load_sync_info,
+    load_vip_customer_keys,
     merge_orders_for_date,
     migrate_legacy_service_state,
     prune_pie_production_states,
@@ -28,6 +29,8 @@ from pizzeria_dashboard.database import (
     save_order_ready_state,
     save_order_slot_assignment,
     save_service_state_payload,
+    save_vip_customer,
+    delete_vip_customers,
     update_pie_production_state,
 )
 from pizzeria_dashboard.domain import Item, Order
@@ -57,7 +60,19 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "order_internal_notes",
         "pie_production_states",
         "order_ready_states",
+        "vip_customers",
     } <= tables
+
+
+def test_vip_customer_keys_can_be_saved_and_removed(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+
+    assert load_vip_customer_keys(database_path) == set()
+    save_vip_customer(database_path, "square:CUSTOMER-1", "Alex", vip=True)
+    assert load_vip_customer_keys(database_path) == {"square:CUSTOMER-1"}
+    assert delete_vip_customers(database_path, ("square:CUSTOMER-1",)) == 1
+    assert load_vip_customer_keys(database_path) == set()
 
 
 def test_order_documents_round_trip_through_sqlite(tmp_path: Path) -> None:
@@ -463,6 +478,57 @@ def test_completed_timer_frees_oven_position_for_next_pie(tmp_path: Path) -> Non
 
     second = update_pie_production_state(
         database_path, service_date, second_key, timer_action="start", duration_ms=480_000
+    )
+    assert second.oven_position == "top-left"
+
+
+def test_stale_done_timer_never_blocks_oven_position(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    stale_key = "2026-08-06|order-1|plain|0"
+    next_key = "2026-08-06|order-2|white|0"
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO pie_production_states (
+                service_date, pie_key, timer_status, timer_remaining_ms,
+                timer_end_at_ms, oven_position, updated_at
+            ) VALUES (?, ?, 'done', 0, NULL, 'top-left', ?)
+            """,
+            (service_date.isoformat(), stale_key, datetime.now().isoformat()),
+        )
+
+    next_state = update_pie_production_state(
+        database_path, service_date, next_key, timer_action="start"
+    )
+
+    assert next_state.oven_position == "top-left"
+    states = load_pie_production_states(database_path, service_date)
+    assert states[stale_key].oven_position is None
+
+
+def test_finish_action_releases_oven_immediately(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    first_key = "2026-08-06|order-1|plain|0"
+    second_key = "2026-08-06|order-2|white|0"
+
+    started = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="start"
+    )
+    assert started.oven_position == "top-left"
+
+    finished = update_pie_production_state(
+        database_path, service_date, first_key, timer_action="finish"
+    )
+    assert finished.timer_status == "done"
+    assert finished.oven_position is None
+
+    second = update_pie_production_state(
+        database_path, service_date, second_key, timer_action="start"
     )
     assert second.oven_position == "top-left"
 

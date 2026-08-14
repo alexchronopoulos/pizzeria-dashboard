@@ -478,6 +478,53 @@
         }
     });
 
+    document.addEventListener("click", async (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-order-vip-button]");
+        if (!button || !body.contains(button)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const url = button.dataset.orderVipUrl;
+        const serviceDate = button.dataset.serviceDate;
+        const orderId = button.dataset.orderId;
+        const currentlyVip = button.dataset.isVip === "true";
+        const status = button.parentElement?.querySelector("[data-order-vip-status]");
+        if (!url || !serviceDate || !orderId) {
+            return;
+        }
+        button.disabled = true;
+        if (status) {
+            status.textContent = currentlyVip ? "Removing VIP…" : "Saving VIP…";
+        }
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {"Accept": "application/json", "Content-Type": "application/json"},
+                body: JSON.stringify({
+                    service_date: serviceDate,
+                    order_id: orderId,
+                    vip: !currentlyVip,
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The VIP status could not be saved.");
+            }
+            if (status) {
+                status.textContent = result.vip ? "VIP saved" : "VIP removed";
+            }
+            window.PizzeriaDashboardViewport?.remember();
+            window.location.reload();
+        } catch (error) {
+            button.disabled = false;
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
     document.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const clearButton = target?.closest("[data-order-note-clear]");
@@ -958,6 +1005,7 @@
     const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
     const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
     const countdown = document.querySelector("[data-pizza-countdown]");
+    const timerRail = document.querySelector("[data-active-timer-rail]");
     const decrementAllDayCounts = board?.dataset.decrementAllDayCounts === "true";
     const pieAllDayRows = Array.from(document.querySelectorAll("[data-pie-all-day-row]"));
     const modifierAllDayRows = Array.from(document.querySelectorAll("[data-modifier-all-day-row]"));
@@ -976,6 +1024,28 @@
         return;
     }
 
+    const dismissedDoneTimerStorageKey = `pizzeria-dashboard:dismissed-done-timers:${serviceDate}`;
+    const loadDismissedDoneTimers = () => {
+        try {
+            const raw = window.localStorage.getItem(dismissedDoneTimerStorageKey);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+        } catch (_error) {
+            return new Set();
+        }
+    };
+    const dismissedDoneTimers = loadDismissedDoneTimers();
+    const saveDismissedDoneTimers = () => {
+        try {
+            window.localStorage.setItem(
+                dismissedDoneTimerStorageKey,
+                JSON.stringify(Array.from(dismissedDoneTimers).slice(-100)),
+            );
+        } catch (_error) {
+            // Device-local timer dismissal is a convenience; timer state remains server-side.
+        }
+    };
+
     const POSITION_LABELS = {
         "top-left": "Top left",
         "top-right": "Top right",
@@ -991,6 +1061,7 @@
     let pieStates = {};
     let boxedOrders = {};
     let lastPizzaCountdownRemaining = null;
+    const completionPosts = new Set();
 
     const initialPieState = (key) => {
         const timer = timersByKey.get(key);
@@ -1044,7 +1115,26 @@
     };
 
     const renderTimers = () => {
+        const persistExpiredTimers = () => {
         timersByKey.forEach((timer, key) => {
+            const raw = pieStates[key] || initialPieState(key);
+            if (
+                raw.timer_status !== "running"
+                || !raw.timer_end_at_ms
+                || Number(raw.timer_end_at_ms) > adjustedNow()
+                || completionPosts.has(key)
+            ) {
+                return;
+            }
+            completionPosts.add(key);
+            void postPieUpdate(key, {timer_action: "finish", duration_ms: durationFor(timer)})
+                .catch(() => {
+                    completionPosts.delete(key);
+                });
+        });
+    };
+
+    timersByKey.forEach((timer, key) => {
             const state = effectiveTimerState(key);
             const action = timer.querySelector("[data-bake-timer-action]");
             const display = timer.querySelector("[data-bake-timer-display]");
@@ -1106,6 +1196,101 @@
         });
     };
 
+    const isActiveTimerStatus = (status) => status === "running" || status === "paused";
+
+    const timerIsFullyVisible = (timer) => {
+        const rect = timer.getBoundingClientRect();
+        return rect.top >= 8 && rect.bottom <= window.innerHeight - 8;
+    };
+
+    const renderActiveTimerRail = () => {
+        if (!timerRail) {
+            return;
+        }
+        const hiddenTimers = [];
+        let dismissalChanged = false;
+        timersByKey.forEach((timer, key) => {
+            const state = effectiveTimerState(key);
+            const status = state.timer_status || "idle";
+            if (status !== "done" && dismissedDoneTimers.delete(key)) {
+                dismissalChanged = true;
+            }
+            if (status === "done" && dismissedDoneTimers.has(key)) {
+                return;
+            }
+            if (status === "idle" || timerIsFullyVisible(timer)) {
+                return;
+            }
+            hiddenTimers.push({timer, key, state, status});
+        });
+        if (dismissalChanged) {
+            saveDismissedDoneTimers();
+        }
+
+        timerRail.replaceChildren();
+        hiddenTimers.forEach(({timer, key, state, status}) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `active-timer-rail-item active-timer-rail-item--${status}`;
+            const customer = document.createElement("span");
+            customer.className = "active-timer-rail-customer";
+            customer.textContent = timer.dataset.timerCustomerLabel || "Order";
+            const time = document.createElement("strong");
+            time.className = "active-timer-rail-time";
+            time.textContent = status === "done" ? "DONE" : formatRemaining(state.timer_remaining_ms);
+            const meta = document.createElement("span");
+            meta.className = "active-timer-rail-meta";
+            const item = timer.dataset.timerPizzaName || "Pizza";
+            const unit = timer.dataset.timerUnitLabel ? ` ${timer.dataset.timerUnitLabel}` : "";
+            const pickup = timer.dataset.timerPickupLabel || "";
+            const stateLabel = status === "paused" ? "Paused · " : status === "done" ? "Finished · " : "";
+            meta.textContent = status === "done"
+                ? `${stateLabel}${item}${unit}${pickup ? ` · ${pickup}` : ""} · Click to dismiss`
+                : `${stateLabel}${item}${unit}${pickup ? ` · ${pickup}` : ""}`;
+            button.append(customer, time, meta);
+            button.setAttribute(
+                "aria-label",
+                status === "done"
+                    ? `Finished timer for ${item}. Click to dismiss from this device.`
+                    : `Timer for ${item}. Click to jump to the order.`,
+            );
+            button.addEventListener("click", () => {
+                if (status === "done") {
+                    dismissedDoneTimers.add(key);
+                    saveDismissedDoneTimers();
+                    renderActiveTimerRail();
+                    return;
+                }
+                timer.scrollIntoView({behavior: "smooth", block: "center", inline: "nearest"});
+            });
+            timerRail.appendChild(button);
+        });
+        timerRail.hidden = hiddenTimers.length === 0;
+    };
+
+    const boxedActivePizzaCounts = () => {
+        const counts = new Map();
+        if (!decrementAllDayCounts) {
+            return counts;
+        }
+        timersByKey.forEach((timer, key) => {
+            const orderId = timer.dataset.timerOrderId || "";
+            if (!orderId || !boxedOrders[orderId]) {
+                return;
+            }
+            const state = effectiveTimerState(key);
+            if (!isActiveTimerStatus(state.timer_status)) {
+                return;
+            }
+            const pizzaName = timer.dataset.timerPizzaName || "";
+            if (!pizzaName) {
+                return;
+            }
+            counts.set(pizzaName, (counts.get(pizzaName) || 0) + 1);
+        });
+        return counts;
+    };
+
     const formatBoxedAt = (value) => {
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) {
@@ -1159,7 +1344,9 @@
             }
             boxedPizzas += Math.max(0, Number.parseInt(row.dataset.orderPizzaUnits || "0", 10) || 0);
         });
-        const remaining = Math.max(total - boxedPizzas, 0);
+        const activeBoxedPizzas = Array.from(boxedActivePizzaCounts().values())
+            .reduce((sum, value) => sum + value, 0);
+        const remaining = Math.max(total - boxedPizzas + activeBoxedPizzas, 0);
         const value = countdown.querySelector("[data-pizza-countdown-value]");
         if (value) {
             value.textContent = String(remaining);
@@ -1198,14 +1385,17 @@
         return counts;
     };
 
-    const renderAllDaySummaryRows = (rows, boxedCounts) => {
+    const renderAllDaySummaryRows = (rows, boxedCounts, restoredCounts = new Map()) => {
         rows.forEach((row) => {
             const fullCount = Math.max(0, Number.parseInt(row.dataset.fullCount || "0", 10) || 0);
-            const boxedCount = boxedCounts.get(row.dataset.summaryName || "") || 0;
-            const remaining = decrementAllDayCounts ? Math.max(fullCount - boxedCount, 0) : fullCount;
+            const summaryName = row.dataset.summaryName || "";
+            const boxedCount = boxedCounts.get(summaryName) || 0;
+            const restoredCount = restoredCounts.get(summaryName) || 0;
+            const remaining = decrementAllDayCounts
+                ? Math.max(fullCount - boxedCount + restoredCount, 0)
+                : fullCount;
             const count = row.querySelector("[data-summary-count]");
             if (count) {
-                const summaryName = row.dataset.summaryName || "";
                 count.textContent = `${remaining}× ${summaryName}`;
             }
         });
@@ -1213,14 +1403,16 @@
 
     const renderAllDayCounts = () => {
         const boxedPies = boxedCountsFor("orderPizzaCounts");
+        const activeBoxedPies = boxedActivePizzaCounts();
         const boxedModifiers = boxedCountsFor("orderModifierCounts");
-        renderAllDaySummaryRows(pieAllDayRows, boxedPies);
+        renderAllDaySummaryRows(pieAllDayRows, boxedPies, activeBoxedPies);
         renderAllDaySummaryRows(modifierAllDayRows, boxedModifiers);
 
         if (pieAllDayTotal) {
             const full = Math.max(0, Number.parseInt(pieAllDayTotal.dataset.fullCount || "0", 10) || 0);
             const boxed = Array.from(boxedPies.values()).reduce((total, value) => total + value, 0);
-            const remaining = decrementAllDayCounts ? Math.max(full - boxed, 0) : full;
+            const active = Array.from(activeBoxedPies.values()).reduce((total, value) => total + value, 0);
+            const remaining = decrementAllDayCounts ? Math.max(full - boxed + active, 0) : full;
             pieAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} remaining` : `${remaining} total`;
         }
         if (modifierAllDayTotal) {
@@ -1260,6 +1452,7 @@
         renderTimers();
         renderOven();
         renderBoxedOrders();
+        renderActiveTimerRail();
     };
 
     const shouldHoldBoardReload = () => (
@@ -1283,6 +1476,11 @@
             board.dataset.boardContentRevision = remoteRevision;
         }
         pieStates = {...pieStates, ...(payload.pies || {})};
+        Object.entries(payload.pies || {}).forEach(([key, state]) => {
+            if (state?.timer_status !== "done") {
+                completionPosts.delete(key);
+            }
+        });
         boxedOrders = payload.boxed_orders || {};
         const viewportSnapshot = window.PizzeriaDashboardViewport?.capture();
         renderAll();
@@ -1413,7 +1611,13 @@
     window.setInterval(() => {
         renderTimers();
         renderOven();
+        renderAllDayCounts();
+        renderPizzaCountdown();
+        renderActiveTimerRail();
+        persistExpiredTimers();
     }, 250);
+    window.addEventListener("scroll", renderActiveTimerRail, {passive: true});
+    window.addEventListener("resize", renderActiveTimerRail);
     window.setInterval(poll, 2_000);
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {
@@ -1755,5 +1959,16 @@
         if (event.target === dialog) {
             closeDialog();
         }
+    });
+})();
+
+
+(() => {
+    const button = document.querySelector("[data-jump-to-top]");
+    if (!button) {
+        return;
+    }
+    button.addEventListener("click", () => {
+        window.scrollTo({top: 0, left: 0, behavior: "smooth"});
     });
 })();

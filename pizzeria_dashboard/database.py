@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -184,6 +184,12 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_customer_history_customer_ordered
                 ON customer_history_orders (customer_id, ordered_at DESC);
+
+            CREATE TABLE IF NOT EXISTS vip_customers (
+                customer_key TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
 
             CREATE TABLE IF NOT EXISTS customer_history_sync (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -818,7 +824,12 @@ def _epoch_ms(value: datetime | None = None) -> int:
 def _expire_completed_pie_timers(
     connection: sqlite3.Connection, service_date_key: str, *, now: datetime
 ) -> int:
-    """Persist completed timers and free their shared oven positions."""
+    """Persist completed timers and free every stale shared oven position.
+
+    Older dashboard builds could leave an ``oven_position`` attached to a timer
+    that was already marked done. Clear both newly expired running timers and
+    any legacy done rows so those positions can never block the next pie.
+    """
     cursor = connection.execute(
         """
         UPDATE pie_production_states
@@ -828,9 +839,12 @@ def _expire_completed_pie_timers(
             oven_position = NULL,
             updated_at = ?
         WHERE service_date = ?
-          AND timer_status = 'running'
-          AND timer_end_at_ms IS NOT NULL
-          AND timer_end_at_ms <= ?
+          AND (
+                (timer_status = 'running'
+                 AND timer_end_at_ms IS NOT NULL
+                 AND timer_end_at_ms <= ?)
+             OR (timer_status = 'done' AND oven_position IS NOT NULL)
+          )
         """,
         (now.isoformat(), service_date_key, _epoch_ms(now)),
     )
@@ -946,7 +960,7 @@ def update_pie_production_state(
     """
     normalized_duration = min(max(int(duration_ms), 1_000), 3_600_000)
     normalized_action = (timer_action or "").strip().lower() or None
-    if normalized_action not in {None, "start", "pause", "reset"}:
+    if normalized_action not in {None, "start", "pause", "reset", "finish"}:
         raise ValueError("Unsupported timer action.")
     if oven_position is not ... and oven_position is not None and oven_position not in OVEN_POSITIONS:
         raise ValueError("Unsupported oven position.")
@@ -986,7 +1000,10 @@ def update_pie_production_state(
                 occupied_rows = connection.execute(
                     """
                     SELECT oven_position FROM pie_production_states
-                    WHERE service_date = ? AND oven_position IS NOT NULL AND pie_key != ?
+                    WHERE service_date = ?
+                      AND oven_position IS NOT NULL
+                      AND timer_status != 'done'
+                      AND pie_key != ?
                     """,
                     (date_key, pie_key),
                 ).fetchall()
@@ -1003,6 +1020,11 @@ def update_pie_production_state(
         elif normalized_action == "reset":
             status = "idle"
             remaining_ms = normalized_duration
+            end_at_ms = None
+            selected_position = None
+        elif normalized_action == "finish":
+            status = "done"
+            remaining_ms = 0
             end_at_ms = None
             selected_position = None
 
@@ -1619,6 +1641,61 @@ def merge_customer_history(
         ),
         changed_count,
     )
+
+
+def load_vip_customer_keys(path: Path) -> set[str]:
+    """Return locally marked VIP customer identities."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            "SELECT customer_key FROM vip_customers"
+        ).fetchall()
+    return {str(row["customer_key"]) for row in rows}
+
+
+def save_vip_customer(
+    path: Path, customer_key: str, display_name: str, *, vip: bool
+) -> bool:
+    """Set or clear one dashboard-only VIP identity."""
+    key = str(customer_key or "").strip()
+    if not key:
+        raise ValueError("A VIP customer key is required.")
+    name = str(display_name or "VIP customer").strip() or "VIP customer"
+    now = _utc_now().isoformat()
+    with _connect(path) as connection:
+        if vip:
+            connection.execute(
+                """
+                INSERT INTO vip_customers (customer_key, display_name, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(customer_key) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    updated_at = excluded.updated_at
+                """,
+                (key, name, now),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM vip_customers WHERE customer_key = ?", (key,)
+            )
+    return vip
+
+
+def delete_vip_customers(path: Path, customer_keys: Iterable[str]) -> int:
+    keys = tuple(dict.fromkeys(str(value).strip() for value in customer_keys if str(value).strip()))
+    if not keys:
+        return 0
+    placeholders = ",".join("?" for _ in keys)
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            f"DELETE FROM vip_customers WHERE customer_key IN ({placeholders})", keys
+        )
+    return max(cursor.rowcount, 0)
+
+
+def touch_board_content_revision(path: Path, service_date: date) -> str:
+    """Publish a local HTML-visible change to other dashboard devices."""
+    with _connect(path) as connection:
+        return _touch_board_content_revision(connection, service_date.isoformat())
 
 
 def load_customer_history_sync_info(path: Path) -> CustomerHistorySyncInfo | None:

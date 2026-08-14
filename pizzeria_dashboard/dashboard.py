@@ -26,6 +26,7 @@ from .database import (
     load_customer_history_for_order,
     load_customer_history_sync_info,
     load_customer_summaries_for_orders,
+    load_vip_customer_keys,
     load_latest_service_state_before,
     load_order_slot_assignment_overrides,
     load_order_for_date,
@@ -44,6 +45,9 @@ from .database import (
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
+    save_vip_customer,
+    delete_vip_customers,
+    touch_board_content_revision,
     update_pie_production_state,
 )
 from .domain import Item, Order, build_service_board, parse_ticket_pickup_time
@@ -92,6 +96,36 @@ def _local_service_time(value: datetime) -> datetime:
         return value
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     return value.astimezone(timezone).replace(tzinfo=None)
+
+
+def _vip_name_key(order: Order) -> str | None:
+    if order.is_walk_in:
+        return None
+    name = " ".join(str(order.customer_name or "").split()).casefold()
+    if not name or name in {"guest", "walk-in", "walk in"}:
+        return None
+    return f"name:{name}"
+
+
+def _vip_keys_for_order(order: Order, customer_summary=None) -> tuple[str, ...]:
+    keys: list[str] = []
+    if customer_summary is not None and getattr(customer_summary, "customer_id", None):
+        keys.append(f"square:{customer_summary.customer_id}")
+    name_key = _vip_name_key(order)
+    if name_key:
+        keys.append(name_key)
+    return tuple(dict.fromkeys(keys))
+
+
+def _vip_order_ids(
+    orders: tuple[Order, ...], customer_summaries: Mapping[str, object], vip_keys: set[str]
+) -> set[str]:
+    result: set[str] = set()
+    for order in orders:
+        summary = customer_summaries.get(order.square_order_id or order.order_id)
+        if any(key in vip_keys for key in _vip_keys_for_order(order, summary)):
+            result.add(order.order_id)
+    return result
 
 
 def _database_path() -> Path:
@@ -277,6 +311,8 @@ def index() -> str:
         database_path,
         (order.square_order_id or order.order_id for order in orders),
     )
+    vip_customer_keys = load_vip_customer_keys(database_path)
+    vip_order_ids = _vip_order_ids(orders, customer_summaries, vip_customer_keys)
     customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
@@ -341,6 +377,7 @@ def index() -> str:
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
         customer_summaries=customer_summaries,
+        vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
@@ -532,6 +569,32 @@ def order_details():
     pickup_slot_loads = {
         window.pickup_at: window.pizza_units for window in service.windows
     }
+    order_window = next(
+        (
+            window
+            for window in service.windows
+            if any(candidate.order_id == order.order_id for candidate in window.orders)
+        ),
+        None,
+    )
+    release_candidate = bool(
+        order_window
+        and not is_manual
+        and service.is_release_candidate(order, order_window)
+    )
+    capacity_released = bool(
+        order.released or order.fulfillment_state == "COMPLETED"
+    )
+    can_release_capacity = bool(
+        release_candidate
+        and order.square_order_id
+        and order.square_version is not None
+        and order.fulfillment_uid
+        and not is_walk_in
+        and not capacity_released
+        and order.is_paid is not False
+    )
+    capacity_release_pickup_at = order_window.pickup_at if order_window else None
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     event_at = order.source_closed_at or order.source_created_at or order.pickup_at
     if event_at.tzinfo is not None:
@@ -592,6 +655,13 @@ def order_details():
         ):
             can_remove_unpaid_order = _raw_square_order_is_unpaid_open(live_order)
 
+    order_summary = load_customer_summaries_for_orders(
+        database_path, (order.square_order_id or order.order_id,)
+    ).get(order.square_order_id or order.order_id)
+    vip_keys = _vip_keys_for_order(order, order_summary)
+    saved_vip_keys = load_vip_customer_keys(database_path)
+    is_vip = any(key in saved_vip_keys for key in vip_keys)
+
     return render_template(
         "_order_details.html",
         order=order,
@@ -614,10 +684,50 @@ def order_details():
             database_path, selected_date, order_id
         ),
         can_remove_unpaid_order=can_remove_unpaid_order,
+        release_candidate=release_candidate,
+        capacity_released=capacity_released,
+        can_release_capacity=can_release_capacity,
+        capacity_release_pickup_at=capacity_release_pickup_at,
         debug_order_id=debug_order_id,
         debug_reference_id=debug_reference_id,
         debug_payment_ids=debug_payment_ids,
+        is_vip=is_vip,
+        can_toggle_vip=bool(vip_keys),
     )
+
+
+@blueprint.post("/order-vip")
+def update_order_vip():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    if order.is_walk_in:
+        return jsonify(ok=False, error="Walk-in orders cannot be linked reliably to a VIP customer."), 400
+
+    summary = load_customer_summaries_for_orders(
+        database_path, (order.square_order_id or order.order_id,)
+    ).get(order.square_order_id or order.order_id)
+    keys = _vip_keys_for_order(order, summary)
+    if not keys:
+        return jsonify(ok=False, error="This order does not have a usable customer identity."), 400
+
+    vip = bool(payload.get("vip"))
+    if vip:
+        preferred_key = keys[0]
+        save_vip_customer(database_path, preferred_key, order.display_customer_name, vip=True)
+    else:
+        delete_vip_customers(database_path, keys)
+    revision = touch_board_content_revision(database_path, selected_date)
+    return jsonify(ok=True, vip=vip, board_content_revision=revision)
 
 
 @blueprint.post("/order-note")

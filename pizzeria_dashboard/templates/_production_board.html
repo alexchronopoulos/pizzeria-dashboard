@@ -1,7 +1,5 @@
 {% macro render_order(order, window=None, unscheduled=False) -%}
-{% set release_candidate = window and not order.is_manual and service.is_release_candidate(order, window) %}
 {% set customer_label = order.display_customer_name %}
-{% set can_complete = order.square_order_id and order.square_version is not none and order.fulfillment_uid and not order.is_walk_in and not order.released and order.fulfillment_state != "COMPLETED" %}
 {% set customer_order_key = order.square_order_id or order.order_id %}
 {% set customer_summary = customer_summaries.get(customer_order_key) if customer_summaries else none %}
 {% set internal_note = internal_notes.get(order.order_id) if internal_notes else none %}
@@ -10,6 +8,7 @@
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 {% set is_unpaid = order.is_paid is sameas false %}
+{% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
@@ -33,7 +32,16 @@
     <div class="order-content">
     <div class="order-heading">
         <div class="order-identity">
-            <strong class="customer-name">{{ customer_label }}</strong>
+            <span class="customer-name-wrap">
+                <strong class="customer-name">{{ customer_label }}</strong>
+                {% if is_vip %}<span class="vip-star" title="VIP customer" aria-label="VIP customer">★</span>{% endif %}
+                {% if customer_summary and not order.is_walk_in and not order.is_manual %}
+                <span
+                    class="badge badge--customer badge--customer-{{ customer_summary.tag_kind }}"
+                    title="Customer history includes {{ customer_summary.order_count }} linked order{% if customer_summary.order_count != 1 %}s{% endif %}"
+                >{{ customer_summary.tag_label }}</span>
+                {% endif %}
+            </span>
             {% if order.is_walk_in %}
             <span class="walk-in-paid-time">Paid {{ event_at.strftime('%-I:%M %p %Z') }}</span>
             {% endif %}
@@ -46,25 +54,8 @@
             >Details</button>
         </div>
         <div class="order-badges">
-            {% if selected_date >= today %}
-            <button
-                type="button"
-                class="badge badge--boxed-action{% if boxed_at %} is-boxed{% endif %}"
-                data-order-boxed-button
-                data-order-id="{{ order.order_id }}"
-                data-service-date="{{ selected_date.isoformat() }}"
-                aria-pressed="{{ 'true' if boxed_at else 'false' }}"
-                draggable="false"
-            >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
-            {% endif %}
             {% if order.is_manual %}
             <span class="badge badge--manual" title="Entered directly in the dashboard; no Square order exists">Manual</span>
-            {% endif %}
-            {% if customer_summary and not order.is_walk_in and not order.is_manual %}
-            <span
-                class="badge badge--customer badge--customer-{{ customer_summary.tag_kind }}"
-                title="Customer history includes {{ customer_summary.order_count }} linked order{% if customer_summary.order_count != 1 %}s{% endif %}"
-            >{{ customer_summary.tag_label }}</span>
             {% endif %}
             {% if order.is_walk_in %}
             <span class="badge badge--walk-in">{% if unscheduled %}Unscheduled {% endif %}Walk-in</span>
@@ -81,31 +72,14 @@
             {% for side_name, side_count in order.side_summary %}
             <span class="badge badge--side">{{ side_count }}× {{ side_name }}</span>
             {% endfor %}
+            {% for merch_name, merch_count in order.merch_summary %}
+            <span class="badge badge--merch">{{ merch_count }}× {{ merch_name }}</span>
+            {% endfor %}
             {% if order.has_cookie %}
             <span class="badge badge--cookie">{{ order.cookie_count }}× Cookie</span>
             {% endif %}
-            {% for drink_name, drink_count in order.drink_summary %}
-            <span class="badge badge--drink">{{ drink_count }}× {{ drink_name }}</span>
-            {% endfor %}
-            {% if order.released and selected_date >= today %}
-            <span class="badge badge--released">Capacity released</span>
-            {% elif release_candidate %}
-                {% if can_complete %}
-                <button
-                    type="button"
-                    class="badge badge--candidate badge--candidate-action"
-                    data-order-complete-button
-                    data-order-complete-url="{{ url_for('dashboard.complete_square_order') }}"
-                    data-service-date="{{ selected_date.isoformat() }}"
-                    data-order-id="{{ order.order_id }}"
-                    data-order-label="{{ customer_label }} at {{ window.pickup_at.strftime('%-I:%M %p') }}"
-                    draggable="false"
-                    aria-label="Mark {{ customer_label }} completed in Square"
-                    title="Mark this order completed in Square"
-                >Release candidate</button>
-                {% else %}
-                <span class="badge badge--candidate">Release candidate</span>
-                {% endif %}
+            {% if order.drink_count %}
+            <span class="badge badge--drink">{{ order.drink_count }}× Drink{% if order.drink_count != 1 %}s{% endif %}</span>
             {% endif %}
         </div>
     </div>
@@ -131,8 +105,9 @@
         <span>{{ order.note }}</span>
     </div>
     {% endif %}
+    {% set boxed_action = namespace(rendered=false) %}
     <ul class="item-list">
-        {% for item in order.production_items %}
+        {% for item in order.card_items %}
         {% set item_index = loop.index0 %}
         {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
         <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}">
@@ -143,6 +118,19 @@
                 </div>
                 {% if item.category == "pizza" and selected_date >= today %}
                 <div class="pizza-bake-controls">
+                    {% if selected_date >= today and not boxed_action.rendered %}
+                    <button
+                        type="button"
+                        class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
+                        data-order-boxed-button
+                        data-order-id="{{ order.order_id }}"
+                        data-service-date="{{ selected_date.isoformat() }}"
+                        aria-pressed="{{ 'true' if boxed_at else 'false' }}"
+                        draggable="false"
+                    >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
+                    {% set boxed_action.rendered = true %}
+                    {% endif %}
+                    <div class="pizza-bake-stack">
                     {% for unit_index in range(item.quantity) %}
                     {% set pie_key = pie_base_key if unit_index == 0 else pie_base_key ~ '|' ~ unit_index %}
                     {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
@@ -153,6 +141,11 @@
                             data-bake-timer
                             data-bake-duration-seconds="480"
                             data-bake-timer-key="{{ pie_key }}"
+                            data-timer-order-id="{{ order.order_id }}"
+                            data-timer-pizza-name="{{ item.display_name }}"
+                            data-timer-customer-label="{{ customer_label }}"
+                            data-timer-pickup-label="{% if unscheduled %}Unscheduled{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
+                            data-timer-unit-label="{% if item.quantity > 1 %}{{ unit_index + 1 }}/{{ item.quantity }}{% endif %}"
                             data-timer-status="{{ pie_state.timer_status if pie_state else 'idle' }}"
                             data-timer-remaining-ms="{{ pie_state.timer_remaining_ms if pie_state else 480000 }}"
                             data-timer-end-at-ms="{{ pie_state.timer_end_at_ms if pie_state and pie_state.timer_end_at_ms else '' }}"
@@ -176,6 +169,7 @@
                         </div>
                     </div>
                     {% endfor %}
+                    </div>
                 </div>
                 {% endif %}
             </div>
@@ -191,6 +185,19 @@
         </li>
         {% endfor %}
     </ul>
+    {% if selected_date >= today and not boxed_action.rendered %}
+    <div class="order-boxed-fallback">
+        <button
+            type="button"
+            class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
+            data-order-boxed-button
+            data-order-id="{{ order.order_id }}"
+            data-service-date="{{ selected_date.isoformat() }}"
+            aria-pressed="{{ 'true' if boxed_at else 'false' }}"
+            draggable="false"
+        >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
+    </div>
+    {% endif %}
     </div>
     {% if selected_date >= today and order.pizza_units %}
     <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">

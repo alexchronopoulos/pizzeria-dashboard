@@ -99,6 +99,37 @@
       </form>
     </section>
     {% endif %}
+    {% if not is_manual and selected_date >= today and (capacity_released or release_candidate) %}
+    <section class="order-details-section capacity-release-details">
+      <div>
+        <h3>Pickup capacity</h3>
+        {% if capacity_released %}
+        <p>This order has already released its reserved pizza capacity.</p>
+        {% else %}
+        <p>Complete this paid Square pickup order early to make its reserved pizza capacity available again.</p>
+        {% endif %}
+      </div>
+      <div class="capacity-release-actions">
+        {% if capacity_released %}
+        <span class="badge badge--released">Capacity Released</span>
+        {% elif can_release_capacity %}
+        <button
+          type="button"
+          class="badge badge--candidate badge--candidate-action"
+          data-order-complete-button
+          data-order-complete-url="{{ url_for('dashboard.complete_square_order') }}"
+          data-service-date="{{ selected_date.isoformat() }}"
+          data-order-id="{{ order.order_id }}"
+          data-order-label="{{ modal_customer_name }}{% if capacity_release_pickup_at %} at {{ capacity_release_pickup_at.strftime('%-I:%M %p') }}{% endif %}"
+          aria-label="Release capacity for {{ modal_customer_name }}"
+          title="Mark this order completed in Square and release its pickup capacity"
+        >Release Capacity</button>
+        {% else %}
+        <span class="badge badge--candidate">Release Capacity</span>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
     {% if can_remove_unpaid_order %}
     <section class="order-details-section unpaid-order-removal">
       <div>
@@ -152,6 +183,30 @@
       <p class="dashboard-order-removal-warning">
         {% if is_manual %}This cannot be undone from the dashboard.{% else %}The Square order remains exactly as it is.{% endif %}
       </p>
+    </section>
+    <section class="order-details-section vip-customer-editor">
+      <div>
+        <h3>VIP customer</h3>
+        {% if can_toggle_vip %}
+        <p>Saved only in the dashboard. VIP customers get a star on their production cards.</p>
+        {% else %}
+        <p>This order does not have a reliable customer identity to save as a VIP.</p>
+        {% endif %}
+      </div>
+      {% if can_toggle_vip %}
+      <div class="vip-customer-actions">
+        <button
+          type="button"
+          class="vip-customer-button{% if is_vip %} is-vip{% endif %}"
+          data-order-vip-button
+          data-order-vip-url="{{ url_for('dashboard.update_order_vip') }}"
+          data-service-date="{{ selected_date.isoformat() }}"
+          data-order-id="{{ order.order_id }}"
+          data-is-vip="{{ 'true' if is_vip else 'false' }}"
+        >{% if is_vip %}★ Remove VIP{% else %}☆ Mark as VIP{% endif %}</button>
+        <span data-order-vip-status aria-live="polite"></span>
+      </div>
+      {% endif %}
     </section>
     <section class="order-details-section internal-note-editor">
       <div class="internal-note-editor-heading">
@@ -222,7 +277,7 @@
     <section class="order-details-section">
       <h3>Kitchen view</h3>
       <div class="detail-item-list">
-        {% for item in order.production_items %}
+        {% for item in order.items if item.category != "slice" %}
         <div class="detail-item">
           <div class="detail-item-heading"><strong>{{ item.quantity }}× {{ item.display_name }}</strong><span>{{ item.category }}</span></div>
           {% if item.production_modifiers %}

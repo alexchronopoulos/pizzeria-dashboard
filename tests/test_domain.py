@@ -429,6 +429,8 @@ def test_main_order_salads_and_sides_count_toward_inventory_demand() -> None:
         "cookie",
         "merch",
     ]
+    assert order.card_items == ()
+    assert order.merch_summary == (("Mari T-Shirt", 1),)
 
 
 def test_scheduled_non_pizza_order_stays_on_board_and_slot_is_not_empty() -> None:
@@ -482,3 +484,23 @@ def test_non_pizza_production_walk_ins_are_visible_but_cookie_only_stays_hidden(
 
     assert board.unscheduled_orders == (merch, salad)
     assert cookie not in board.unscheduled_orders
+
+
+def test_legacy_cached_primary_salad_is_recognized_from_name_or_catalog_category() -> None:
+    from pizzeria_dashboard.domain import Item, Order
+    from datetime import datetime
+
+    name_salad = Item("Cucumber Salad", 1, "other")
+    category_salad = Item("Seasonal Greens", 2, "other", catalog_categories=("Salads",))
+    order = Order(
+        order_id="legacy-main-salads",
+        customer_name="Alex R.",
+        pickup_at=datetime(2026, 8, 13, 16, 0),
+        items=(name_salad, category_salad),
+    )
+
+    assert name_salad.is_salad is True
+    assert category_salad.is_salad is True
+    assert order.has_salad is True
+    assert order.salad_count == 3
+    assert order.card_items == ()

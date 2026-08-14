@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.16">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.19">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -100,8 +100,10 @@
     <strong data-pizza-countdown-value>{{ service.total_pizzas }}</strong>
     <span>pizzas all day</span>
 </aside>
+<aside class="active-timer-rail" data-active-timer-rail aria-label="Active timers" hidden></aside>
 {% endif %}
 
+<button class="jump-to-top" type="button" data-jump-to-top aria-label="Jump to all-day counts">↑ Top</button>
 <div class="new-order-toast-region" data-new-order-toast-region aria-live="polite" aria-atomic="false"></div>
 
 <dialog id="order-details-dialog" class="order-details-dialog" aria-labelledby="order-details-dialog-title">
@@ -118,5 +120,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.16') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.24') }}" defer></script>
 {% endblock %}

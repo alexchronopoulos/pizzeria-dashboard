@@ -189,7 +189,20 @@ class Item:
 
     @property
     def is_salad(self) -> bool:
-        return self.category == "salad"
+        """Return whether this main line should behave as a salad.
+
+        Older cached Square orders can predate main-item category enrichment and
+        therefore retain ``other`` even when the line name/category clearly says
+        Salad. Keep primary-item behavior consistent with legacy salad modifiers.
+        """
+        if self.category == "salad":
+            return True
+        if re.search(r"\bsalads?\b", self.name, re.IGNORECASE):
+            return True
+        return any(
+            re.search(r"\bsalads?\b", category_name, re.IGNORECASE)
+            for category_name in self.catalog_categories
+        )
 
     @property
     def is_side(self) -> bool:
@@ -298,13 +311,34 @@ class Order:
     def production_items(self) -> tuple[Item, ...]:
         """Items that require attention on the production dashboard.
 
-        Drinks and individual slices stay in the cached Square order, but are
-        omitted from the main item list. Drinks are summarized as compact order
-        badges instead. Salads, sides, desserts, cookies, merch, and other
+        Individual slices and drinks stay in the cached Square order but are
+        omitted from production eligibility. Drinks remain available to Order
+        Details / Kitchen view, while the main production card summarizes them as
+        one count badge. Salads, sides, desserts, cookies, merch, and other
         kitchen-relevant main items remain visible even when an order has no pie.
         """
         return tuple(
-            item for item in self.items if item.category not in {"drink", "slice"}
+            item
+            for item in self.items
+            if item.category not in {"slice", "drink"}
+        )
+
+    @property
+    def card_items(self) -> tuple[Item, ...]:
+        """Main item lines that belong in the pizza/work list on the card.
+
+        Salads, sides, cookies, and merchandise are summarized as compact
+        order-level badges. Keeping them out of the pizza list prevents the
+        fast-scanning kitchen view from mixing prep/counter items with pies.
+        """
+        return tuple(
+            item
+            for item in self.production_items
+            if not item.is_salad
+            and not item.is_side
+            and not item.is_cookie
+            and not item.is_drink
+            and item.category != "merch"
         )
 
     @property
@@ -408,6 +442,20 @@ class Order:
     def drink_summary(self) -> tuple[tuple[str, int], ...]:
         return tuple(
             sorted(self.drink_counts.items(), key=lambda entry: entry[0].casefold())
+        )
+
+    @property
+    def merch_counts(self) -> Counter[str]:
+        counts: Counter[str] = Counter()
+        for item in self.production_items:
+            if item.category == "merch":
+                counts[item.display_name] += item.quantity
+        return counts
+
+    @property
+    def merch_summary(self) -> tuple[tuple[str, int], ...]:
+        return tuple(
+            sorted(self.merch_counts.items(), key=lambda entry: entry[0].casefold())
         )
 
     @property
