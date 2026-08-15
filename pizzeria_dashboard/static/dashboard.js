@@ -1268,27 +1268,93 @@
         timerRail.hidden = hiddenTimers.length === 0;
     };
 
-    const boxedActivePizzaCounts = () => {
+    const isDoughCommittedTimerStatus = (status) => (
+        status === "running" || status === "paused" || status === "done"
+    );
+
+    const timerCommittedPizzaCountsByOrder = () => {
         const counts = new Map();
         if (!decrementAllDayCounts) {
             return counts;
         }
         timersByKey.forEach((timer, key) => {
-            const orderId = timer.dataset.timerOrderId || "";
-            if (!orderId || !boxedOrders[orderId]) {
-                return;
-            }
             const state = effectiveTimerState(key);
-            if (!isActiveTimerStatus(state.timer_status)) {
+            if (!isDoughCommittedTimerStatus(state.timer_status)) {
                 return;
             }
+            const orderId = timer.dataset.timerOrderId || "";
             const pizzaName = timer.dataset.timerPizzaName || "";
-            if (!pizzaName) {
+            if (!orderId || !pizzaName) {
                 return;
             }
-            counts.set(pizzaName, (counts.get(pizzaName) || 0) + 1);
+            if (!counts.has(orderId)) {
+                counts.set(orderId, new Map());
+            }
+            const orderCounts = counts.get(orderId);
+            orderCounts.set(pizzaName, (orderCounts.get(pizzaName) || 0) + 1);
         });
         return counts;
+    };
+
+    const committedPizzaCounts = () => {
+        const counts = new Map();
+        if (!decrementAllDayCounts) {
+            return counts;
+        }
+        const timedByOrder = timerCommittedPizzaCountsByOrder();
+
+        timedByOrder.forEach((orderCounts) => {
+            orderCounts.forEach((quantity, pizzaName) => {
+                counts.set(pizzaName, (counts.get(pizzaName) || 0) + quantity);
+            });
+        });
+
+        // Boxing is the fallback for a pizza whose timer was missed. Only add
+        // the still-idle pizzas from a boxed order so a started timer is never
+        // counted twice.
+        rowsByOrderId.forEach((row, orderId) => {
+            if (!boxedOrders[orderId]) {
+                return;
+            }
+            const timedOrderCounts = timedByOrder.get(orderId) || new Map();
+            Object.entries(parseOrderCounts(row, "orderPizzaCounts")).forEach(([pizzaName, quantity]) => {
+                const units = Math.max(0, Number.parseInt(quantity, 10) || 0);
+                const timedUnits = timedOrderCounts.get(pizzaName) || 0;
+                const boxedFallbackUnits = Math.max(units - timedUnits, 0);
+                if (boxedFallbackUnits > 0) {
+                    counts.set(pizzaName, (counts.get(pizzaName) || 0) + boxedFallbackUnits);
+                }
+            });
+        });
+        return counts;
+    };
+
+    const committedPizzaUnitCount = () => {
+        if (!decrementAllDayCounts) {
+            return 0;
+        }
+        let committed = 0;
+        const timedUnitsByOrder = new Map();
+        timersByKey.forEach((timer, key) => {
+            const state = effectiveTimerState(key);
+            if (!isDoughCommittedTimerStatus(state.timer_status)) {
+                return;
+            }
+            committed += 1;
+            const orderId = timer.dataset.timerOrderId || "";
+            if (orderId) {
+                timedUnitsByOrder.set(orderId, (timedUnitsByOrder.get(orderId) || 0) + 1);
+            }
+        });
+        rowsByOrderId.forEach((row, orderId) => {
+            if (!boxedOrders[orderId]) {
+                return;
+            }
+            const orderUnits = Math.max(0, Number.parseInt(row.dataset.orderPizzaUnits || "0", 10) || 0);
+            const timedUnits = timedUnitsByOrder.get(orderId) || 0;
+            committed += Math.max(orderUnits - timedUnits, 0);
+        });
+        return committed;
     };
 
     const formatBoxedAt = (value) => {
@@ -1337,16 +1403,8 @@
             return;
         }
         const total = Math.max(0, Number.parseInt(board.dataset.totalPizzas || "0", 10) || 0);
-        let boxedPizzas = 0;
-        rowsByOrderId.forEach((row, orderId) => {
-            if (!boxedOrders[orderId]) {
-                return;
-            }
-            boxedPizzas += Math.max(0, Number.parseInt(row.dataset.orderPizzaUnits || "0", 10) || 0);
-        });
-        const activeBoxedPizzas = Array.from(boxedActivePizzaCounts().values())
-            .reduce((sum, value) => sum + value, 0);
-        const remaining = Math.max(total - boxedPizzas + activeBoxedPizzas, 0);
+        const committed = committedPizzaUnitCount();
+        const remaining = decrementAllDayCounts ? Math.max(total - committed, 0) : total;
         const value = countdown.querySelector("[data-pizza-countdown-value]");
         if (value) {
             value.textContent = String(remaining);
@@ -1385,14 +1443,13 @@
         return counts;
     };
 
-    const renderAllDaySummaryRows = (rows, boxedCounts, restoredCounts = new Map()) => {
+    const renderAllDaySummaryRows = (rows, consumedCounts) => {
         rows.forEach((row) => {
             const fullCount = Math.max(0, Number.parseInt(row.dataset.fullCount || "0", 10) || 0);
             const summaryName = row.dataset.summaryName || "";
-            const boxedCount = boxedCounts.get(summaryName) || 0;
-            const restoredCount = restoredCounts.get(summaryName) || 0;
+            const consumedCount = consumedCounts.get(summaryName) || 0;
             const remaining = decrementAllDayCounts
-                ? Math.max(fullCount - boxedCount + restoredCount, 0)
+                ? Math.max(fullCount - consumedCount, 0)
                 : fullCount;
             const count = row.querySelector("[data-summary-count]");
             if (count) {
@@ -1402,17 +1459,15 @@
     };
 
     const renderAllDayCounts = () => {
-        const boxedPies = boxedCountsFor("orderPizzaCounts");
-        const activeBoxedPies = boxedActivePizzaCounts();
+        const consumedPies = committedPizzaCounts();
         const boxedModifiers = boxedCountsFor("orderModifierCounts");
-        renderAllDaySummaryRows(pieAllDayRows, boxedPies, activeBoxedPies);
+        renderAllDaySummaryRows(pieAllDayRows, consumedPies);
         renderAllDaySummaryRows(modifierAllDayRows, boxedModifiers);
 
         if (pieAllDayTotal) {
             const full = Math.max(0, Number.parseInt(pieAllDayTotal.dataset.fullCount || "0", 10) || 0);
-            const boxed = Array.from(boxedPies.values()).reduce((total, value) => total + value, 0);
-            const active = Array.from(activeBoxedPies.values()).reduce((total, value) => total + value, 0);
-            const remaining = decrementAllDayCounts ? Math.max(full - boxed + active, 0) : full;
+            const consumed = Array.from(consumedPies.values()).reduce((total, value) => total + value, 0);
+            const remaining = decrementAllDayCounts ? Math.max(full - consumed, 0) : full;
             pieAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} remaining` : `${remaining} total`;
         }
         if (modifierAllDayTotal) {

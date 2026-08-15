@@ -2228,6 +2228,19 @@ def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza
     assert "background: #f2e5d8;" in css
 
 
+def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> None:
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    assert "isDoughCommittedTimerStatus" in javascript
+    assert 'status === "running" || status === "paused" || status === "done"' in javascript
+    assert "committedPizzaCounts" in javascript
+    assert "committedPizzaUnitCount" in javascript
+    assert 'parseOrderCounts(row, "orderPizzaCounts")' in javascript
+    assert "Math.max(units - timedUnits, 0)" in javascript
+    assert "Math.max(orderUnits - timedUnits, 0)" in javascript
+    assert "Math.max(total - committed, 0)" in javascript
+    assert "Math.max(fullCount - consumedCount, 0)" in javascript
+
+
 def test_done_timer_rail_can_be_dismissed_per_device() -> None:
     javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
     assert "pizzeria-dashboard:dismissed-done-timers:" in javascript
