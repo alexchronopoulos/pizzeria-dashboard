@@ -150,6 +150,8 @@
                             data-bake-timer-key="{{ pie_key }}"
                             data-timer-order-id="{{ order.order_id }}"
                             data-timer-pizza-name="{{ item.display_name }}"
+                            data-timer-line-key="{{ pie_base_key }}"
+                            data-timer-line-quantity="{{ item.quantity }}"
                             data-timer-customer-label="{{ customer_label }}"
                             data-timer-pickup-label="{% if unscheduled %}Unscheduled{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
                             data-timer-unit-label="{% if item.quantity > 1 %}{{ unit_index + 1 }}/{{ item.quantity }}{% endif %}"
