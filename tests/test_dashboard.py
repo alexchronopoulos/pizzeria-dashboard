@@ -332,6 +332,67 @@ def test_incremental_refresh_detects_staff_note_changes_from_another_device(
     assert payload["board_content_revision"] == saved.get_json()["board_content_revision"]
 
 
+def test_service_notes_button_log_and_new_note_indicator(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = date(2026, 8, 14)
+
+    initial = client.get(f"/?date={selected.isoformat()}")
+    assert initial.status_code == 200
+    assert b"Service notes" in initial.data
+    assert b'data-service-notes-open' in initial.data
+    assert b'data-service-notes-latest-id="0"' in initial.data
+    assert b"No notes yet for this service." in initial.data
+
+    added = client.post(
+        "/service-note",
+        json={
+            "service_date": selected.isoformat(),
+            "note": "Out of sausage for additions",
+        },
+    )
+    assert added.status_code == 200
+    payload = added.get_json()
+    assert payload["ok"] is True
+    assert payload["note"]["text"] == "Out of sausage for additions"
+    assert payload["note"]["id"] > 0
+    assert payload["board_content_revision"]
+
+    rendered = client.get(f"/?date={selected.isoformat()}")
+    assert b"Out of sausage for additions" in rendered.data
+    assert f'data-service-notes-latest-id="{payload["note"]["id"]}"'.encode() in rendered.data
+    assert b'data-service-note-id=' in rendered.data
+
+    another_day = client.get("/?date=2026-08-15")
+    assert b"Out of sausage for additions" not in another_day.data
+
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    assert "pizzeria-dashboard:service-notes-seen:" in javascript
+    assert "data-service-notes-unread" in rendered.get_data(as_text=True)
+    assert "renderUnreadIndicator" in javascript
+    assert "board.dataset.boardContentRevision" in javascript
+
+
+def test_service_note_rejects_blank_and_oversized_text(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = "2026-08-14"
+
+    blank = client.post(
+        "/service-note",
+        json={"service_date": selected, "note": "   "},
+    )
+    assert blank.status_code == 400
+    assert blank.get_json()["ok"] is False
+
+    oversized = client.post(
+        "/service-note",
+        json={"service_date": selected, "note": "x" * 2001},
+    )
+    assert oversized.status_code == 400
+    assert oversized.get_json()["ok"] is False
+
+
 def test_auto_refresh_preferences_persist_in_sqlite(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     client = app.test_client()
@@ -2278,10 +2339,18 @@ def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza
 
 def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> None:
     javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    template = Path("pizzeria_dashboard/templates/_production_board.html").read_text()
     assert "isDoughCommittedTimerStatus" in javascript
     assert 'status === "running" || status === "paused" || status === "done"' in javascript
+    assert "timerCommittedPizzaLines" in javascript
+    assert "timer.dataset.timerLineKey || key" in javascript
+    assert 'timer.dataset.timerLineQuantity || "1"' in javascript
+    assert "committedLines.has(lineKey)" in javascript
+    assert "committed += quantity" in javascript
     assert "committedPizzaCounts" in javascript
     assert "committedPizzaUnitCount" in javascript
+    assert 'data-timer-line-key="{{ pie_base_key }}"' in template
+    assert 'data-timer-line-quantity="{{ item.quantity }}"' in template
     assert 'parseOrderCounts(row, "orderPizzaCounts")' in javascript
     assert "Math.max(units - timedUnits, 0)" in javascript
     assert "Math.max(orderUnits - timedUnits, 0)" in javascript
@@ -2308,3 +2377,17 @@ def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_no
     if visit_medal != -1:
         assert customer_wrap < visit_medal < order_badges
     assert 'class="order-capacity-control"' not in html
+
+
+def test_zero_pizza_finale_rains_pizza_slices_for_one_minute():
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+
+    assert "PIZZA_RAIN_DURATION_MS = 60000" in javascript
+    assert 'slice.textContent = "🍕"' in javascript
+    assert 'rain.className = "pizza-finale-rain"' in javascript
+    assert 'slice.className = "pizza-finale-slice"' in javascript
+    assert "pointer-events: none" in css
+    assert "@keyframes pizza-finale-rain-fall" in css
+    assert ".pizza-finale-rain" in css
+    assert "prefers-reduced-motion: reduce" in css

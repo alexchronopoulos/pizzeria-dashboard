@@ -1272,26 +1272,39 @@
         status === "running" || status === "paused" || status === "done"
     );
 
-    const timerCommittedPizzaCountsByOrder = () => {
-        const counts = new Map();
+    const timerCommittedPizzaLines = () => {
+        const committedLines = new Map();
         if (!decrementAllDayCounts) {
-            return counts;
+            return committedLines;
         }
         timersByKey.forEach((timer, key) => {
             const state = effectiveTimerState(key);
             if (!isDoughCommittedTimerStatus(state.timer_status)) {
                 return;
             }
+            const lineKey = timer.dataset.timerLineKey || key;
+            if (committedLines.has(lineKey)) {
+                return;
+            }
             const orderId = timer.dataset.timerOrderId || "";
             const pizzaName = timer.dataset.timerPizzaName || "";
+            const quantity = Math.max(1, Number.parseInt(timer.dataset.timerLineQuantity || "1", 10) || 1);
             if (!orderId || !pizzaName) {
                 return;
             }
+            committedLines.set(lineKey, {orderId, pizzaName, quantity});
+        });
+        return committedLines;
+    };
+
+    const timerCommittedPizzaCountsByOrder = () => {
+        const counts = new Map();
+        timerCommittedPizzaLines().forEach(({orderId, pizzaName, quantity}) => {
             if (!counts.has(orderId)) {
                 counts.set(orderId, new Map());
             }
             const orderCounts = counts.get(orderId);
-            orderCounts.set(pizzaName, (orderCounts.get(pizzaName) || 0) + 1);
+            orderCounts.set(pizzaName, (orderCounts.get(pizzaName) || 0) + quantity);
         });
         return counts;
     };
@@ -1309,9 +1322,9 @@
             });
         });
 
-        // Boxing is the fallback for a pizza whose timer was missed. Only add
-        // the still-idle pizzas from a boxed order so a started timer is never
-        // counted twice.
+        // Boxing is the fallback for a pizza line whose timer was missed. Once
+        // any timer on a multi-quantity line is started, the full line quantity
+        // is already committed and must not be counted again when boxed.
         rowsByOrderId.forEach((row, orderId) => {
             if (!boxedOrders[orderId]) {
                 return;
@@ -1335,16 +1348,9 @@
         }
         let committed = 0;
         const timedUnitsByOrder = new Map();
-        timersByKey.forEach((timer, key) => {
-            const state = effectiveTimerState(key);
-            if (!isDoughCommittedTimerStatus(state.timer_status)) {
-                return;
-            }
-            committed += 1;
-            const orderId = timer.dataset.timerOrderId || "";
-            if (orderId) {
-                timedUnitsByOrder.set(orderId, (timedUnitsByOrder.get(orderId) || 0) + 1);
-            }
+        timerCommittedPizzaLines().forEach(({orderId, quantity}) => {
+            committed += quantity;
+            timedUnitsByOrder.set(orderId, (timedUnitsByOrder.get(orderId) || 0) + quantity);
         });
         rowsByOrderId.forEach((row, orderId) => {
             if (!boxedOrders[orderId]) {
@@ -1369,6 +1375,54 @@
             second: "2-digit",
         });
     };
+    const PIZZA_RAIN_DURATION_MS = 60000;
+    const PIZZA_RAIN_SPAWN_MS = 210;
+
+    const startPizzaRain = () => {
+        document.querySelector(".pizza-finale-rain")?.remove();
+
+        const rain = document.createElement("div");
+        rain.className = "pizza-finale-rain";
+        rain.setAttribute("aria-hidden", "true");
+        document.body.appendChild(rain);
+
+        const addSlice = () => {
+            const slice = document.createElement("span");
+            slice.className = "pizza-finale-slice";
+            slice.textContent = "🍕";
+            slice.style.left = `${Math.random() * 100}%`;
+            slice.style.setProperty("--pizza-rain-size", `${30 + Math.random() * 42}px`);
+            slice.style.setProperty("--pizza-rain-duration", `${5.4 + Math.random() * 4.8}s`);
+            slice.style.setProperty("--pizza-rain-drift", `${-150 + Math.random() * 300}px`);
+            slice.style.setProperty("--pizza-rain-start-rotate", `${-45 + Math.random() * 90}deg`);
+            slice.style.setProperty("--pizza-rain-end-rotate", `${360 + Math.random() * 1080}deg`);
+            rain.appendChild(slice);
+            slice.addEventListener("animationend", () => slice.remove(), {once: true});
+        };
+
+        // Start with a dense curtain, then keep a steady storm going for a full minute.
+        for (let index = 0; index < 18; index += 1) {
+            window.setTimeout(addSlice, index * 55);
+        }
+
+        const rainEndsAt = Date.now() + PIZZA_RAIN_DURATION_MS;
+        const interval = window.setInterval(() => {
+            if (Date.now() >= rainEndsAt || !rain.isConnected) {
+                window.clearInterval(interval);
+                return;
+            }
+            addSlice();
+            if (Math.random() < 0.28) {
+                addSlice();
+            }
+        }, PIZZA_RAIN_SPAWN_MS);
+
+        window.setTimeout(() => {
+            window.clearInterval(interval);
+            window.setTimeout(() => rain.remove(), 11000);
+        }, PIZZA_RAIN_DURATION_MS);
+    };
+
     const triggerPizzaFinale = () => {
         if (!countdown || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
             return;
@@ -1389,6 +1443,7 @@
             burst.appendChild(particle);
         }
         document.body.appendChild(burst);
+        startPizzaRain();
         countdown.classList.remove("pizza-countdown--celebrate");
         void countdown.offsetWidth;
         countdown.classList.add("pizza-countdown--celebrate");
@@ -1894,6 +1949,161 @@
             button.textContent = "Building history…";
         });
     });
+})();
+
+(() => {
+    const board = document.getElementById("production-board");
+    const dialog = document.querySelector("#service-notes-dialog");
+    const openButton = document.querySelector("[data-service-notes-open]");
+    const closeButton = dialog?.querySelector("[data-service-notes-close]");
+    const form = dialog?.querySelector("[data-service-note-form]");
+    const noteList = dialog?.querySelector("[data-service-notes-list]");
+    const emptyState = dialog?.querySelector("[data-service-notes-empty]");
+    const unreadIndicator = openButton?.querySelector("[data-service-notes-unread]");
+    const count = openButton?.querySelector("[data-service-notes-count]");
+    if (!board || !dialog || !openButton || !form || !noteList) {
+        return;
+    }
+
+    const serviceDate = openButton.dataset.serviceDate || board.dataset.serviceDate || "";
+    const seenStorageKey = `pizzeria-dashboard:service-notes-seen:${serviceDate}`;
+    let latestId = Math.max(0, Number.parseInt(openButton.dataset.serviceNotesLatestId || "0", 10) || 0);
+
+    const loadSeenId = () => {
+        try {
+            return Math.max(0, Number.parseInt(window.localStorage.getItem(seenStorageKey) || "0", 10) || 0);
+        } catch (_error) {
+            return 0;
+        }
+    };
+
+    const saveSeenId = (noteId) => {
+        try {
+            window.localStorage.setItem(seenStorageKey, String(noteId));
+        } catch (_error) {
+            // The notes remain usable even if this browser blocks local storage.
+        }
+    };
+
+    const renderUnreadIndicator = () => {
+        if (!unreadIndicator) {
+            return;
+        }
+        unreadIndicator.hidden = latestId <= loadSeenId();
+        openButton.classList.toggle("service-notes-button--unread", !unreadIndicator.hidden);
+    };
+
+    const markCurrentNotesSeen = () => {
+        if (latestId > 0) {
+            saveSeenId(latestId);
+        }
+        renderUnreadIndicator();
+    };
+
+    const openDialog = () => {
+        markCurrentNotesSeen();
+        if (typeof dialog.showModal === "function") {
+            dialog.showModal();
+        } else {
+            dialog.setAttribute("open", "");
+        }
+        const textarea = form.querySelector('textarea[name="note"]');
+        textarea?.focus();
+        noteList.scrollTop = noteList.scrollHeight;
+    };
+
+    const closeDialog = () => {
+        if (typeof dialog.close === "function") {
+            dialog.close();
+        } else {
+            dialog.removeAttribute("open");
+        }
+        openButton.focus();
+    };
+
+    const appendNote = (note) => {
+        const article = document.createElement("article");
+        article.className = "service-note";
+        article.dataset.serviceNoteId = String(note.id);
+
+        const time = document.createElement("time");
+        time.dateTime = note.created_at || "";
+        time.textContent = note.created_label || "Just now";
+        const text = document.createElement("p");
+        text.textContent = note.text || "";
+        article.append(time, text);
+        noteList.appendChild(article);
+        if (emptyState) {
+            emptyState.hidden = true;
+        }
+        noteList.scrollTop = noteList.scrollHeight;
+    };
+
+    openButton.addEventListener("click", openDialog);
+    closeButton?.addEventListener("click", closeDialog);
+    dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeDialog();
+    });
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+            closeDialog();
+        }
+    });
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const url = form.dataset.serviceNoteUrl;
+        const textarea = form.querySelector('textarea[name="note"]');
+        const submitButton = form.querySelector('button[type="submit"]');
+        const status = form.querySelector("[data-service-note-status]");
+        const note = textarea?.value.trim() || "";
+        if (!url || !textarea || !submitButton || !note) {
+            textarea?.focus();
+            return;
+        }
+
+        submitButton.disabled = true;
+        if (status) {
+            status.textContent = "Adding…";
+        }
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {"Accept": "application/json", "Content-Type": "application/json"},
+                body: JSON.stringify({service_date: serviceDate, note}),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The service note could not be added.");
+            }
+            appendNote(result.note);
+            latestId = Math.max(latestId, Number.parseInt(result.note?.id || "0", 10) || 0);
+            openButton.dataset.serviceNotesLatestId = String(latestId);
+            if (count) {
+                const nextCount = Math.max(0, Number.parseInt(count.textContent || "0", 10) || 0) + 1;
+                count.textContent = String(nextCount);
+                count.hidden = false;
+            }
+            if (result.board_content_revision) {
+                board.dataset.boardContentRevision = String(result.board_content_revision);
+            }
+            markCurrentNotesSeen();
+            textarea.value = "";
+            if (status) {
+                status.textContent = "Added";
+            }
+            textarea.focus();
+        } catch (error) {
+            if (status) {
+                status.textContent = String(error);
+            }
+        } finally {
+            submitButton.disabled = false;
+        }
+    });
+
+    renderUnreadIndicator();
 })();
 
 (() => {

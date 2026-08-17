@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -45,6 +45,14 @@ class PieProductionState:
     timer_end_at_ms: int | None
     oven_position: str | None
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceNote:
+    note_id: int
+    service_date: date
+    note: str
+    created_at: datetime
 
 
 OVEN_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
@@ -141,6 +149,16 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_order_internal_notes_service_date
                 ON order_internal_notes (service_date);
+
+            CREATE TABLE IF NOT EXISTS service_notes (
+                note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_date TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_service_notes_service_date
+                ON service_notes (service_date, note_id);
 
             CREATE TABLE IF NOT EXISTS pie_production_states (
                 service_date TEXT NOT NULL,
@@ -792,6 +810,56 @@ def save_order_internal_note(
             )
         _touch_board_content_revision(connection, service_date.isoformat())
     return normalized or None
+
+
+def load_service_notes_for_date(
+    path: Path, service_date: date
+) -> tuple[ServiceNote, ...]:
+    """Load the shared chronological note log for one service date."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT note_id, service_date, note, created_at
+            FROM service_notes
+            WHERE service_date = ?
+            ORDER BY note_id ASC
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    return tuple(
+        ServiceNote(
+            note_id=int(row["note_id"]),
+            service_date=date.fromisoformat(str(row["service_date"])),
+            note=str(row["note"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+        )
+        for row in rows
+    )
+
+
+def save_service_note(path: Path, service_date: date, note: str) -> ServiceNote:
+    """Append one shared service note and publish it to the other displays."""
+    normalized = str(note).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        raise ValueError("Service notes cannot be blank.")
+    created_at = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """
+            INSERT INTO service_notes (service_date, note, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (service_date.isoformat(), normalized, created_at.isoformat()),
+        )
+        note_id = int(cursor.lastrowid)
+        _touch_board_content_revision(connection, service_date.isoformat())
+    return ServiceNote(
+        note_id=note_id,
+        service_date=service_date,
+        note=normalized,
+        created_at=created_at,
+    )
 
 
 def _touch_board_content_revision(

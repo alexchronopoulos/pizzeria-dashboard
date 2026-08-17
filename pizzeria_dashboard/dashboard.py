@@ -36,6 +36,7 @@ from .database import (
     load_orders_for_date,
     load_pie_production_states,
     load_service_state_payload,
+    load_service_notes_for_date,
     load_sync_info,
     merge_orders_for_date,
     prune_pie_production_states,
@@ -45,6 +46,7 @@ from .database import (
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
+    save_service_note,
     save_vip_customer,
     delete_vip_customers,
     touch_board_content_revision,
@@ -280,6 +282,7 @@ def index() -> str:
         database_path, selected_date, _production_pie_keys(selected_date, orders)
     )
     internal_notes = load_order_internal_notes_for_date(database_path, selected_date)
+    service_notes = load_service_notes_for_date(database_path, selected_date)
     pie_states = load_pie_production_states(database_path, selected_date)
     ready_states = load_order_ready_states(database_path, selected_date)
     board_content_revision = load_board_content_revision(database_path, selected_date)
@@ -422,6 +425,8 @@ def index() -> str:
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
+        service_notes=service_notes,
+        service_notes_latest_id=(service_notes[-1].note_id if service_notes else 0),
         pie_states=pie_states,
         boxed_orders={
             order_id: boxed_at.astimezone(
@@ -769,6 +774,42 @@ def update_order_vip():
         delete_vip_customers(database_path, keys)
     revision = touch_board_content_revision(database_path, selected_date)
     return jsonify(ok=True, vip=vip, board_content_revision=revision)
+
+
+@blueprint.post("/service-note")
+def add_service_note():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_note = payload.get("note", "")
+    if raw_note is None:
+        raw_note = ""
+    if not isinstance(raw_note, str):
+        return jsonify(ok=False, error="The service note must be text."), 400
+    normalized = raw_note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return jsonify(ok=False, error="Enter a service note before adding it."), 400
+    if len(normalized) > 2000:
+        return jsonify(ok=False, error="Service notes are limited to 2,000 characters."), 400
+
+    database_path = _database_path()
+    saved = save_service_note(database_path, selected_date, normalized)
+    timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    local_created_at = saved.created_at.astimezone(timezone)
+    return jsonify(
+        ok=True,
+        note={
+            "id": saved.note_id,
+            "text": saved.note,
+            "created_at": local_created_at.isoformat(),
+            "created_label": local_created_at.strftime("%a %-I:%M %p"),
+        },
+        board_content_revision=load_board_content_revision(
+            database_path, selected_date
+        ),
+    )
 
 
 @blueprint.post("/order-note")

@@ -17,6 +17,7 @@ from pizzeria_dashboard.database import (
     load_pie_production_states,
     load_latest_service_state_before,
     load_service_state_payload,
+    load_service_notes_for_date,
     load_sync_info,
     load_vip_customer_keys,
     merge_orders_for_date,
@@ -29,6 +30,7 @@ from pizzeria_dashboard.database import (
     save_order_ready_state,
     save_order_slot_assignment,
     save_service_state_payload,
+    save_service_note,
     save_vip_customer,
     delete_vip_customers,
     update_pie_production_state,
@@ -58,6 +60,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "app_metadata",
         "order_slot_assignments",
         "order_internal_notes",
+        "service_notes",
         "pie_production_states",
         "order_ready_states",
         "vip_customers",
@@ -181,6 +184,25 @@ def test_internal_order_notes_survive_order_refresh_and_can_be_cleared(
     assert load_order_internal_note(
         database_path, service_date, orders[0].order_id
     ) is None
+
+
+def test_service_notes_are_date_scoped_and_bump_board_revision(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    first_date = date(2026, 8, 14)
+    second_date = date(2026, 8, 15)
+    initialize_database(database_path)
+
+    before = load_board_content_revision(database_path, first_date)
+    first = save_service_note(database_path, first_date, "Out of sausage")
+    second = save_service_note(database_path, first_date, "Limit Sungold Vodka Roni to 8")
+
+    assert first.note_id < second.note_id
+    assert [note.note for note in load_service_notes_for_date(database_path, first_date)] == [
+        "Out of sausage",
+        "Limit Sungold Vodka Roni to 8",
+    ]
+    assert load_service_notes_for_date(database_path, second_date) == ()
+    assert load_board_content_revision(database_path, first_date) != before
 
 
 def test_replacing_a_date_removes_stale_cached_orders(tmp_path: Path) -> None:

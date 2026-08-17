@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.19">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.20">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -11,6 +11,17 @@
             height="225"
         >
         <button class="manual-order-button" type="button" data-manual-order-open>Add order</button>
+        <button
+            class="service-notes-button"
+            type="button"
+            data-service-notes-open
+            data-service-date="{{ selected_date.isoformat() }}"
+            data-service-notes-latest-id="{{ service_notes_latest_id }}"
+        >
+            <span>Service notes</span>
+            {% if service_notes %}<span class="service-notes-count" data-service-notes-count>{{ service_notes|length }}</span>{% else %}<span class="service-notes-count" data-service-notes-count hidden>0</span>{% endif %}
+            <span class="service-notes-unread" data-service-notes-unread hidden aria-label="New service notes">!</span>
+        </button>
         <button class="service-setup-button" type="button" data-service-setup-open>Service setup</button>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
@@ -45,6 +56,50 @@
     Set <code>ORDER_SOURCE=square</code> and add <code>SQUARE_ACCESS_TOKEN</code> in <code>.env</code> when you are ready to pull live orders.
 </section>
 {% endif %}
+
+<dialog id="service-notes-dialog" class="service-notes-dialog" aria-labelledby="service-notes-dialog-title">
+    <div class="service-notes-dialog-shell">
+        <div class="service-notes-dialog-toolbar">
+            <div>
+                <strong id="service-notes-dialog-title">Service notes</strong>
+                <span>{{ selected_date.strftime('%A, %B %-d') }} · shared notes for this service</span>
+            </div>
+            <button type="button" class="service-notes-close" data-service-notes-close aria-label="Close service notes">Close</button>
+        </div>
+        <div class="service-notes-dialog-body">
+            <div class="service-notes-list" data-service-notes-list aria-live="polite">
+                <p class="service-notes-empty" data-service-notes-empty{% if service_notes %} hidden{% endif %}>No notes yet for this service.</p>
+                {% for service_note in service_notes %}
+                {% set note_created_at = service_note.created_at.astimezone(service_timezone) %}
+                <article class="service-note" data-service-note-id="{{ service_note.note_id }}">
+                    <time datetime="{{ note_created_at.isoformat() }}">{{ note_created_at.strftime('%a %-I:%M %p') }}</time>
+                    <p>{{ service_note.note }}</p>
+                </article>
+                {% endfor %}
+            </div>
+            <form
+                class="service-note-form"
+                data-service-note-form
+                data-service-note-url="{{ url_for('dashboard.add_service_note') }}"
+            >
+                <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+                <label for="service-note-text">Add a note</label>
+                <textarea
+                    id="service-note-text"
+                    name="note"
+                    rows="4"
+                    maxlength="2000"
+                    required
+                    placeholder="Out of sausage, limit Sungold Vodka Roni to 8, save two salads for later…"
+                ></textarea>
+                <div class="service-note-form-actions">
+                    <span data-service-note-status aria-live="polite"></span>
+                    <button type="submit">Add note</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</dialog>
 
 <dialog id="service-setup-dialog" class="service-setup-dialog" aria-labelledby="service-setup-dialog-title">
     <div class="service-setup-dialog-shell">
@@ -120,5 +175,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.25') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.28') }}" defer></script>
 {% endblock %}
