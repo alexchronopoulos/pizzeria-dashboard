@@ -67,6 +67,17 @@
                         value="{{ inventory.dough_prepared }}"
                     >
                 </label>
+                <label class="prep-input prep-input--dough">
+                    <span># of Slice Pies</span>
+                    <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputmode="numeric"
+                        name="slice_pies"
+                        value="{{ inventory.dough_slice_pies }}"
+                    >
+                </label>
                 {% for salad in inventory.salads %}
                 <input type="hidden" name="salad_name" value="{{ salad.name }}">
                 <label class="prep-input prep-input--salad">

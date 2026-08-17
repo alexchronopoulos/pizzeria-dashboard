@@ -13,6 +13,7 @@ def test_carryover_uses_previous_remaining_and_drops_removed_menu_items() -> Non
         salad_prepared={"Cucumber Salad": 8},
         side_prepared={"Side Ranch": 5, "Side Hot Honey": 4},
         cookie_prepared=12,
+        slice_pies=6,
     )
     previous_orders = (
         Order(
@@ -43,6 +44,7 @@ def test_carryover_uses_previous_remaining_and_drops_removed_menu_items() -> Non
     )
 
     assert carried.dough_balls_prepared == 24
+    assert carried.slice_pies == 0
     assert carried.salad_prepared == {"Cucumber Salad": 2}
     assert carried.side_prepared == {"Side Hot Honey": 3}
     assert "Side Ranch" not in carried.side_prepared

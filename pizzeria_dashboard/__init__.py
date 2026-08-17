@@ -46,6 +46,7 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         DATABASE_PATH=str(data_directory / "pizza_dashboard.db"),
         LEGACY_SERVICE_STATE_PATH=str(data_directory / "service_state.json"),
         PIZZA_CAPACITY_PER_WINDOW=_env_int("PIZZA_CAPACITY_PER_WINDOW", 3),
+        ORDER_PREP_BUFFER_MINUTES=_env_int("ORDER_PREP_BUFFER_MINUTES", 20),
         ORDER_SOURCE=os.getenv("ORDER_SOURCE", "auto"),
         AUTO_SEED_SAMPLE_DATA=_env_bool("AUTO_SEED_SAMPLE_DATA", True),
         SQUARE_ACCESS_TOKEN=os.getenv("SQUARE_ACCESS_TOKEN", ""),

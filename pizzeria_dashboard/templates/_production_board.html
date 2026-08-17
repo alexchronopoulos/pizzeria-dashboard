@@ -250,7 +250,11 @@
         <div class="inventory-equation">
             <span><strong>{{ inventory.dough_prepared }}</strong> prepared</span>
             <span aria-hidden="true">−</span>
-            <span><strong>{{ inventory.dough_ordered }}</strong> pizzas ordered</span>
+            <span><strong>{{ inventory.dough_ordered }}</strong> whole pies ordered</span>
+            <span aria-hidden="true">−</span>
+            <span><strong>{{ inventory.dough_slice_pies }}</strong> slice pies</span>
+            <span aria-hidden="true">−</span>
+            <span><strong>{{ inventory.dough_open_slot_reserve }}</strong> open-slot reserve</span>
         </div>
         <div class="dough-pizza-breakdown" aria-labelledby="dough-pizza-breakdown-heading">
             <div class="dough-pizza-breakdown-heading">
@@ -306,6 +310,7 @@
 
     <article class="operations-card operations-card--release">
         <span class="summary-label">Available pickup slots</span>
+        {% if selected_date == today %}<span class="operations-caption">{{ order_prep_buffer_minutes }}-minute preparation buffer</span>{% endif %}
         <div class="availability-group">
             <div class="availability-heading">
                 <strong>Slots available for up to 2 pies</strong>

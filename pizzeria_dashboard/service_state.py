@@ -25,6 +25,7 @@ class ServiceState:
     salad_prepared: dict[str, int]
     side_prepared: dict[str, int]
     cookie_prepared: int
+    slice_pies: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +45,8 @@ class PreparedStock:
 class InventorySummary:
     dough_prepared: int
     dough_ordered: int
+    dough_slice_pies: int
+    dough_open_slot_reserve: int
     dough_remaining: int
     salads: tuple[PreparedStock, ...]
     sides: tuple[PreparedStock, ...]
@@ -102,6 +105,7 @@ def default_state(
             for name in _unique_names(tuple(side_types))
         },
         cookie_prepared=0,
+        slice_pies=0,
     )
 
 
@@ -139,6 +143,7 @@ def _state_from_payload(
         cookie_prepared=_nonnegative_int(
             raw.get("cookie_prepared"), defaults.cookie_prepared
         ),
+        slice_pies=_nonnegative_int(raw.get("slice_pies"), defaults.slice_pies),
     )
 
 
@@ -213,6 +218,7 @@ def carryover_state(
             for name in side_names
         },
         cookie_prepared=max(previous_state.cookie_prepared - demand_cookies, 0),
+        slice_pies=0,
     )
 
 
@@ -237,6 +243,7 @@ def save_state(path: Path, service_date: date, state: ServiceState) -> None:
             "salad_prepared": state.salad_prepared,
             "side_prepared": state.side_prepared,
             "cookie_prepared": state.cookie_prepared,
+            "slice_pies": state.slice_pies,
         },
     )
 
@@ -270,6 +277,7 @@ def state_from_form(
         cookie_prepared=_nonnegative_int(
             form.get("cookie_prepared"), defaults.cookie_prepared
         ),
+        slice_pies=_nonnegative_int(form.get("slice_pies"), defaults.slice_pies),
     )
 
 
@@ -305,6 +313,7 @@ def build_inventory_summary(
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
     *,
     orders: Iterable[Order] | None = None,
+    open_slot_dough_reserve: int = 0,
 ) -> InventorySummary:
     if orders is None:
         observed_salads = dict(service.salad_counts)
@@ -314,10 +323,18 @@ def build_inventory_summary(
         observed_salads, observed_sides, observed_cookies = _inventory_demand_from_orders(
             tuple(orders)
         )
+    reserved_for_open_slots = max(int(open_slot_dough_reserve), 0)
     return InventorySummary(
         dough_prepared=state.dough_balls_prepared,
         dough_ordered=service.total_pizzas,
-        dough_remaining=state.dough_balls_prepared - service.total_pizzas,
+        dough_slice_pies=state.slice_pies,
+        dough_open_slot_reserve=reserved_for_open_slots,
+        dough_remaining=(
+            state.dough_balls_prepared
+            - service.total_pizzas
+            - state.slice_pies
+            - reserved_for_open_slots
+        ),
         salads=_stock_rows(
             configured_names=salad_types,
             observed_counts=observed_salads,

@@ -50,7 +50,14 @@ from .database import (
     touch_board_content_revision,
     update_pie_production_state,
 )
-from .domain import Item, Order, build_service_board, parse_ticket_pickup_time
+from .domain import (
+    Item,
+    Order,
+    PickupWindow,
+    ServiceBoard,
+    build_service_board,
+    parse_ticket_pickup_time,
+)
 from .customer_history import build_customer_visit_summary
 from .customer_history_sync import sync_customer_history
 from .service_config import (
@@ -206,6 +213,39 @@ def _production_pie_keys(service_date: date, orders: tuple[Order, ...]) -> tuple
     return tuple(keys)
 
 
+def _order_prep_buffer_minutes() -> int:
+    return max(int(current_app.config.get("ORDER_PREP_BUFFER_MINUTES", 20)), 0)
+
+
+def _available_pickup_windows(
+    service: ServiceBoard, selected_date: date, now: datetime
+) -> tuple[PickupWindow, ...]:
+    """Return pickup windows still usable for a new order.
+
+    The production team needs a full preparation window before pickup. Historical
+    dates retain their old availability display for review; future dates have no
+    elapsed slots, while today's list closes each slot 20 minutes before pickup.
+    """
+    windows = tuple(
+        window for window in service.windows if service.open_capacity(window) > 0
+    )
+    if selected_date != now.date():
+        return windows
+
+    cutoff = now.replace(tzinfo=None) + timedelta(
+        minutes=_order_prep_buffer_minutes()
+    )
+    return tuple(window for window in windows if window.pickup_at >= cutoff)
+
+
+def _open_slot_dough_reserve(
+    one_pie_windows: tuple[PickupWindow, ...],
+    two_pie_windows: tuple[PickupWindow, ...],
+) -> int:
+    """Reserve dough for the order capacity advertised in the availability card."""
+    return len(one_pie_windows) + (2 * len(two_pie_windows))
+
+
 def _auto_refresh_preferences() -> tuple[bool, int]:
     database_path = _database_path()
     configured_seconds = int(current_app.config.get("SQUARE_AUTO_REFRESH_SECONDS", 10))
@@ -296,12 +336,30 @@ def index() -> str:
         # even when today's inherited counts need no manual adjustment.
         if selected_date == now.date():
             save_state(database_path, selected_date, inventory_state)
+    current_service_time = now.replace(tzinfo=None)
+    available_pickup_windows = _available_pickup_windows(service, selected_date, now)
+    future_one_pie_windows = tuple(
+        window
+        for window in available_pickup_windows
+        if service.open_capacity(window) == 1
+    )
+    future_two_pie_windows = tuple(
+        window
+        for window in available_pickup_windows
+        if service.open_capacity(window) >= 2
+    )
+    open_slot_dough_reserve = (
+        _open_slot_dough_reserve(future_one_pie_windows, future_two_pie_windows)
+        if selected_date >= now.date()
+        else 0
+    )
     inventory = build_inventory_summary(
         service,
         inventory_state,
         inventory_salad_types,
         inventory_side_types,
         orders=orders,
+        open_slot_dough_reserve=open_slot_dough_reserve,
     )
     sync_info = load_sync_info(database_path, selected_date)
     # Customer visit reporting covers every cached online order for the selected
@@ -316,24 +374,6 @@ def index() -> str:
     customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
-    current_service_time = now.replace(tzinfo=None)
-    if selected_date == now.date():
-        future_one_pie_windows = tuple(
-            window
-            for window in service.one_pie_available_windows
-            if window.pickup_at >= current_service_time
-        )
-        future_two_pie_windows = tuple(
-            window
-            for window in service.two_pie_available_windows
-            if window.pickup_at >= current_service_time
-        )
-    else:
-        # Historical dates remain useful for review, while future dates have no
-        # elapsed service slots yet. Only today's operational lists need live
-        # time filtering.
-        future_one_pie_windows = service.one_pie_available_windows
-        future_two_pie_windows = service.two_pie_available_windows
     square_refresh_controls_visible = (
         source == "square"
         and bool(str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip())
@@ -360,6 +400,7 @@ def index() -> str:
         service_configuration=service_configuration,
         selected_day_hours=service_configuration.hours_for_date(selected_date),
         current_service_time=current_service_time,
+        order_prep_buffer_minutes=_order_prep_buffer_minutes(),
         square_configured=bool(
             str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
         ),

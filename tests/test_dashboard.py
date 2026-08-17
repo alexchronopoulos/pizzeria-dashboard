@@ -702,6 +702,7 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
         data={
             "service_date": "2026-07-31",
             "dough_balls_prepared": "30",
+            "slice_pies": "4",
             "salad_cucumber_salad": "12",
             "salad_kale_caesar_salad": "9",
             "side_name": ["Side Hot Honey", "Side Ranch"],
@@ -718,6 +719,7 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
     )
     assert payload == {
         "dough_balls_prepared": 30,
+        "slice_pies": 4,
         "salad_prepared": {
             "Cucumber Salad": 12,
             "Kale Caesar Salad": 9,
@@ -729,6 +731,8 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
         "cookie_prepared": 18,
     }
     assert b'value="30"' in response.data
+    assert b'name="slice_pies"' in response.data
+    assert b'value="4"' in response.data
 
 
 def test_sync_replaces_cache_and_records_sync_time(tmp_path: Path) -> None:
@@ -776,6 +780,50 @@ def test_inventory_summary_still_calculates_dough_remaining() -> None:
     assert inventory.cookies[0].prepared == 0
     assert inventory.cookies[0].ordered == 2
     assert inventory.cookies[0].remaining == -2
+
+
+def test_inventory_summary_subtracts_slice_pies_and_open_slot_reserve() -> None:
+    service = build_sample_service()
+    state = replace(default_state(), dough_balls_prepared=30, slice_pies=4)
+    inventory = build_inventory_summary(
+        service, state, open_slot_dough_reserve=6
+    )
+
+    assert inventory.dough_ordered == 16
+    assert inventory.dough_slice_pies == 4
+    assert inventory.dough_open_slot_reserve == 6
+    assert inventory.dough_remaining == 4
+
+
+def test_available_pickup_slots_use_twenty_minute_prep_buffer_and_reserve_dough(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    now = datetime(
+        2026, 7, 31, 16, 6, tzinfo=ZoneInfo("America/New_York")
+    )
+    monkeypatch.setattr(dashboard_module, "_now", lambda: now)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    client = app.test_client()
+
+    response = client.get("/?date=2026-07-31")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    availability_start = html.index("Available pickup slots")
+    availability_end = html.index("Customer visits") if "Customer visits" in html else html.index("Service slots")
+    availability = html[availability_start:availability_end]
+
+    assert "20-minute preparation buffer" in availability
+    assert 'datetime="2026-07-31T16:15:00"' not in availability
+    assert 'datetime="2026-07-31T16:30:00"' in availability
+    # 14 orderable slots remain from 4:30 through 7:45, each advertised for
+    # up to two pies, so 28 dough balls are reserved for possible orders.
+    assert "<strong>28</strong> open-slot reserve" in html
+    dough_start = html.index("Dough inventory")
+    dough_end = html.index("Available pickup slots", dough_start)
+    dough_card = html[dough_start:dough_end]
+    assert re.search(r">\s*-4\s*</strong>", dough_card)
 
 
 def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
