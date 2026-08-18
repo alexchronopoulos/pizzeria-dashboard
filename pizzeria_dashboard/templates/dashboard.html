@@ -129,6 +129,7 @@
             data-service-date="{{ selected_date.isoformat() }}"
             data-prep-list-url="{{ url_for('dashboard.prep_list_data') }}"
             data-prep-task-url="{{ url_for('dashboard.add_prep_task') }}"
+            data-prep-reorder-url="{{ url_for('dashboard.reorder_prep_list') }}"
             data-prep-assignee-url="{{ url_for('dashboard.add_prep_assignee') }}"
         >
             <section class="prep-list-main" aria-label="Daily prep tasks">
@@ -275,5 +276,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.29') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.30') }}" defer></script>
 {% endblock %}

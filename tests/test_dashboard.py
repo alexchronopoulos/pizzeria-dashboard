@@ -428,8 +428,24 @@ def test_prep_list_button_checklist_assignments_and_recipe_library(tmp_path: Pat
             "task": "Portion sausage",
             "assignee": "Alex",
             "completed": False,
+            "sort_order": prep_data["tasks"][0]["sort_order"],
             "updated_at": prep_data["tasks"][0]["updated_at"],
         }
+    ]
+
+    second_task = client.post(
+        "/prep-task",
+        json={"service_date": selected, "task": "Make vodka sauce", "assignee": ""},
+    ).get_json()["task"]
+    reordered = client.post(
+        "/prep-list/reorder",
+        json={"service_date": selected, "task_ids": [second_task["id"], task_id]},
+    )
+    assert reordered.status_code == 200
+    assert [task["id"] for task in reordered.get_json()["tasks"]] == [second_task["id"], task_id]
+    assert [task["id"] for task in client.get(f"/prep-list?date={selected}").get_json()["tasks"]] == [
+        second_task["id"],
+        task_id,
     ]
 
     completed = client.post(
@@ -466,6 +482,9 @@ def test_prep_list_button_checklist_assignments_and_recipe_library(tmp_path: Pat
     assert "data-recipes-open" in initial.get_data(as_text=True)
     assert "Mark ${task.task} complete" in javascript
     assert "Assign ${task.task}" in javascript
+    assert "Move ${task.task} up" in javascript
+    assert "Move ${task.task} down" in javascript
+    assert "data-prep-reorder-url" in initial.get_data(as_text=True)
     assert 'pizzeria-dashboard:service-notes-seen:' in javascript
 
     deleted_recipe = client.delete(

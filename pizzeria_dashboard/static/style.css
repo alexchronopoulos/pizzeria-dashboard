@@ -5076,7 +5076,7 @@ html {
 
 .prep-task-row {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr) minmax(150px, 210px) auto;
+    grid-template-columns: 42px 38px minmax(0, 1fr) minmax(150px, 210px) auto;
     align-items: center;
     gap: 10px;
     padding: 10px;
@@ -5089,6 +5089,31 @@ html {
 .prep-task-row.is-complete {
     background: #eef1ea;
     opacity: 0.7;
+}
+
+
+.prep-task-reorder {
+    display: grid;
+    gap: 3px;
+}
+
+.prep-task-move {
+    width: 36px;
+    min-height: 30px;
+    padding: 0;
+    border: 2px solid var(--black);
+    border-radius: 6px;
+    background: var(--brand-yellow);
+    color: var(--black);
+    font-size: 1rem;
+    font-weight: 950;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.prep-task-move:disabled {
+    opacity: 0.25;
+    cursor: default;
 }
 
 .prep-task-check {
@@ -5349,11 +5374,11 @@ html {
     }
 
     .prep-task-row {
-        grid-template-columns: 42px minmax(0, 1fr) auto;
+        grid-template-columns: 42px 38px minmax(0, 1fr) auto;
     }
 
     .prep-task-assignee {
-        grid-column: 2 / -1;
+        grid-column: 3 / -1;
     }
 
     .prep-task-add-grid {

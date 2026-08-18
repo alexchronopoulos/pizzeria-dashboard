@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -62,6 +62,7 @@ class PrepTask:
     task: str
     assignee: str | None
     completed: bool
+    sort_order: int
     created_at: datetime
     updated_at: datetime
 
@@ -192,12 +193,13 @@ def initialize_database(path: Path) -> None:
                 task TEXT NOT NULL,
                 assignee TEXT,
                 completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_prep_tasks_service_date
-                ON prep_tasks (service_date, completed, task_id);
+                ON prep_tasks (service_date, task_id);
 
             CREATE TABLE IF NOT EXISTS prep_recipes (
                 recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,6 +268,23 @@ def initialize_database(path: Path) -> None:
                 payment_count INTEGER NOT NULL,
                 order_count INTEGER NOT NULL
             );
+            """
+        )
+        prep_task_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(prep_tasks)").fetchall()
+        }
+        if "sort_order" not in prep_task_columns:
+            connection.execute(
+                "ALTER TABLE prep_tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                "UPDATE prep_tasks SET sort_order = task_id WHERE sort_order = 0"
+            )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_prep_tasks_service_sort
+            ON prep_tasks (service_date, sort_order, task_id)
             """
         )
         connection.execute(
@@ -968,14 +987,14 @@ def delete_prep_assignee(path: Path, name: str, *, service_date: date | None = N
 
 
 def load_prep_tasks_for_date(path: Path, service_date: date) -> tuple[PrepTask, ...]:
-    """Load the checklist for one service date, incomplete items first."""
+    """Load the checklist for one service date in its saved manual order."""
     with _connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT task_id, service_date, task, assignee, completed, created_at, updated_at
+            SELECT task_id, service_date, task, assignee, completed, sort_order, created_at, updated_at
             FROM prep_tasks
             WHERE service_date = ?
-            ORDER BY completed ASC, task_id ASC
+            ORDER BY sort_order ASC, task_id ASC
             """,
             (service_date.isoformat(),),
         ).fetchall()
@@ -986,6 +1005,7 @@ def load_prep_tasks_for_date(path: Path, service_date: date) -> tuple[PrepTask, 
             task=str(row["task"]),
             assignee=(str(row["assignee"]) if row["assignee"] not in (None, "") else None),
             completed=bool(row["completed"]),
+            sort_order=int(row["sort_order"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
         )
@@ -1008,16 +1028,22 @@ def save_prep_task(
     now = _utc_now()
     with _connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        max_sort_order = connection.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM prep_tasks WHERE service_date = ?",
+            (service_date.isoformat(),),
+        ).fetchone()[0]
+        next_sort_order = int(max_sort_order or 0) + 10
         cursor = connection.execute(
             """
             INSERT INTO prep_tasks (
-                service_date, task, assignee, completed, created_at, updated_at
-            ) VALUES (?, ?, ?, 0, ?, ?)
+                service_date, task, assignee, completed, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, 0, ?, ?, ?)
             """,
             (
                 service_date.isoformat(),
                 normalized_task,
                 normalized_assignee,
+                next_sort_order,
                 now.isoformat(),
                 now.isoformat(),
             ),
@@ -1030,6 +1056,7 @@ def save_prep_task(
         task=normalized_task,
         assignee=normalized_assignee,
         completed=False,
+        sort_order=next_sort_order,
         created_at=now,
         updated_at=now,
     )
@@ -1049,7 +1076,7 @@ def update_prep_task(
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             """
-            SELECT task_id, service_date, task, assignee, completed, created_at, updated_at
+            SELECT task_id, service_date, task, assignee, completed, sort_order, created_at, updated_at
             FROM prep_tasks
             WHERE service_date = ? AND task_id = ?
             """,
@@ -1091,10 +1118,45 @@ def update_prep_task(
         task=next_task,
         assignee=next_assignee,
         completed=next_completed,
+        sort_order=int(row["sort_order"]),
         created_at=datetime.fromisoformat(str(row["created_at"])),
         updated_at=updated_at,
     )
 
+
+
+def reorder_prep_tasks(
+    path: Path,
+    service_date: date,
+    task_ids: Iterable[int],
+) -> tuple[PrepTask, ...]:
+    """Persist the explicit order of every prep task for one service date."""
+    ordered_ids = tuple(int(task_id) for task_id in task_ids)
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise ValueError("Prep task order cannot contain duplicate tasks.")
+    date_key = service_date.isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing_rows = connection.execute(
+            "SELECT task_id FROM prep_tasks WHERE service_date = ? ORDER BY sort_order, task_id",
+            (date_key,),
+        ).fetchall()
+        existing_ids = tuple(int(row["task_id"]) for row in existing_rows)
+        if set(ordered_ids) != set(existing_ids) or len(ordered_ids) != len(existing_ids):
+            raise ValueError("Prep task order must include every task for this service date exactly once.")
+        now = _utc_now().isoformat()
+        for index, task_id in enumerate(ordered_ids, start=1):
+            connection.execute(
+                """
+                UPDATE prep_tasks
+                SET sort_order = ?, updated_at = ?
+                WHERE service_date = ? AND task_id = ?
+                """,
+                (index * 10, now, date_key, task_id),
+            )
+        if ordered_ids != existing_ids:
+            _touch_board_content_revision(connection, date_key)
+    return load_prep_tasks_for_date(path, service_date)
 
 def delete_prep_task(path: Path, service_date: date, task_id: int) -> bool:
     """Delete one checklist item."""

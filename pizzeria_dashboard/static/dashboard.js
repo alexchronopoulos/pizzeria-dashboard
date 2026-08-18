@@ -2127,9 +2127,11 @@
     const serviceDate = body.dataset.serviceDate || board.dataset.serviceDate || "";
     const listUrl = body.dataset.prepListUrl || openButton.dataset.prepListUrl || "";
     const taskUrl = body.dataset.prepTaskUrl || "";
+    const reorderUrl = body.dataset.prepReorderUrl || "";
     const assigneeUrl = body.dataset.prepAssigneeUrl || "";
     let assignees = [];
     let tasks = [];
+    let reorderSaving = false;
 
     const setStatus = (message = "") => {
         if (status) status.textContent = message;
@@ -2193,6 +2195,33 @@
         }
     };
 
+    const saveTaskOrder = async (fromIndex, toIndex) => {
+        if (reorderSaving || !reorderUrl || toIndex < 0 || toIndex >= tasks.length || fromIndex === toIndex) return;
+        reorderSaving = true;
+        const previousTasks = [...tasks];
+        const [moved] = tasks.splice(fromIndex, 1);
+        tasks.splice(toIndex, 0, moved);
+        render();
+        setStatus("Saving order…");
+        try {
+            const result = await requestJson(reorderUrl, {
+                method: "POST",
+                body: JSON.stringify({service_date: serviceDate, task_ids: tasks.map((task) => task.id)}),
+            });
+            if (Array.isArray(result.tasks)) tasks = result.tasks;
+            render();
+            setStatus("Order saved");
+        } catch (error) {
+            tasks = previousTasks;
+            render();
+            setStatus(String(error));
+            await refresh().catch(() => {});
+        } finally {
+            reorderSaving = false;
+            render();
+        }
+    };
+
     const render = () => {
         const incompleteCount = tasks.filter((task) => !task.completed).length;
         const completeCount = tasks.length - incompleteCount;
@@ -2206,7 +2235,7 @@
         if (emptyState) emptyState.hidden = tasks.length > 0;
 
         taskList.replaceChildren();
-        tasks.forEach((task) => {
+        tasks.forEach((task, index) => {
             const row = document.createElement("article");
             row.className = `prep-task-row${task.completed ? " is-complete" : ""}`;
             row.dataset.prepTaskId = String(task.id);
@@ -2219,6 +2248,25 @@
             checkbox.setAttribute("aria-label", `Mark ${task.task} complete`);
             checkbox.addEventListener("change", () => saveTaskChange(task.id, {completed: checkbox.checked}, checkbox));
             checkWrap.appendChild(checkbox);
+
+
+            const reorder = document.createElement("div");
+            reorder.className = "prep-task-reorder";
+            const moveUp = document.createElement("button");
+            moveUp.type = "button";
+            moveUp.className = "prep-task-move";
+            moveUp.textContent = "↑";
+            moveUp.disabled = reorderSaving || index === 0;
+            moveUp.setAttribute("aria-label", `Move ${task.task} up`);
+            moveUp.addEventListener("click", () => saveTaskOrder(index, index - 1));
+            const moveDown = document.createElement("button");
+            moveDown.type = "button";
+            moveDown.className = "prep-task-move";
+            moveDown.textContent = "↓";
+            moveDown.disabled = reorderSaving || index === tasks.length - 1;
+            moveDown.setAttribute("aria-label", `Move ${task.task} down`);
+            moveDown.addEventListener("click", () => saveTaskOrder(index, index + 1));
+            reorder.append(moveUp, moveDown);
 
             const text = document.createElement("div");
             text.className = "prep-task-text";
@@ -2251,7 +2299,7 @@
                 }
             });
 
-            row.append(checkWrap, text, select, remove);
+            row.append(checkWrap, reorder, text, select, remove);
             taskList.appendChild(row);
         });
 

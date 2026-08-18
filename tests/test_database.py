@@ -26,6 +26,7 @@ from pizzeria_dashboard.database import (
     merge_orders_for_date,
     migrate_legacy_service_state,
     prune_pie_production_states,
+    reorder_prep_tasks,
     remove_order_from_dashboard,
     replace_orders_for_date,
     save_manual_order,
@@ -249,14 +250,53 @@ def test_prep_list_is_date_scoped_assignable_and_shared(tmp_path: Path) -> None:
     assert updated.assignee == "Alex"
     assert updated.completed is True
     tasks = load_prep_tasks_for_date(database_path, first_date)
-    assert tasks[-1].task_id == first.task_id
-    assert tasks[-1].completed is True
+    assert tasks[0].task_id == first.task_id
+    assert tasks[0].completed is True
+
+    reordered = reorder_prep_tasks(
+        database_path,
+        first_date,
+        [second.task_id, first.task_id],
+    )
+    assert [task.task_id for task in reordered] == [second.task_id, first.task_id]
+    assert [task.task_id for task in load_prep_tasks_for_date(database_path, first_date)] == [
+        second.task_id,
+        first.task_id,
+    ]
     assert load_board_content_revision(database_path, first_date) != before
 
     assert delete_prep_task(database_path, first_date, second.task_id) is True
     assert delete_prep_assignee(database_path, "Sam", service_date=first_date) is True
     assert load_prep_assignees(database_path) == ("Alex",)
 
+
+
+def test_initialize_database_migrates_existing_prep_tasks_for_manual_order(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE prep_tasks (
+                task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_date TEXT NOT NULL,
+                task TEXT NOT NULL,
+                assignee TEXT,
+                completed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO prep_tasks (service_date, task, completed, created_at, updated_at)
+            VALUES
+                ('2026-08-20', 'First task', 0, '2026-08-18T12:00:00+00:00', '2026-08-18T12:00:00+00:00'),
+                ('2026-08-20', 'Second task', 0, '2026-08-18T12:01:00+00:00', '2026-08-18T12:01:00+00:00');
+            """
+        )
+    initialize_database(database_path)
+    tasks = load_prep_tasks_for_date(database_path, date(2026, 8, 20))
+    assert [task.task for task in tasks] == ["First task", "Second task"]
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(prep_tasks)")}
+    assert "sort_order" in columns
 
 def test_prep_recipes_can_be_added_edited_and_deleted(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"

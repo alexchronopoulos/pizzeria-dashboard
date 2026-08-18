@@ -43,6 +43,7 @@ from .database import (
     load_sync_info,
     merge_orders_for_date,
     prune_pie_production_states,
+    reorder_prep_tasks,
     remove_order_from_dashboard,
     save_app_metadata,
     save_manual_order,
@@ -797,6 +798,7 @@ def _prep_task_json(task) -> dict[str, object]:
         "task": task.task,
         "assignee": task.assignee or "",
         "completed": bool(task.completed),
+        "sort_order": task.sort_order,
         "updated_at": task.updated_at.isoformat(),
     }
 
@@ -820,6 +822,29 @@ def prep_list_data():
         service_date=selected_date.isoformat(),
         tasks=[_prep_task_json(task) for task in tasks],
         assignees=list(load_prep_assignees(database_path)),
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.post("/prep-list/reorder")
+def reorder_prep_list():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not all(
+        isinstance(task_id, int) and not isinstance(task_id, bool) for task_id in raw_task_ids
+    ):
+        return jsonify(ok=False, error="Prep task order must be a list of task IDs."), 400
+    database_path = _database_path()
+    try:
+        tasks = reorder_prep_tasks(database_path, selected_date, raw_task_ids)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(
+        ok=True,
+        tasks=[_prep_task_json(task) for task in tasks],
         board_content_revision=load_board_content_revision(database_path, selected_date),
     )
 
