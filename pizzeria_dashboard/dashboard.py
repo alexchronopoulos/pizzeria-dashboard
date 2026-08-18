@@ -231,18 +231,11 @@ def _order_prep_buffer_minutes() -> int:
     return max(int(current_app.config.get("ORDER_PREP_BUFFER_MINUTES", 20)), 0)
 
 
-def _available_pickup_windows(
+def _pickup_windows_after_prep_buffer(
     service: ServiceBoard, selected_date: date, now: datetime
 ) -> tuple[PickupWindow, ...]:
-    """Return pickup windows still usable for a new order.
-
-    The production team needs a full preparation window before pickup. Historical
-    dates retain their old availability display for review; future dates have no
-    elapsed slots, while today's list closes each slot 20 minutes before pickup.
-    """
-    windows = tuple(
-        window for window in service.windows if service.open_capacity(window) > 0
-    )
+    """Return service windows that are still far enough away to accept an order."""
+    windows = tuple(service.windows)
     if selected_date != now.date():
         return windows
 
@@ -252,12 +245,51 @@ def _available_pickup_windows(
     return tuple(window for window in windows if window.pickup_at >= cutoff)
 
 
-def _open_slot_dough_reserve(
-    one_pie_windows: tuple[PickupWindow, ...],
-    two_pie_windows: tuple[PickupWindow, ...],
-) -> int:
-    """Reserve dough for the order capacity advertised in the availability card."""
-    return len(one_pie_windows) + (2 * len(two_pie_windows))
+def _available_pickup_windows(
+    service: ServiceBoard, selected_date: date, now: datetime
+) -> tuple[PickupWindow, ...]:
+    """Return pickup windows still usable for walk-in pizza capacity.
+
+    The production team needs a full preparation window before pickup. Historical
+    dates retain their old availability display for review; future dates have no
+    elapsed slots, while today's list closes each slot before the prep cutoff.
+    """
+    return tuple(
+        window
+        for window in _pickup_windows_after_prep_buffer(service, selected_date, now)
+        if service.open_capacity(window) > 0
+    )
+
+
+def _online_order_slot_reserve(
+    windows: tuple[PickupWindow, ...],
+    *,
+    pizzas_per_online_order_slot: int,
+) -> tuple[int, int]:
+    """Return (online pizza capacity still sellable, dough reserved for it).
+
+    Each 15-minute pickup slot can expose a configurable number of *pizzas* to
+    online ordering. One pizza equals one dough ball. Existing unreleased online
+    pizza quantities consume that capacity; walk-ins and dashboard-only manual
+    orders do not. Releasing a Square order's capacity removes its pizza quantity
+    from the consumed-online total, immediately reserving those dough balls again.
+    """
+    max_pizzas = max(int(pizzas_per_online_order_slot), 0)
+    available_online_pizzas = 0
+    for window in windows:
+        active_online_pizzas = sum(
+            order.pizza_units
+            for order in window.orders
+            if order.pizza_units > 0
+            and not order.is_walk_in
+            and not order.is_manual
+            and not order.released
+            and order.fulfillment_state != "COMPLETED"
+        )
+        available_online_pizzas += max(max_pizzas - active_online_pizzas, 0)
+
+    # One online pizza always reserves one dough ball.
+    return available_online_pizzas, available_online_pizzas
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
@@ -354,7 +386,14 @@ def index() -> str:
         if selected_date == now.date():
             save_state(database_path, selected_date, inventory_state)
     current_service_time = now.replace(tzinfo=None)
-    available_pickup_windows = _available_pickup_windows(service, selected_date, now)
+    buffer_eligible_windows = _pickup_windows_after_prep_buffer(
+        service, selected_date, now
+    )
+    available_pickup_windows = tuple(
+        window
+        for window in buffer_eligible_windows
+        if service.open_capacity(window) > 0
+    )
     future_one_pie_windows = tuple(
         window
         for window in available_pickup_windows
@@ -365,18 +404,23 @@ def index() -> str:
         for window in available_pickup_windows
         if service.open_capacity(window) >= 2
     )
-    open_slot_dough_reserve = (
-        _open_slot_dough_reserve(future_one_pie_windows, future_two_pie_windows)
-        if selected_date >= now.date()
-        else 0
-    )
+    if selected_date >= now.date():
+        online_order_available_pizzas, online_order_dough_reserve = _online_order_slot_reserve(
+            buffer_eligible_windows,
+            pizzas_per_online_order_slot=(
+                service_configuration.pizzas_per_online_order_slot
+            ),
+        )
+    else:
+        online_order_available_pizzas = 0
+        online_order_dough_reserve = 0
     inventory = build_inventory_summary(
         service,
         inventory_state,
         inventory_salad_types,
         inventory_side_types,
         orders=orders,
-        open_slot_dough_reserve=open_slot_dough_reserve,
+        open_slot_dough_reserve=online_order_dough_reserve,
     )
     sync_info = load_sync_info(database_path, selected_date)
     # Customer visit reporting covers every cached online order for the selected
@@ -453,6 +497,8 @@ def index() -> str:
         board_content_revision=board_content_revision,
         future_one_pie_windows=future_one_pie_windows,
         future_two_pie_windows=future_two_pie_windows,
+        online_order_available_pizzas=online_order_available_pizzas,
+        pizzas_per_online_order_slot=service_configuration.pizzas_per_online_order_slot,
         pickup_overrides=pickup_overrides,
         original_pickup_times={
             order.order_id: _local_service_time(order.pickup_at)

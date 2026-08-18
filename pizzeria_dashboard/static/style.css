@@ -5393,3 +5393,11 @@ html {
         min-height: 48px;
     }
 }
+
+/* Online ordering reserve settings. */
+.online-reserve-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 9px;
+    margin-top: 10px;
+}

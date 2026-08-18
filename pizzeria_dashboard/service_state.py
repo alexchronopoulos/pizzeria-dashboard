@@ -53,6 +53,11 @@ class InventorySummary:
     cookies: tuple[PreparedStock, ...]
 
     @property
+    def dough_online_order_reserve(self) -> int:
+        """Dough held for online-order slots that are still available."""
+        return self.dough_open_slot_reserve
+
+    @property
     def prepared_items(self) -> tuple[PreparedStock, ...]:
         return (*self.salads, *self.sides, *self.cookies)
 

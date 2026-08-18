@@ -5,7 +5,7 @@ from dataclasses import replace
 import sqlite3
 from html import unescape
 from html.parser import HTMLParser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -69,6 +69,11 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert response.data.index(b'data-service-setup-open') < response.data.index(b'id="service-date"')
     assert b'id="service-setup-dialog"' in response.data
     assert b'Weekly pickup hours' in response.data
+    assert b'Online Order Reserve' in response.data
+    assert b'Pizzas per Online Order Slot' in response.data
+    assert b'name="pizzas_per_online_order_slot"' in response.data
+    assert b'name="online_order_slots_per_window"' not in response.data
+    assert b'name="online_order_dough_per_slot"' not in response.data
     assert "Tomato Pie" in visible_text
     assert "Pies all day" in visible_text
     assert "16 total" in visible_text
@@ -945,7 +950,7 @@ def test_inventory_summary_still_calculates_dough_remaining() -> None:
     assert inventory.cookies[0].remaining == -2
 
 
-def test_inventory_summary_subtracts_slice_pies_and_open_slot_reserve() -> None:
+def test_inventory_summary_subtracts_slice_pies_and_online_order_reserve() -> None:
     service = build_sample_service()
     state = replace(default_state(), dough_balls_prepared=30, slice_pies=4)
     inventory = build_inventory_summary(
@@ -954,6 +959,7 @@ def test_inventory_summary_subtracts_slice_pies_and_open_slot_reserve() -> None:
 
     assert inventory.dough_ordered == 16
     assert inventory.dough_slice_pies == 4
+    assert inventory.dough_online_order_reserve == 6
     assert inventory.dough_open_slot_reserve == 6
     assert inventory.dough_remaining == 4
 
@@ -980,13 +986,156 @@ def test_available_pickup_slots_use_twenty_minute_prep_buffer_and_reserve_dough(
     assert "20-minute preparation buffer" in availability
     assert 'datetime="2026-07-31T16:15:00"' not in availability
     assert 'datetime="2026-07-31T16:30:00"' in availability
-    # 14 orderable slots remain from 4:30 through 7:45, each advertised for
-    # up to two pies, so 28 dough balls are reserved for possible orders.
-    assert "<strong>28</strong> open-slot reserve" in html
+    # 14 pickup windows remain from 4:30 through 7:45. With two pizzas
+    # offered online per pickup slot and one dough ball per pizza, reserve 28.
+    assert "<strong>28</strong> Online Order Reserve" in html
     dough_start = html.index("Dough inventory")
     dough_end = html.index("Available pickup slots", dough_start)
     dough_card = html[dough_start:dough_end]
     assert re.search(r">\s*-4\s*</strong>", dough_card)
+
+
+def test_online_order_reserve_uses_pizza_capacity_and_released_capacity() -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import Item, Order, build_service_board
+
+    selected = date(2026, 7, 31)
+    pickup_at = datetime(2026, 7, 31, 17, 0)
+    one_pizza_order = Order(
+        order_id="online-1",
+        customer_name="Alex",
+        pickup_at=pickup_at,
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-online-1",
+        fulfillment_state="RESERVED",
+    )
+    one_pizza_service = build_service_board(
+        selected,
+        (one_pizza_order,),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+
+    available_pizzas, reserve = dashboard_module._online_order_slot_reserve(
+        one_pizza_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    assert available_pizzas == 1
+    assert reserve == 1
+
+    released_service = build_service_board(
+        selected,
+        (replace(one_pizza_order, released=True, fulfillment_state="COMPLETED"),),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+    released_available, released_reserve = dashboard_module._online_order_slot_reserve(
+        released_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    assert released_available == 2
+    assert released_reserve == 2
+
+    two_pizza_service = build_service_board(
+        selected,
+        (replace(one_pizza_order, items=(Item("Plain Pie", 2, "pizza"),)),),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+    two_pizza_available, two_pizza_reserve = dashboard_module._online_order_slot_reserve(
+        two_pizza_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    assert two_pizza_available == 0
+    assert two_pizza_reserve == 0
+
+    walk_in_service = build_service_board(
+        selected,
+        (replace(one_pizza_order, order_id="walk-in-1", square_order_id=None, is_walk_in=True),),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+    walk_in_available, walk_in_reserve = dashboard_module._online_order_slot_reserve(
+        walk_in_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    assert walk_in_available == 2
+    assert walk_in_reserve == 2
+
+
+def test_releasing_one_pizza_increments_reserve_and_reduces_dough_remaining() -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import Item, Order, build_service_board
+
+    selected = date(2026, 7, 31)
+    pickup_at = datetime(2026, 7, 31, 17, 0)
+    order = Order(
+        order_id="online-1",
+        customer_name="Alex",
+        pickup_at=pickup_at,
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-online-1",
+        fulfillment_state="RESERVED",
+    )
+    state = replace(default_state(), dough_balls_prepared=40, slice_pies=0)
+
+    active_service = build_service_board(
+        selected,
+        (order,),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+    _, active_reserve = dashboard_module._online_order_slot_reserve(
+        active_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    active_inventory = build_inventory_summary(
+        active_service, state, open_slot_dough_reserve=active_reserve
+    )
+    assert active_reserve == 1
+    assert active_inventory.dough_ordered == 1
+    assert active_inventory.dough_remaining == 38
+
+    released_service = build_service_board(
+        selected,
+        (replace(order, released=True, fulfillment_state="COMPLETED"),),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+    )
+    _, released_reserve = dashboard_module._online_order_slot_reserve(
+        released_service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    released_inventory = build_inventory_summary(
+        released_service, state, open_slot_dough_reserve=released_reserve
+    )
+    assert released_reserve == 2
+    assert released_inventory.dough_ordered == 1
+    assert released_inventory.dough_remaining == 37
+
+
+def test_online_order_reserve_is_32_for_empty_four_to_eight_service() -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import build_service_board
+
+    selected = date(2026, 7, 31)
+    pickup_times = tuple(
+        datetime(2026, 7, 31, 16, 0) + timedelta(minutes=15 * index)
+        for index in range(16)
+    )
+    service = build_service_board(
+        selected,
+        (),
+        pizza_capacity_per_window=3,
+        pickup_times=pickup_times,
+    )
+
+    available_pizzas, reserve = dashboard_module._online_order_slot_reserve(
+        service.windows,
+        pizzas_per_online_order_slot=2,
+    )
+    assert available_pizzas == 32
+    assert reserve == 32
 
 
 def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
@@ -1000,6 +1149,7 @@ def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
             "day_4_start": "17:00",
             "day_4_end": "18:00",
             "salad_types": "Tomato Salad\nLittle Gem Salad",
+            "pizzas_per_online_order_slot": "3",
         },
         follow_redirects=True,
     )
@@ -1015,6 +1165,7 @@ def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
     assert len(configuration.pickup_times(date(2026, 7, 31))) == 4
     assert configuration.salad_types == ("Tomato Salad", "Little Gem Salad")
     assert configuration.side_types == ("Side Ranch", "Side Hot Honey")
+    assert configuration.pizzas_per_online_order_slot == 3
 
     # Real cached orders outside newly shortened hours intentionally stay visible.
     assert b"Tomato Salad" in response.data

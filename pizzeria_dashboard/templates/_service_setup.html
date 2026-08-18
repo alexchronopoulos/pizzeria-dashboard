@@ -30,6 +30,26 @@
                 </div>
             </div>
 
+            <div class="setup-section setup-section--online-reserve">
+                <div class="setup-section-heading">
+                    <strong>Online Order Reserve</strong>
+                    <span>Set the maximum number of pizzas offered online in each 15-minute pickup slot. One pizza always reserves one dough ball. Walk-in capacity is separate.</span>
+                </div>
+                <div class="online-reserve-grid">
+                    <label class="prep-input prep-input--dough">
+                        <span>Pizzas per Online Order Slot</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputmode="numeric"
+                            name="pizzas_per_online_order_slot"
+                            value="{{ service_configuration.pizzas_per_online_order_slot }}"
+                        >
+                    </label>
+                </div>
+            </div>
+
             <div class="setup-menu-grid">
                 <div class="setup-section setup-section--salads">
                     <div class="setup-section-heading">
@@ -46,7 +66,7 @@
                     <textarea name="side_types" rows="5" aria-label="Available side names">{{ service_configuration.side_types | join('\n') }}</textarea>
                 </div>
             </div>
-            <button class="save-settings-button" type="submit">Save hours and menu</button>
+            <button class="save-settings-button" type="submit">Save service settings</button>
         </form>
 
         <form class="prep-form" method="post" action="{{ url_for('dashboard.update_inventory') }}">
