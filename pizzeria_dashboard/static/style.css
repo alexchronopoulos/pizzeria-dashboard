@@ -2995,10 +2995,10 @@ h2 {
     align-items: center;
     gap: 7px;
     padding: 8px 12px;
-    border: 2px solid white;
+    border: 2px solid var(--black);
     border-radius: 8px;
-    background: var(--brand-blue);
-    color: white;
+    background: var(--brand-yellow);
+    color: var(--black);
     font-weight: 900;
     cursor: pointer;
 }
@@ -3006,8 +3006,8 @@ h2 {
 .service-notes-button:hover,
 .service-notes-button:focus-visible {
     background: white;
-    color: var(--brand-blue);
-    outline: 3px solid rgba(255, 255, 255, 0.28);
+    color: var(--black);
+    outline: 3px solid rgba(246, 224, 87, 0.38);
     outline-offset: 2px;
 }
 
@@ -3019,14 +3019,14 @@ h2 {
     justify-content: center;
     padding: 0 6px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(17, 17, 17, 0.12);
     font-size: 0.74rem;
     line-height: 1;
 }
 
 .service-notes-button:hover .service-notes-count,
 .service-notes-button:focus-visible .service-notes-count {
-    background: rgba(0, 85, 134, 0.12);
+    background: rgba(17, 17, 17, 0.12);
 }
 
 .service-notes-unread {
@@ -3953,9 +3953,9 @@ html {
 .manual-order-button {
     min-height: 42px;
     padding: 8px 13px;
-    border: 2px solid var(--brand-blue);
+    border: 2px solid var(--black);
     border-radius: 8px;
-    background: var(--brand-blue);
+    background: var(--brand-green);
     color: white;
     font-weight: 900;
     cursor: pointer;
@@ -3964,8 +3964,8 @@ html {
 .manual-order-button:hover,
 .manual-order-button:focus-visible {
     background: white;
-    color: var(--brand-blue);
-    outline: 3px solid rgba(0, 85, 134, 0.22);
+    color: var(--brand-green);
+    outline: 3px solid rgba(51, 128, 61, 0.28);
     outline-offset: 2px;
 }
 
@@ -4892,3 +4892,478 @@ html {
 
 
 
+
+/* Prep List + Recipes: shared service-day checklist and prep reference library. */
+.prep-list-button,
+.recipes-button {
+    position: relative;
+    display: inline-flex;
+    min-height: 42px;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.prep-list-button,
+.recipes-button {
+    background: var(--brand-yellow);
+    color: var(--black);
+}
+
+.prep-list-button:hover,
+.prep-list-button:focus-visible,
+.recipes-button:hover,
+.recipes-button:focus-visible {
+    background: white;
+    color: var(--black);
+    outline: 3px solid rgba(246, 224, 87, 0.38);
+    outline-offset: 2px;
+}
+
+.prep-list-count,
+.recipes-count {
+    display: inline-flex;
+    min-width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(17, 17, 17, 0.12);
+    font-size: 0.74rem;
+    line-height: 1;
+}
+
+.recipes-count {
+    background: rgba(17, 17, 17, 0.12);
+}
+
+.prep-list-count[hidden],
+.recipes-count[hidden] {
+    display: none !important;
+}
+
+.prep-list-dialog,
+.recipes-dialog {
+    width: min(1050px, calc(100vw - 28px));
+    max-height: calc(100vh - 28px);
+    padding: 0;
+    overflow: hidden;
+    border: 4px solid var(--black);
+    border-radius: var(--radius);
+    background: var(--brand-cream);
+    box-shadow: 0 24px 70px rgba(0, 20, 32, 0.45);
+}
+
+.prep-list-dialog::backdrop,
+.recipes-dialog::backdrop {
+    background: rgba(0, 35, 56, 0.72);
+}
+
+.prep-list-dialog-shell,
+.recipes-dialog-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    max-height: calc(100vh - 36px);
+}
+
+.prep-list-dialog-toolbar,
+.recipes-dialog-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 14px 18px;
+    border-bottom: 3px solid var(--black);
+}
+
+.prep-list-dialog-toolbar {
+    background: var(--brand-green);
+    color: white;
+}
+
+.recipes-dialog-toolbar {
+    background: var(--brand-lavender);
+    color: var(--text);
+}
+
+.prep-list-dialog-toolbar > div,
+.recipes-dialog-toolbar > div {
+    display: grid;
+    gap: 2px;
+}
+
+.prep-list-dialog-toolbar strong,
+.recipes-dialog-toolbar strong {
+    font-size: 1.2rem;
+}
+
+.prep-list-dialog-toolbar span,
+.recipes-dialog-toolbar span {
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.prep-list-dialog-toolbar span {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.prep-list-close,
+.recipes-close {
+    padding: 7px 12px;
+    border: 2px solid var(--black);
+    border-radius: 7px;
+    background: white;
+    color: var(--text);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.prep-list-dialog-body {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 290px);
+    overflow: hidden;
+}
+
+.prep-list-main {
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+    grid-template-rows: auto minmax(120px, 1fr) auto auto;
+    background: #fffdf3;
+}
+
+.prep-list-status-row,
+.recipe-library-heading {
+    display: flex;
+    min-height: 46px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 2px solid var(--black);
+    background: white;
+}
+
+.prep-list-status-row > span,
+.recipe-library-heading > span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 850;
+}
+
+.prep-task-list {
+    display: grid;
+    align-content: start;
+    gap: 9px;
+    overflow: auto;
+    padding: 14px 16px;
+}
+
+.prep-list-empty,
+.recipe-list-empty {
+    margin: 18px;
+    color: var(--muted);
+    font-weight: 850;
+    text-align: center;
+}
+
+.prep-task-row {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) minmax(150px, 210px) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 2px solid var(--black);
+    border-radius: 10px;
+    background: white;
+    box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.1);
+}
+
+.prep-task-row.is-complete {
+    background: #eef1ea;
+    opacity: 0.7;
+}
+
+.prep-task-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prep-task-check input {
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    accent-color: var(--brand-green);
+    cursor: pointer;
+}
+
+.prep-task-text {
+    min-width: 0;
+    font-size: 1rem;
+    font-weight: 850;
+    overflow-wrap: anywhere;
+}
+
+.prep-task-row.is-complete .prep-task-text {
+    text-decoration: line-through;
+}
+
+.prep-task-assignee {
+    width: 100%;
+    min-height: 40px;
+    padding: 6px 8px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    background: white;
+    color: var(--text);
+    font-weight: 800;
+}
+
+.prep-task-remove,
+.prep-team-remove,
+.recipe-delete {
+    min-height: 38px;
+    padding: 6px 9px;
+    border: 2px solid var(--black);
+    border-radius: 7px;
+    background: white;
+    color: var(--brand-red);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.prep-task-add-form {
+    display: grid;
+    gap: 7px;
+    padding: 12px 16px 15px;
+    border-top: 3px solid var(--black);
+    background: var(--brand-yellow);
+}
+
+.prep-task-add-form > label,
+.recipe-add-form label,
+.recipe-edit-form label {
+    font-size: 0.74rem;
+    font-weight: 950;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.prep-task-add-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 210px) auto;
+    gap: 8px;
+}
+
+.prep-task-add-grid input,
+.prep-task-add-grid select,
+.prep-assignee-form input,
+.recipe-add-form input,
+.recipe-add-form textarea,
+.recipe-edit-form input,
+.recipe-edit-form textarea {
+    width: 100%;
+    min-width: 0;
+    padding: 9px 10px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    background: white;
+    color: var(--text);
+}
+
+.prep-task-add-grid button,
+.prep-assignee-form button,
+.recipe-add-form > button,
+.recipe-save {
+    min-height: 42px;
+    padding: 8px 13px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    background: var(--brand-orange);
+    color: var(--text);
+    font-weight: 950;
+    cursor: pointer;
+}
+
+.prep-team-panel {
+    display: grid;
+    min-height: 0;
+    align-content: start;
+    grid-template-rows: auto minmax(80px, 1fr) auto;
+    gap: 12px;
+    padding: 14px;
+    border-left: 3px solid var(--black);
+    background: var(--soft-green);
+}
+
+.prep-team-panel > div:first-child {
+    display: grid;
+    gap: 3px;
+}
+
+.prep-team-panel > div:first-child span {
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 800;
+}
+
+.prep-team-list {
+    display: grid;
+    align-content: start;
+    gap: 7px;
+    overflow: auto;
+}
+
+.prep-team-member {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 9px;
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    background: white;
+    font-weight: 850;
+}
+
+.prep-assignee-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+}
+
+.recipes-dialog-body {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+    overflow: hidden;
+}
+
+.recipe-library-panel {
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+    grid-template-rows: auto minmax(100px, 1fr) auto;
+    background: #fffdf3;
+}
+
+.recipe-list {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    overflow: auto;
+    padding: 14px 16px;
+}
+
+.recipe-card {
+    border: 2px solid var(--black);
+    border-radius: 10px;
+    background: white;
+    box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.1);
+}
+
+.recipe-card summary {
+    padding: 12px 14px;
+    color: var(--brand-blue);
+    font-size: 1rem;
+    font-weight: 950;
+    cursor: pointer;
+}
+
+.recipe-card[open] summary {
+    border-bottom: 2px solid var(--black);
+    background: var(--soft-blue);
+}
+
+.recipe-edit-form {
+    display: grid;
+    gap: 8px;
+    padding: 12px 14px 14px;
+}
+
+.recipe-edit-form textarea,
+.recipe-add-form textarea {
+    min-height: 180px;
+    resize: vertical;
+    line-height: 1.35;
+}
+
+.recipe-edit-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.recipe-add-form {
+    display: grid;
+    min-height: 0;
+    align-content: start;
+    gap: 8px;
+    overflow: auto;
+    padding: 16px;
+    border-left: 3px solid var(--black);
+    background: var(--brand-yellow);
+}
+
+.recipe-add-form > strong {
+    margin-bottom: 2px;
+    font-size: 1.05rem;
+}
+
+@media (max-width: 900px) {
+    .prep-list-dialog-body,
+    .recipes-dialog-body {
+        grid-template-columns: 1fr;
+        overflow: auto;
+    }
+
+    .prep-list-main,
+    .recipe-library-panel {
+        min-height: 420px;
+    }
+
+    .prep-team-panel,
+    .recipe-add-form {
+        border-top: 3px solid var(--black);
+        border-left: 0;
+    }
+}
+
+@media (max-width: 720px) {
+    .prep-list-button,
+    .recipes-button {
+        order: 2;
+    }
+
+    .prep-list-dialog-toolbar,
+    .recipes-dialog-toolbar {
+        align-items: flex-start;
+    }
+
+    .prep-task-row {
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+    }
+
+    .prep-task-assignee {
+        grid-column: 2 / -1;
+    }
+
+    .prep-task-add-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .prep-task-add-grid button,
+    .prep-assignee-form button,
+    .recipe-add-form > button,
+    .recipe-save,
+    .recipe-delete {
+        min-height: 48px;
+    }
+}

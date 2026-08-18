@@ -17,7 +17,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -53,6 +53,26 @@ class ServiceNote:
     service_date: date
     note: str
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PrepTask:
+    task_id: int
+    service_date: date
+    task: str
+    assignee: str | None
+    completed: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PrepRecipe:
+    recipe_id: int
+    name: str
+    body: str
+    created_at: datetime
+    updated_at: datetime
 
 
 OVEN_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
@@ -159,6 +179,36 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_service_notes_service_date
                 ON service_notes (service_date, note_id);
+
+            CREATE TABLE IF NOT EXISTS prep_assignees (
+                assignee_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS prep_tasks (
+                task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_date TEXT NOT NULL,
+                task TEXT NOT NULL,
+                assignee TEXT,
+                completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prep_tasks_service_date
+                ON prep_tasks (service_date, completed, task_id);
+
+            CREATE TABLE IF NOT EXISTS prep_recipes (
+                recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prep_recipes_name
+                ON prep_recipes (name COLLATE NOCASE);
 
             CREATE TABLE IF NOT EXISTS pie_production_states (
                 service_date TEXT NOT NULL,
@@ -860,6 +910,292 @@ def save_service_note(path: Path, service_date: date, note: str) -> ServiceNote:
         note=normalized,
         created_at=created_at,
     )
+
+
+def load_prep_assignees(path: Path) -> tuple[str, ...]:
+    """Return the active names available in the Prep List assignee picker."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT name
+            FROM prep_assignees
+            ORDER BY name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+    return tuple(str(row["name"]) for row in rows)
+
+
+def save_prep_assignee(path: Path, name: str, *, service_date: date | None = None) -> str:
+    """Add one name to the shared Prep List assignee picker."""
+    normalized = " ".join(str(name).split()).strip()
+    if not normalized:
+        raise ValueError("Prep assignee names cannot be blank.")
+    now = _utc_now().isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            INSERT INTO prep_assignees (name, created_at)
+            VALUES (?, ?)
+            ON CONFLICT(name) DO NOTHING
+            """,
+            (normalized, now),
+        )
+        row = connection.execute(
+            "SELECT name FROM prep_assignees WHERE name = ? COLLATE NOCASE",
+            (normalized,),
+        ).fetchone()
+        saved_name = str(row["name"]) if row is not None else normalized
+        if service_date is not None:
+            _touch_board_content_revision(connection, service_date.isoformat())
+    return saved_name
+
+
+def delete_prep_assignee(path: Path, name: str, *, service_date: date | None = None) -> bool:
+    """Remove a name from future assignment pickers without rewriting old tasks."""
+    normalized = " ".join(str(name).split()).strip()
+    if not normalized:
+        return False
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            "DELETE FROM prep_assignees WHERE name = ? COLLATE NOCASE",
+            (normalized,),
+        )
+        if cursor.rowcount and service_date is not None:
+            _touch_board_content_revision(connection, service_date.isoformat())
+    return bool(cursor.rowcount)
+
+
+def load_prep_tasks_for_date(path: Path, service_date: date) -> tuple[PrepTask, ...]:
+    """Load the checklist for one service date, incomplete items first."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT task_id, service_date, task, assignee, completed, created_at, updated_at
+            FROM prep_tasks
+            WHERE service_date = ?
+            ORDER BY completed ASC, task_id ASC
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    return tuple(
+        PrepTask(
+            task_id=int(row["task_id"]),
+            service_date=date.fromisoformat(str(row["service_date"])),
+            task=str(row["task"]),
+            assignee=(str(row["assignee"]) if row["assignee"] not in (None, "") else None),
+            completed=bool(row["completed"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+        for row in rows
+    )
+
+
+def save_prep_task(
+    path: Path,
+    service_date: date,
+    task: str,
+    *,
+    assignee: str | None = None,
+) -> PrepTask:
+    """Add one checklist task for a service date."""
+    normalized_task = " ".join(str(task).replace("\r", " ").replace("\n", " ").split()).strip()
+    if not normalized_task:
+        raise ValueError("Prep tasks cannot be blank.")
+    normalized_assignee = " ".join(str(assignee or "").split()).strip() or None
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """
+            INSERT INTO prep_tasks (
+                service_date, task, assignee, completed, created_at, updated_at
+            ) VALUES (?, ?, ?, 0, ?, ?)
+            """,
+            (
+                service_date.isoformat(),
+                normalized_task,
+                normalized_assignee,
+                now.isoformat(),
+                now.isoformat(),
+            ),
+        )
+        task_id = int(cursor.lastrowid)
+        _touch_board_content_revision(connection, service_date.isoformat())
+    return PrepTask(
+        task_id=task_id,
+        service_date=service_date,
+        task=normalized_task,
+        assignee=normalized_assignee,
+        completed=False,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def update_prep_task(
+    path: Path,
+    service_date: date,
+    task_id: int,
+    *,
+    task: str | None = None,
+    assignee: str | None | object = ...,
+    completed: bool | None = None,
+) -> PrepTask | None:
+    """Update completion, assignment, or task text for one checklist item."""
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT task_id, service_date, task, assignee, completed, created_at, updated_at
+            FROM prep_tasks
+            WHERE service_date = ? AND task_id = ?
+            """,
+            (service_date.isoformat(), int(task_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        next_task = str(row["task"])
+        if task is not None:
+            next_task = " ".join(str(task).replace("\r", " ").replace("\n", " ").split()).strip()
+            if not next_task:
+                raise ValueError("Prep tasks cannot be blank.")
+        current_assignee = str(row["assignee"]) if row["assignee"] not in (None, "") else None
+        if assignee is ...:
+            next_assignee = current_assignee
+        else:
+            next_assignee = " ".join(str(assignee or "").split()).strip() or None
+        next_completed = bool(row["completed"]) if completed is None else bool(completed)
+        updated_at = _utc_now()
+        connection.execute(
+            """
+            UPDATE prep_tasks
+            SET task = ?, assignee = ?, completed = ?, updated_at = ?
+            WHERE service_date = ? AND task_id = ?
+            """,
+            (
+                next_task,
+                next_assignee,
+                1 if next_completed else 0,
+                updated_at.isoformat(),
+                service_date.isoformat(),
+                int(task_id),
+            ),
+        )
+        _touch_board_content_revision(connection, service_date.isoformat())
+    return PrepTask(
+        task_id=int(task_id),
+        service_date=service_date,
+        task=next_task,
+        assignee=next_assignee,
+        completed=next_completed,
+        created_at=datetime.fromisoformat(str(row["created_at"])),
+        updated_at=updated_at,
+    )
+
+
+def delete_prep_task(path: Path, service_date: date, task_id: int) -> bool:
+    """Delete one checklist item."""
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            "DELETE FROM prep_tasks WHERE service_date = ? AND task_id = ?",
+            (service_date.isoformat(), int(task_id)),
+        )
+        if cursor.rowcount:
+            _touch_board_content_revision(connection, service_date.isoformat())
+    return bool(cursor.rowcount)
+
+
+def load_prep_recipes(path: Path) -> tuple[PrepRecipe, ...]:
+    """Load the shared prep recipe library alphabetically."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT recipe_id, name, body, created_at, updated_at
+            FROM prep_recipes
+            ORDER BY name COLLATE NOCASE ASC, recipe_id ASC
+            """
+        ).fetchall()
+    return tuple(
+        PrepRecipe(
+            recipe_id=int(row["recipe_id"]),
+            name=str(row["name"]),
+            body=str(row["body"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+        for row in rows
+    )
+
+
+def save_prep_recipe(path: Path, name: str, body: str) -> PrepRecipe:
+    """Add one recipe to the shared prep library."""
+    normalized_name = " ".join(str(name).split()).strip()
+    normalized_body = str(body).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized_name:
+        raise ValueError("Recipe names cannot be blank.")
+    if not normalized_body:
+        raise ValueError("Recipe text cannot be blank.")
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """
+            INSERT INTO prep_recipes (name, body, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (normalized_name, normalized_body, now.isoformat(), now.isoformat()),
+        )
+        recipe_id = int(cursor.lastrowid)
+    return PrepRecipe(recipe_id, normalized_name, normalized_body, now, now)
+
+
+def update_prep_recipe(path: Path, recipe_id: int, name: str, body: str) -> PrepRecipe | None:
+    """Update one prep recipe."""
+    normalized_name = " ".join(str(name).split()).strip()
+    normalized_body = str(body).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized_name:
+        raise ValueError("Recipe names cannot be blank.")
+    if not normalized_body:
+        raise ValueError("Recipe text cannot be blank.")
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT created_at FROM prep_recipes WHERE recipe_id = ?",
+            (int(recipe_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        connection.execute(
+            """
+            UPDATE prep_recipes
+            SET name = ?, body = ?, updated_at = ?
+            WHERE recipe_id = ?
+            """,
+            (normalized_name, normalized_body, now.isoformat(), int(recipe_id)),
+        )
+    return PrepRecipe(
+        int(recipe_id),
+        normalized_name,
+        normalized_body,
+        datetime.fromisoformat(str(row["created_at"])),
+        now,
+    )
+
+
+def delete_prep_recipe(path: Path, recipe_id: int) -> bool:
+    """Delete one prep recipe."""
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            "DELETE FROM prep_recipes WHERE recipe_id = ?",
+            (int(recipe_id),),
+        )
+    return bool(cursor.rowcount)
 
 
 def _touch_board_content_revision(

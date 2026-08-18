@@ -2107,6 +2107,442 @@
 })();
 
 (() => {
+    const board = document.getElementById("production-board");
+    const dialog = document.querySelector("#prep-list-dialog");
+    const openButton = document.querySelector("[data-prep-list-open]");
+    const closeButton = dialog?.querySelector("[data-prep-list-close]");
+    const body = dialog?.querySelector("[data-prep-list-body]");
+    const taskList = dialog?.querySelector("[data-prep-task-list]");
+    const emptyState = dialog?.querySelector("[data-prep-list-empty]");
+    const progress = dialog?.querySelector("[data-prep-list-progress]");
+    const status = dialog?.querySelector("[data-prep-list-status]");
+    const taskForm = dialog?.querySelector("[data-prep-task-add-form]");
+    const teamList = dialog?.querySelector("[data-prep-team-list]");
+    const assigneeForm = dialog?.querySelector("[data-prep-assignee-form]");
+    const countBadge = openButton?.querySelector("[data-prep-list-count]");
+    if (!board || !dialog || !openButton || !body || !taskList || !taskForm || !teamList || !assigneeForm) {
+        return;
+    }
+
+    const serviceDate = body.dataset.serviceDate || board.dataset.serviceDate || "";
+    const listUrl = body.dataset.prepListUrl || openButton.dataset.prepListUrl || "";
+    const taskUrl = body.dataset.prepTaskUrl || "";
+    const assigneeUrl = body.dataset.prepAssigneeUrl || "";
+    let assignees = [];
+    let tasks = [];
+
+    const setStatus = (message = "") => {
+        if (status) status.textContent = message;
+    };
+
+    const setRevision = (result) => {
+        if (result?.board_content_revision) {
+            board.dataset.boardContentRevision = String(result.board_content_revision);
+        }
+    };
+
+    const requestJson = async (url, options = {}) => {
+        const response = await fetch(url, {
+            headers: {"Accept": "application/json", ...(options.body ? {"Content-Type": "application/json"} : {})},
+            cache: "no-store",
+            ...options,
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.error || "The Prep List could not be updated.");
+        }
+        setRevision(result);
+        return result;
+    };
+
+    const fillAssigneeSelect = (select, selected = "") => {
+        select.replaceChildren();
+        const unassigned = document.createElement("option");
+        unassigned.value = "";
+        unassigned.textContent = "Unassigned";
+        select.appendChild(unassigned);
+        const names = [...assignees];
+        if (selected && !names.some((name) => name.toLocaleLowerCase() === selected.toLocaleLowerCase())) {
+            names.push(selected);
+        }
+        names.forEach((name) => {
+            const option = document.createElement("option");
+            option.value = name;
+            option.textContent = name;
+            option.selected = name === selected;
+            select.appendChild(option);
+        });
+    };
+
+    const saveTaskChange = async (taskId, changes, control) => {
+        if (!taskUrl) return;
+        control.disabled = true;
+        setStatus("Saving…");
+        try {
+            await requestJson(`${taskUrl}/${taskId}`, {
+                method: "POST",
+                body: JSON.stringify({service_date: serviceDate, ...changes}),
+            });
+            await refresh();
+            setStatus("Saved");
+        } catch (error) {
+            setStatus(String(error));
+            await refresh().catch(() => {});
+        } finally {
+            control.disabled = false;
+        }
+    };
+
+    const render = () => {
+        const incompleteCount = tasks.filter((task) => !task.completed).length;
+        const completeCount = tasks.length - incompleteCount;
+        if (progress) {
+            progress.textContent = tasks.length ? `${completeCount} of ${tasks.length} complete` : "No tasks yet";
+        }
+        if (countBadge) {
+            countBadge.textContent = String(incompleteCount);
+            countBadge.hidden = incompleteCount === 0;
+        }
+        if (emptyState) emptyState.hidden = tasks.length > 0;
+
+        taskList.replaceChildren();
+        tasks.forEach((task) => {
+            const row = document.createElement("article");
+            row.className = `prep-task-row${task.completed ? " is-complete" : ""}`;
+            row.dataset.prepTaskId = String(task.id);
+
+            const checkWrap = document.createElement("label");
+            checkWrap.className = "prep-task-check";
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = Boolean(task.completed);
+            checkbox.setAttribute("aria-label", `Mark ${task.task} complete`);
+            checkbox.addEventListener("change", () => saveTaskChange(task.id, {completed: checkbox.checked}, checkbox));
+            checkWrap.appendChild(checkbox);
+
+            const text = document.createElement("div");
+            text.className = "prep-task-text";
+            text.textContent = task.task || "";
+
+            const select = document.createElement("select");
+            select.className = "prep-task-assignee";
+            select.setAttribute("aria-label", `Assign ${task.task}`);
+            fillAssigneeSelect(select, task.assignee || "");
+            select.addEventListener("change", () => saveTaskChange(task.id, {assignee: select.value}, select));
+
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "prep-task-remove";
+            remove.textContent = "Remove";
+            remove.addEventListener("click", async () => {
+                if (!window.confirm(`Remove “${task.task}” from this service's prep list?`)) return;
+                remove.disabled = true;
+                setStatus("Removing…");
+                try {
+                    await requestJson(`${taskUrl}/${task.id}`, {
+                        method: "DELETE",
+                        body: JSON.stringify({service_date: serviceDate}),
+                    });
+                    await refresh();
+                    setStatus("Removed");
+                } catch (error) {
+                    setStatus(String(error));
+                    remove.disabled = false;
+                }
+            });
+
+            row.append(checkWrap, text, select, remove);
+            taskList.appendChild(row);
+        });
+
+        teamList.replaceChildren();
+        if (!assignees.length) {
+            const empty = document.createElement("span");
+            empty.className = "prep-list-empty";
+            empty.textContent = "No team members added yet.";
+            teamList.appendChild(empty);
+        }
+        assignees.forEach((name) => {
+            const member = document.createElement("div");
+            member.className = "prep-team-member";
+            const label = document.createElement("span");
+            label.textContent = name;
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "prep-team-remove";
+            remove.textContent = "×";
+            remove.setAttribute("aria-label", `Remove ${name} from assignment picker`);
+            remove.addEventListener("click", async () => {
+                if (!window.confirm(`Remove ${name} from the assignment picker? Existing tasks keep the name.`)) return;
+                remove.disabled = true;
+                try {
+                    await requestJson(assigneeUrl, {
+                        method: "DELETE",
+                        body: JSON.stringify({service_date: serviceDate, name}),
+                    });
+                    await refresh();
+                    setStatus("Team updated");
+                } catch (error) {
+                    setStatus(String(error));
+                    remove.disabled = false;
+                }
+            });
+            member.append(label, remove);
+            teamList.appendChild(member);
+        });
+
+        const newTaskAssignee = taskForm.querySelector('select[name="assignee"]');
+        if (newTaskAssignee) fillAssigneeSelect(newTaskAssignee, newTaskAssignee.value || "");
+    };
+
+    const refresh = async () => {
+        if (!listUrl) return;
+        setStatus("Loading…");
+        const separator = listUrl.includes("?") ? "&" : "?";
+        const result = await requestJson(`${listUrl}${separator}date=${encodeURIComponent(serviceDate)}`);
+        tasks = Array.isArray(result.tasks) ? result.tasks : [];
+        assignees = Array.isArray(result.assignees) ? result.assignees : [];
+        render();
+        setStatus("");
+    };
+
+    const openDialog = () => {
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+        refresh().catch((error) => setStatus(String(error)));
+    };
+
+    const closeDialog = () => {
+        if (typeof dialog.close === "function") dialog.close();
+        else dialog.removeAttribute("open");
+        openButton.focus();
+    };
+
+    openButton.addEventListener("click", openDialog);
+    closeButton?.addEventListener("click", closeDialog);
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(); });
+
+    taskForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const taskInput = taskForm.querySelector('input[name="task"]');
+        const assigneeSelect = taskForm.querySelector('select[name="assignee"]');
+        const submit = taskForm.querySelector('button[type="submit"]');
+        const task = taskInput?.value.trim() || "";
+        if (!task || !submit) return;
+        submit.disabled = true;
+        setStatus("Adding…");
+        try {
+            await requestJson(taskUrl, {
+                method: "POST",
+                body: JSON.stringify({service_date: serviceDate, task, assignee: assigneeSelect?.value || ""}),
+            });
+            taskInput.value = "";
+            await refresh();
+            setStatus("Added");
+            taskInput.focus();
+        } catch (error) {
+            setStatus(String(error));
+        } finally {
+            submit.disabled = false;
+        }
+    });
+
+    assigneeForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const input = assigneeForm.querySelector('input[name="name"]');
+        const submit = assigneeForm.querySelector('button[type="submit"]');
+        const name = input?.value.trim() || "";
+        if (!name || !submit) return;
+        submit.disabled = true;
+        try {
+            await requestJson(assigneeUrl, {
+                method: "POST",
+                body: JSON.stringify({service_date: serviceDate, name}),
+            });
+            input.value = "";
+            await refresh();
+            setStatus("Team updated");
+            input.focus();
+        } catch (error) {
+            setStatus(String(error));
+        } finally {
+            submit.disabled = false;
+        }
+    });
+})();
+
+(() => {
+    const board = document.getElementById("production-board");
+    const dialog = document.querySelector("#recipes-dialog");
+    const openButton = document.querySelector("[data-recipes-open]");
+    const closeButton = dialog?.querySelector("[data-recipes-close]");
+    const body = dialog?.querySelector("[data-recipes-body]");
+    const list = dialog?.querySelector("[data-recipe-list]");
+    const emptyState = dialog?.querySelector("[data-recipe-list-empty]");
+    const addForm = dialog?.querySelector("[data-recipe-add-form]");
+    const status = dialog?.querySelector("[data-recipes-status]");
+    const countBadge = openButton?.querySelector("[data-recipes-count]");
+    if (!board || !dialog || !openButton || !body || !list || !addForm) {
+        return;
+    }
+
+    const serviceDate = body.dataset.serviceDate || board.dataset.serviceDate || "";
+    const recipesUrl = body.dataset.recipesUrl || openButton.dataset.recipesUrl || "";
+    const recipeUrl = body.dataset.recipeUrl || "";
+    let recipes = [];
+
+    const setStatus = (message = "") => { if (status) status.textContent = message; };
+    const setRevision = (result) => {
+        if (result?.board_content_revision) board.dataset.boardContentRevision = String(result.board_content_revision);
+    };
+    const requestJson = async (url, options = {}) => {
+        const response = await fetch(url, {
+            headers: {"Accept": "application/json", ...(options.body ? {"Content-Type": "application/json"} : {})},
+            cache: "no-store",
+            ...options,
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "The recipe library could not be updated.");
+        setRevision(result);
+        return result;
+    };
+
+    const render = () => {
+        list.replaceChildren();
+        if (emptyState) emptyState.hidden = recipes.length > 0;
+        if (countBadge) {
+            countBadge.textContent = String(recipes.length);
+            countBadge.hidden = recipes.length === 0;
+        }
+        recipes.forEach((recipe) => {
+            const card = document.createElement("details");
+            card.className = "recipe-card";
+            card.dataset.recipeId = String(recipe.id);
+            const summary = document.createElement("summary");
+            summary.textContent = recipe.name || "Untitled recipe";
+            const form = document.createElement("form");
+            form.className = "recipe-edit-form";
+
+            const nameLabel = document.createElement("label");
+            nameLabel.textContent = "Name";
+            const name = document.createElement("input");
+            name.type = "text";
+            name.name = "name";
+            name.maxLength = 120;
+            name.required = true;
+            name.value = recipe.name || "";
+            const bodyLabel = document.createElement("label");
+            bodyLabel.textContent = "Recipe / instructions";
+            const recipeBody = document.createElement("textarea");
+            recipeBody.name = "body";
+            recipeBody.maxLength = 20000;
+            recipeBody.required = true;
+            recipeBody.rows = 10;
+            recipeBody.value = recipe.body || "";
+            const actions = document.createElement("div");
+            actions.className = "recipe-edit-actions";
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "recipe-delete";
+            remove.textContent = "Delete";
+            const save = document.createElement("button");
+            save.type = "submit";
+            save.className = "recipe-save";
+            save.textContent = "Save changes";
+            actions.append(remove, save);
+            form.append(nameLabel, name, bodyLabel, recipeBody, actions);
+            card.append(summary, form);
+            list.appendChild(card);
+
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                save.disabled = true;
+                setStatus("Saving…");
+                try {
+                    await requestJson(`${recipeUrl}/${recipe.id}`, {
+                        method: "POST",
+                        body: JSON.stringify({service_date: serviceDate, name: name.value.trim(), body: recipeBody.value.trim()}),
+                    });
+                    await refresh();
+                    setStatus("Saved");
+                } catch (error) {
+                    setStatus(String(error));
+                } finally {
+                    save.disabled = false;
+                }
+            });
+
+            remove.addEventListener("click", async () => {
+                if (!window.confirm(`Delete “${recipe.name}”?`)) return;
+                remove.disabled = true;
+                setStatus("Deleting…");
+                try {
+                    await requestJson(`${recipeUrl}/${recipe.id}`, {
+                        method: "DELETE",
+                        body: JSON.stringify({service_date: serviceDate}),
+                    });
+                    await refresh();
+                    setStatus("Deleted");
+                } catch (error) {
+                    setStatus(String(error));
+                    remove.disabled = false;
+                }
+            });
+        });
+    };
+
+    const refresh = async () => {
+        setStatus("Loading…");
+        const result = await requestJson(recipesUrl);
+        recipes = Array.isArray(result.recipes) ? result.recipes : [];
+        render();
+        setStatus("");
+    };
+
+    const openDialog = () => {
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+        refresh().catch((error) => setStatus(String(error)));
+    };
+    const closeDialog = () => {
+        if (typeof dialog.close === "function") dialog.close();
+        else dialog.removeAttribute("open");
+        openButton.focus();
+    };
+
+    openButton.addEventListener("click", openDialog);
+    closeButton?.addEventListener("click", closeDialog);
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); closeDialog(); });
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(); });
+
+    addForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const name = addForm.querySelector('input[name="name"]');
+        const recipeBody = addForm.querySelector('textarea[name="body"]');
+        const submit = addForm.querySelector('button[type="submit"]');
+        if (!name || !recipeBody || !submit || !name.value.trim() || !recipeBody.value.trim()) return;
+        submit.disabled = true;
+        setStatus("Saving…");
+        try {
+            await requestJson(recipeUrl, {
+                method: "POST",
+                body: JSON.stringify({service_date: serviceDate, name: name.value.trim(), body: recipeBody.value.trim()}),
+            });
+            name.value = "";
+            recipeBody.value = "";
+            await refresh();
+            setStatus("Recipe added");
+            name.focus();
+        } catch (error) {
+            setStatus(String(error));
+        } finally {
+            submit.disabled = false;
+        }
+    });
+})();
+
+(() => {
     const dialog = document.querySelector("#service-setup-dialog");
     const openButton = document.querySelector("[data-service-setup-open]");
     const closeButton = dialog?.querySelector("[data-service-setup-close]");

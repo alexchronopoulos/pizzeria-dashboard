@@ -22,6 +22,26 @@
             {% if service_notes %}<span class="service-notes-count" data-service-notes-count>{{ service_notes|length }}</span>{% else %}<span class="service-notes-count" data-service-notes-count hidden>0</span>{% endif %}
             <span class="service-notes-unread" data-service-notes-unread hidden aria-label="New service notes">!</span>
         </button>
+        <button
+            class="prep-list-button"
+            type="button"
+            data-prep-list-open
+            data-service-date="{{ selected_date.isoformat() }}"
+            data-prep-list-url="{{ url_for('dashboard.prep_list_data') }}"
+        >
+            <span>Prep list</span>
+            <span class="prep-list-count" data-prep-list-count{% if prep_open_task_count == 0 %} hidden{% endif %}>{{ prep_open_task_count }}</span>
+        </button>
+        <button
+            class="recipes-button"
+            type="button"
+            data-recipes-open
+            data-service-date="{{ selected_date.isoformat() }}"
+            data-recipes-url="{{ url_for('dashboard.recipe_library_data') }}"
+        >
+            <span>Recipes</span>
+            <span class="recipes-count" data-recipes-count{% if prep_recipe_count == 0 %} hidden{% endif %}>{{ prep_recipe_count }}</span>
+        </button>
         <button class="service-setup-button" type="button" data-service-setup-open>Service setup</button>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
@@ -37,10 +57,6 @@
         {% if selected_date != today %}
         <a class="today-link" href="{{ url_for('dashboard.index', date=today.isoformat()) }}">Return to today</a>
         {% endif %}
-        <div class="live-indicator" aria-label="Dashboard source">
-            <span class="live-dot"></span>
-            {% if order_source == 'square' %}Square + SQLite{% elif order_source == 'sample' %}Sample + SQLite{% else %}Configuration error{% endif %}
-        </div>
     </div>
 </header>
 
@@ -96,6 +112,93 @@
                     <span data-service-note-status aria-live="polite"></span>
                     <button type="submit">Add note</button>
                 </div>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<dialog id="prep-list-dialog" class="prep-list-dialog" aria-labelledby="prep-list-dialog-title">
+    <div class="prep-list-dialog-shell">
+        <div class="prep-list-dialog-toolbar">
+            <div>
+                <strong id="prep-list-dialog-title">Prep list</strong>
+                <span>{{ selected_date.strftime('%A, %B %-d') }} · shared checklist</span>
+            </div>
+            <button type="button" class="prep-list-close" data-prep-list-close aria-label="Close prep list">Close</button>
+        </div>
+        <div
+            class="prep-list-dialog-body"
+            data-prep-list-body
+            data-service-date="{{ selected_date.isoformat() }}"
+            data-prep-list-url="{{ url_for('dashboard.prep_list_data') }}"
+            data-prep-task-url="{{ url_for('dashboard.add_prep_task') }}"
+            data-prep-assignee-url="{{ url_for('dashboard.add_prep_assignee') }}"
+        >
+            <section class="prep-list-main" aria-label="Daily prep tasks">
+                <div class="prep-list-status-row">
+                    <strong data-prep-list-progress>Loading…</strong>
+                    <span data-prep-list-status aria-live="polite"></span>
+                </div>
+                <div class="prep-task-list" data-prep-task-list></div>
+                <p class="prep-list-empty" data-prep-list-empty hidden>No prep tasks yet for this service.</p>
+                <form class="prep-task-add-form" data-prep-task-add-form>
+                    <label for="prep-task-text">Add task</label>
+                    <div class="prep-task-add-grid">
+                        <input id="prep-task-text" name="task" type="text" maxlength="300" placeholder="Portion sausage, make vodka sauce…" required>
+                        <select name="assignee" aria-label="Assign new prep task">
+                            <option value="">Unassigned</option>
+                        </select>
+                        <button type="submit">Add task</button>
+                    </div>
+                </form>
+            </section>
+            <aside class="prep-team-panel" aria-label="Prep team">
+                <div>
+                    <strong>Team</strong>
+                    <span>Names appear in each task’s assignment picker.</span>
+                </div>
+                <div class="prep-team-list" data-prep-team-list></div>
+                <form class="prep-assignee-form" data-prep-assignee-form>
+                    <label class="visually-hidden" for="prep-assignee-name">Add team member</label>
+                    <input id="prep-assignee-name" name="name" type="text" maxlength="80" placeholder="Add a name" required>
+                    <button type="submit">Add</button>
+                </form>
+            </aside>
+        </div>
+    </div>
+</dialog>
+
+<dialog id="recipes-dialog" class="recipes-dialog" aria-labelledby="recipes-dialog-title">
+    <div class="recipes-dialog-shell">
+        <div class="recipes-dialog-toolbar">
+            <div>
+                <strong id="recipes-dialog-title">Recipes</strong>
+                <span>Shared prep recipe library</span>
+            </div>
+            <button type="button" class="recipes-close" data-recipes-close aria-label="Close recipes">Close</button>
+        </div>
+        <div
+            class="recipes-dialog-body"
+            data-recipes-body
+            data-service-date="{{ selected_date.isoformat() }}"
+            data-recipes-url="{{ url_for('dashboard.recipe_library_data') }}"
+            data-recipe-url="{{ url_for('dashboard.add_prep_recipe') }}"
+        >
+            <section class="recipe-library-panel">
+                <div class="recipe-library-heading">
+                    <strong>Recipe library</strong>
+                    <span data-recipes-status aria-live="polite"></span>
+                </div>
+                <div class="recipe-list" data-recipe-list></div>
+                <p class="recipe-list-empty" data-recipe-list-empty hidden>No recipes saved yet.</p>
+            </section>
+            <form class="recipe-add-form" data-recipe-add-form>
+                <strong>Add recipe</strong>
+                <label for="recipe-name">Name</label>
+                <input id="recipe-name" name="name" type="text" maxlength="120" placeholder="Sungold vodka sauce" required>
+                <label for="recipe-body">Recipe / instructions</label>
+                <textarea id="recipe-body" name="body" rows="12" maxlength="20000" placeholder="Ingredients, weights, method, yield, holding notes…" required></textarea>
+                <button type="submit">Save recipe</button>
             </form>
         </div>
     </div>
@@ -175,5 +278,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.28') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.29') }}" defer></script>
 {% endblock %}

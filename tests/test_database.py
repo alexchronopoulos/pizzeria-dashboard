@@ -15,6 +15,9 @@ from pizzeria_dashboard.database import (
     load_order_internal_notes_for_date,
     load_orders_for_date,
     load_pie_production_states,
+    load_prep_assignees,
+    load_prep_recipes,
+    load_prep_tasks_for_date,
     load_latest_service_state_before,
     load_service_state_payload,
     load_service_notes_for_date,
@@ -29,10 +32,18 @@ from pizzeria_dashboard.database import (
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
+    save_prep_assignee,
+    save_prep_recipe,
+    save_prep_task,
     save_service_state_payload,
     save_service_note,
     save_vip_customer,
     delete_vip_customers,
+    delete_prep_assignee,
+    delete_prep_recipe,
+    delete_prep_task,
+    update_prep_recipe,
+    update_prep_task,
     update_pie_production_state,
 )
 from pizzeria_dashboard.domain import Item, Order
@@ -61,6 +72,9 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "order_slot_assignments",
         "order_internal_notes",
         "service_notes",
+        "prep_assignees",
+        "prep_tasks",
+        "prep_recipes",
         "pie_production_states",
         "order_ready_states",
         "vip_customers",
@@ -203,6 +217,62 @@ def test_service_notes_are_date_scoped_and_bump_board_revision(tmp_path: Path) -
     ]
     assert load_service_notes_for_date(database_path, second_date) == ()
     assert load_board_content_revision(database_path, first_date) != before
+
+
+def test_prep_list_is_date_scoped_assignable_and_shared(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    first_date = date(2026, 8, 20)
+    second_date = date(2026, 8, 21)
+    initialize_database(database_path)
+
+    before = load_board_content_revision(database_path, first_date)
+    assert save_prep_assignee(database_path, "Alex", service_date=first_date) == "Alex"
+    assert save_prep_assignee(database_path, "Sam", service_date=first_date) == "Sam"
+    assert load_prep_assignees(database_path) == ("Alex", "Sam")
+
+    first = save_prep_task(database_path, first_date, "Portion sausage", assignee="Sam")
+    second = save_prep_task(database_path, first_date, "Make vodka sauce")
+    assert [task.task for task in load_prep_tasks_for_date(database_path, first_date)] == [
+        "Portion sausage",
+        "Make vodka sauce",
+    ]
+    assert load_prep_tasks_for_date(database_path, second_date) == ()
+
+    updated = update_prep_task(
+        database_path,
+        first_date,
+        first.task_id,
+        assignee="Alex",
+        completed=True,
+    )
+    assert updated is not None
+    assert updated.assignee == "Alex"
+    assert updated.completed is True
+    tasks = load_prep_tasks_for_date(database_path, first_date)
+    assert tasks[-1].task_id == first.task_id
+    assert tasks[-1].completed is True
+    assert load_board_content_revision(database_path, first_date) != before
+
+    assert delete_prep_task(database_path, first_date, second.task_id) is True
+    assert delete_prep_assignee(database_path, "Sam", service_date=first_date) is True
+    assert load_prep_assignees(database_path) == ("Alex",)
+
+
+def test_prep_recipes_can_be_added_edited_and_deleted(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+
+    recipe = save_prep_recipe(database_path, "Vodka Sauce", "1000 g tomatoes\n200 g cream")
+    assert [(item.name, item.body) for item in load_prep_recipes(database_path)] == [
+        ("Vodka Sauce", "1000 g tomatoes\n200 g cream")
+    ]
+
+    updated = update_prep_recipe(database_path, recipe.recipe_id, "Sungold Vodka Sauce", "Updated method")
+    assert updated is not None
+    assert updated.name == "Sungold Vodka Sauce"
+    assert updated.body == "Updated method"
+    assert delete_prep_recipe(database_path, recipe.recipe_id) is True
+    assert load_prep_recipes(database_path) == ()
 
 
 def test_replacing_a_date_removes_stale_cached_orders(tmp_path: Path) -> None:

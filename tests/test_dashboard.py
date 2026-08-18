@@ -59,7 +59,8 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     visible_text = _visible_text(response)
     assert "Production board" not in visible_text
     assert "Friday, July 31, 2026" not in visible_text
-    assert b"Sample + SQLite" in response.data
+    assert b"Sample + SQLite" not in response.data
+    assert b"Square + SQLite" not in response.data
     assert b'class="masthead-tools masthead-tools--single-row"' in response.data
     assert b"Pizzeria Mari Production Dashboard" not in response.data
     assert b'class="pizzeria-mari-logo"' in response.data
@@ -391,6 +392,88 @@ def test_service_note_rejects_blank_and_oversized_text(tmp_path: Path) -> None:
     )
     assert oversized.status_code == 400
     assert oversized.get_json()["ok"] is False
+
+
+def test_prep_list_button_checklist_assignments_and_recipe_library(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+    selected = "2026-08-20"
+
+    initial = client.get(f"/?date={selected}")
+    assert initial.status_code == 200
+    assert b"data-prep-list-open" in initial.data
+    assert b"data-recipes-open" in initial.data
+    assert b'id="prep-list-dialog"' in initial.data
+    assert b'id="recipes-dialog"' in initial.data
+
+    added_person = client.post(
+        "/prep-assignee",
+        json={"service_date": selected, "name": "Alex"},
+    )
+    assert added_person.status_code == 200
+    assert added_person.get_json()["name"] == "Alex"
+
+    added_task = client.post(
+        "/prep-task",
+        json={"service_date": selected, "task": "Portion sausage", "assignee": "Alex"},
+    )
+    assert added_task.status_code == 200
+    task_id = added_task.get_json()["task"]["id"]
+
+    prep_data = client.get(f"/prep-list?date={selected}").get_json()
+    assert prep_data["assignees"] == ["Alex"]
+    assert prep_data["tasks"] == [
+        {
+            "id": task_id,
+            "task": "Portion sausage",
+            "assignee": "Alex",
+            "completed": False,
+            "updated_at": prep_data["tasks"][0]["updated_at"],
+        }
+    ]
+
+    completed = client.post(
+        f"/prep-task/{task_id}",
+        json={"service_date": selected, "completed": True},
+    )
+    assert completed.status_code == 200
+    assert completed.get_json()["task"]["completed"] is True
+    assert client.get("/prep-list?date=2026-08-21").get_json()["tasks"] == []
+
+    recipe = client.post(
+        "/recipe",
+        json={
+            "service_date": selected,
+            "name": "Sungold Vodka Sauce",
+            "body": "1000 g tomatoes\n200 g cream\nCook until glossy.",
+        },
+    )
+    assert recipe.status_code == 200
+    recipe_id = recipe.get_json()["recipe"]["id"]
+    recipes = client.get("/recipes").get_json()["recipes"]
+    assert recipes[0]["name"] == "Sungold Vodka Sauce"
+    assert "200 g cream" in recipes[0]["body"]
+
+    edited = client.post(
+        f"/recipe/{recipe_id}",
+        json={"service_date": selected, "name": "Vodka Sauce", "body": "Updated prep recipe"},
+    )
+    assert edited.status_code == 200
+    assert edited.get_json()["recipe"]["name"] == "Vodka Sauce"
+
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    assert "data-prep-list-open" in initial.get_data(as_text=True)
+    assert "data-recipes-open" in initial.get_data(as_text=True)
+    assert "Mark ${task.task} complete" in javascript
+    assert "Assign ${task.task}" in javascript
+    assert 'pizzeria-dashboard:service-notes-seen:' in javascript
+
+    deleted_recipe = client.delete(
+        f"/recipe/{recipe_id}",
+        json={"service_date": selected},
+    )
+    assert deleted_recipe.status_code == 200
+    assert client.get("/recipes").get_json()["recipes"] == []
 
 
 def test_auto_refresh_preferences_persist_in_sqlite(tmp_path: Path) -> None:

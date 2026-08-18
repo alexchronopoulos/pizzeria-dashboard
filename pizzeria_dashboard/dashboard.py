@@ -35,6 +35,9 @@ from .database import (
     load_order_ready_states,
     load_orders_for_date,
     load_pie_production_states,
+    load_prep_assignees,
+    load_prep_recipes,
+    load_prep_tasks_for_date,
     load_service_state_payload,
     load_service_notes_for_date,
     load_sync_info,
@@ -46,10 +49,18 @@ from .database import (
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
+    save_prep_assignee,
+    save_prep_recipe,
+    save_prep_task,
     save_service_note,
     save_vip_customer,
+    delete_prep_assignee,
+    delete_prep_recipe,
+    delete_prep_task,
     delete_vip_customers,
     touch_board_content_revision,
+    update_prep_recipe,
+    update_prep_task,
     update_pie_production_state,
 )
 from .domain import (
@@ -283,6 +294,8 @@ def index() -> str:
     )
     internal_notes = load_order_internal_notes_for_date(database_path, selected_date)
     service_notes = load_service_notes_for_date(database_path, selected_date)
+    prep_tasks = load_prep_tasks_for_date(database_path, selected_date)
+    prep_recipe_count = len(load_prep_recipes(database_path))
     pie_states = load_pie_production_states(database_path, selected_date)
     ready_states = load_order_ready_states(database_path, selected_date)
     board_content_revision = load_board_content_revision(database_path, selected_date)
@@ -427,6 +440,8 @@ def index() -> str:
         internal_notes=internal_notes,
         service_notes=service_notes,
         service_notes_latest_id=(service_notes[-1].note_id if service_notes else 0),
+        prep_open_task_count=sum(1 for prep_task in prep_tasks if not prep_task.completed),
+        prep_recipe_count=prep_recipe_count,
         pie_states=pie_states,
         boxed_orders={
             order_id: boxed_at.astimezone(
@@ -774,6 +789,241 @@ def update_order_vip():
         delete_vip_customers(database_path, keys)
     revision = touch_board_content_revision(database_path, selected_date)
     return jsonify(ok=True, vip=vip, board_content_revision=revision)
+
+
+def _prep_task_json(task) -> dict[str, object]:
+    return {
+        "id": task.task_id,
+        "task": task.task,
+        "assignee": task.assignee or "",
+        "completed": bool(task.completed),
+        "updated_at": task.updated_at.isoformat(),
+    }
+
+
+def _prep_recipe_json(recipe) -> dict[str, object]:
+    return {
+        "id": recipe.recipe_id,
+        "name": recipe.name,
+        "body": recipe.body,
+        "updated_at": recipe.updated_at.isoformat(),
+    }
+
+
+@blueprint.get("/prep-list")
+def prep_list_data():
+    selected_date = _parse_service_date(request.args.get("date"))
+    database_path = _database_path()
+    tasks = load_prep_tasks_for_date(database_path, selected_date)
+    return jsonify(
+        ok=True,
+        service_date=selected_date.isoformat(),
+        tasks=[_prep_task_json(task) for task in tasks],
+        assignees=list(load_prep_assignees(database_path)),
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.post("/prep-task")
+def add_prep_task():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_task = payload.get("task", "")
+    if not isinstance(raw_task, str):
+        return jsonify(ok=False, error="The prep task must be text."), 400
+    task_text = " ".join(raw_task.replace("\r", " ").replace("\n", " ").split()).strip()
+    if not task_text:
+        return jsonify(ok=False, error="Enter a prep task before adding it."), 400
+    if len(task_text) > 300:
+        return jsonify(ok=False, error="Prep tasks are limited to 300 characters."), 400
+    raw_assignee = payload.get("assignee", "")
+    if raw_assignee is not None and not isinstance(raw_assignee, str):
+        return jsonify(ok=False, error="The assignee must be text."), 400
+    assignee = " ".join(str(raw_assignee or "").split()).strip()
+    if len(assignee) > 80:
+        return jsonify(ok=False, error="Assignee names are limited to 80 characters."), 400
+    database_path = _database_path()
+    saved = save_prep_task(database_path, selected_date, task_text, assignee=assignee or None)
+    return jsonify(
+        ok=True,
+        task=_prep_task_json(saved),
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.post("/prep-task/<int:task_id>")
+def edit_prep_task(task_id: int):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    kwargs: dict[str, object] = {}
+    if "task" in payload:
+        raw_task = payload.get("task")
+        if not isinstance(raw_task, str):
+            return jsonify(ok=False, error="The prep task must be text."), 400
+        task_text = " ".join(raw_task.replace("\r", " ").replace("\n", " ").split()).strip()
+        if not task_text:
+            return jsonify(ok=False, error="Prep tasks cannot be blank."), 400
+        if len(task_text) > 300:
+            return jsonify(ok=False, error="Prep tasks are limited to 300 characters."), 400
+        kwargs["task"] = task_text
+    if "assignee" in payload:
+        raw_assignee = payload.get("assignee")
+        if raw_assignee is not None and not isinstance(raw_assignee, str):
+            return jsonify(ok=False, error="The assignee must be text."), 400
+        assignee = " ".join(str(raw_assignee or "").split()).strip()
+        if len(assignee) > 80:
+            return jsonify(ok=False, error="Assignee names are limited to 80 characters."), 400
+        kwargs["assignee"] = assignee or None
+    if "completed" in payload:
+        if not isinstance(payload.get("completed"), bool):
+            return jsonify(ok=False, error="The completed value must be true or false."), 400
+        kwargs["completed"] = bool(payload.get("completed"))
+    if not kwargs:
+        return jsonify(ok=False, error="No prep task changes were supplied."), 400
+    database_path = _database_path()
+    try:
+        saved = update_prep_task(database_path, selected_date, task_id, **kwargs)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    if saved is None:
+        return jsonify(ok=False, error="That prep task no longer exists."), 404
+    return jsonify(
+        ok=True,
+        task=_prep_task_json(saved),
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.delete("/prep-task/<int:task_id>")
+def remove_prep_task(task_id: int):
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    database_path = _database_path()
+    if not delete_prep_task(database_path, selected_date, task_id):
+        return jsonify(ok=False, error="That prep task no longer exists."), 404
+    return jsonify(
+        ok=True,
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.post("/prep-assignee")
+def add_prep_assignee():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_name = payload.get("name", "")
+    if not isinstance(raw_name, str):
+        return jsonify(ok=False, error="The team member name must be text."), 400
+    name = " ".join(raw_name.split()).strip()
+    if not name:
+        return jsonify(ok=False, error="Enter a team member name."), 400
+    if len(name) > 80:
+        return jsonify(ok=False, error="Team member names are limited to 80 characters."), 400
+    database_path = _database_path()
+    saved_name = save_prep_assignee(database_path, name, service_date=selected_date)
+    return jsonify(
+        ok=True,
+        name=saved_name,
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.delete("/prep-assignee")
+def remove_prep_assignee():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_name = payload.get("name", "")
+    if not isinstance(raw_name, str):
+        return jsonify(ok=False, error="The team member name must be text."), 400
+    database_path = _database_path()
+    if not delete_prep_assignee(database_path, raw_name, service_date=selected_date):
+        return jsonify(ok=False, error="That team member is no longer in the picker."), 404
+    return jsonify(
+        ok=True,
+        board_content_revision=load_board_content_revision(database_path, selected_date),
+    )
+
+
+@blueprint.get("/recipes")
+def recipe_library_data():
+    recipes = load_prep_recipes(_database_path())
+    return jsonify(ok=True, recipes=[_prep_recipe_json(recipe) for recipe in recipes])
+
+
+@blueprint.post("/recipe")
+def add_prep_recipe():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_name = payload.get("name", "")
+    raw_body = payload.get("body", "")
+    if not isinstance(raw_name, str) or not isinstance(raw_body, str):
+        return jsonify(ok=False, error="Recipe name and text must be text."), 400
+    name = " ".join(raw_name.split()).strip()
+    body = raw_body.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not name or not body:
+        return jsonify(ok=False, error="Enter both a recipe name and recipe text."), 400
+    if len(name) > 120:
+        return jsonify(ok=False, error="Recipe names are limited to 120 characters."), 400
+    if len(body) > 20_000:
+        return jsonify(ok=False, error="Recipes are limited to 20,000 characters."), 400
+    database_path = _database_path()
+    saved = save_prep_recipe(database_path, name, body)
+    revision = touch_board_content_revision(database_path, selected_date)
+    return jsonify(ok=True, recipe=_prep_recipe_json(saved), board_content_revision=revision)
+
+
+@blueprint.post("/recipe/<int:recipe_id>")
+def edit_prep_recipe(recipe_id: int):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    raw_name = payload.get("name", "")
+    raw_body = payload.get("body", "")
+    if not isinstance(raw_name, str) or not isinstance(raw_body, str):
+        return jsonify(ok=False, error="Recipe name and text must be text."), 400
+    name = " ".join(raw_name.split()).strip()
+    body = raw_body.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not name or not body:
+        return jsonify(ok=False, error="Enter both a recipe name and recipe text."), 400
+    if len(name) > 120:
+        return jsonify(ok=False, error="Recipe names are limited to 120 characters."), 400
+    if len(body) > 20_000:
+        return jsonify(ok=False, error="Recipes are limited to 20,000 characters."), 400
+    database_path = _database_path()
+    try:
+        saved = update_prep_recipe(database_path, recipe_id, name, body)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    if saved is None:
+        return jsonify(ok=False, error="That recipe no longer exists."), 404
+    revision = touch_board_content_revision(database_path, selected_date)
+    return jsonify(ok=True, recipe=_prep_recipe_json(saved), board_content_revision=revision)
+
+
+@blueprint.delete("/recipe/<int:recipe_id>")
+def remove_prep_recipe(recipe_id: int):
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    database_path = _database_path()
+    if not delete_prep_recipe(database_path, recipe_id):
+        return jsonify(ok=False, error="That recipe no longer exists."), 404
+    revision = touch_board_content_revision(database_path, selected_date)
+    return jsonify(ok=True, board_content_revision=revision)
 
 
 @blueprint.post("/service-note")
