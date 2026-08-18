@@ -3231,10 +3231,10 @@ h2 {
 .service-setup-button {
     min-height: 42px;
     padding: 8px 13px;
-    border: 2px solid var(--brand-yellow);
+    border: 2px solid var(--black);
     border-radius: 8px;
     background: var(--brand-yellow);
-    color: var(--text);
+    color: var(--black);
     font-weight: 900;
     cursor: pointer;
 }
@@ -3242,7 +3242,8 @@ h2 {
 .service-setup-button:hover,
 .service-setup-button:focus-visible {
     background: white;
-    outline: 3px solid rgba(246, 224, 87, 0.35);
+    color: var(--black);
+    outline: 3px solid rgba(246, 224, 87, 0.38);
     outline-offset: 2px;
 }
 

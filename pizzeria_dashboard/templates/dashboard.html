@@ -54,9 +54,6 @@
             </form>
             <a class="date-step" href="{{ url_for('dashboard.index', date=next_service_date.isoformat()) }}" aria-label="View next day">→</a>
         </nav>
-        {% if selected_date != today %}
-        <a class="today-link" href="{{ url_for('dashboard.index', date=today.isoformat()) }}">Return to today</a>
-        {% endif %}
     </div>
 </header>
 
