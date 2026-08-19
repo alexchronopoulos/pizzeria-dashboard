@@ -5401,3 +5401,155 @@ html {
     gap: 9px;
     margin-top: 10px;
 }
+
+.toolbar-label--compact {
+    display: none;
+}
+
+/*
+ * iPad 11 landscape: keep both primary toolbars to one compact row.
+ * Firefox Responsive Design Mode does not consistently update the CSS
+ * orientation media feature when a device preset is rotated, so this is
+ * deliberately keyed only to the landscape viewport-width range.
+ */
+@media (min-width: 901px) and (max-width: 1280px) {
+    .masthead-tools--single-row {
+        flex-wrap: nowrap;
+        gap: 6px;
+    }
+
+    .pizzeria-mari-logo {
+        width: clamp(175px, 17.5vw, 210px);
+        min-width: 0;
+    }
+
+    .manual-order-button,
+    .service-notes-button,
+    .prep-list-button,
+    .recipes-button,
+    .service-setup-button {
+        min-height: 38px;
+        flex: 0 0 auto;
+        gap: 5px;
+        padding: 6px 8px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+    }
+
+    .toolbar-label--full {
+        display: none;
+    }
+
+    .toolbar-label--compact {
+        display: inline;
+    }
+
+    .service-notes-count,
+    .prep-list-count,
+    .recipes-count {
+        min-width: 19px;
+        height: 19px;
+        padding: 0 5px;
+        font-size: 0.67rem;
+    }
+
+    .masthead-tools--single-row .date-navigation {
+        flex: 0 0 auto;
+        gap: 4px;
+    }
+
+    .masthead-tools--single-row .date-step {
+        width: 38px;
+        min-height: 38px;
+        font-size: 1.1rem;
+    }
+
+    .masthead-tools--single-row .date-picker input {
+        width: 132px;
+        min-height: 38px;
+        padding: 5px 7px;
+        font-size: 0.78rem;
+    }
+
+    .masthead-tools--single-row .date-picker button {
+        min-height: 38px;
+        padding: 0 8px;
+        font-size: 0.78rem;
+    }
+
+    .board-section .section-heading {
+        align-items: center;
+        gap: 12px;
+    }
+
+    .board-section .section-heading > div:first-child {
+        flex: 0 0 auto;
+    }
+
+    .board-section .section-heading h2 {
+        font-size: 1.55rem;
+        white-space: nowrap;
+    }
+
+    .board-section .section-heading .eyebrow {
+        font-size: 0.67rem;
+    }
+
+    .board-section .sync-controls {
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-wrap: nowrap;
+        gap: 6px;
+    }
+
+    .board-section .sync-controls > *,
+    .board-section .sync-controls form {
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+
+    .board-section .prep-view-control,
+    .board-section .incremental-sync-button,
+    .board-section .auto-refresh-control,
+    .board-section .customer-history-sync-button,
+    .board-section .sync-button {
+        min-height: 38px;
+        padding-right: 8px;
+        padding-left: 8px;
+        font-size: 0.72rem;
+        white-space: nowrap;
+    }
+
+    .board-section .prep-view-control {
+        gap: 6px;
+    }
+
+    .board-section .prep-view-control input,
+    .board-section .auto-refresh-toggle input {
+        width: 17px;
+        height: 17px;
+    }
+
+    .board-section .prep-view-control small {
+        display: none;
+    }
+
+    .board-section .auto-refresh-control {
+        gap: 6px;
+        padding-right: 6px;
+    }
+
+    .board-section .auto-refresh-scope-note {
+        display: none;
+    }
+
+    .board-section .auto-refresh-toggle,
+    .board-section .auto-refresh-interval {
+        gap: 4px;
+    }
+
+    .board-section .auto-refresh-interval select {
+        min-height: 27px;
+        padding: 1px 2px;
+    }
+}

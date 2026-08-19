@@ -423,7 +423,11 @@
                 type="button"
                 data-incremental-sync-button
                 {% if not incremental_sync_available %}disabled title="Incremental updates are available for today and future service dates."{% endif %}
-            >Incremental update</button>
+                aria-label="Incremental update from Square"
+            >
+                <span class="toolbar-label toolbar-label--full" data-incremental-sync-label>Incremental update</span>
+                <span class="toolbar-label toolbar-label--compact" data-incremental-sync-label aria-hidden="true">Update</span>
+            </button>
             <div
                 class="auto-refresh-control{% if not auto_sync_available %} auto-refresh-control--unavailable{% endif %}"
                 data-auto-refresh-controls
@@ -433,10 +437,12 @@
                     <input
                         type="checkbox"
                         data-auto-sync-toggle
+                        aria-label="Auto refresh"
                         {% if auto_sync_enabled %}checked{% endif %}
                         {% if not auto_sync_available %}disabled{% endif %}
                     >
-                    <span>Auto refresh</span>
+                    <span class="toolbar-label toolbar-label--full">Auto refresh</span>
+                    <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Auto</span>
                 </label>
                 <label class="auto-refresh-interval">
                     <span>Every</span>
@@ -454,16 +460,32 @@
             {% if square_refresh_controls_visible %}
             <form method="post" action="{{ url_for('dashboard.rebuild_customer_history') }}" data-customer-history-form>
                 <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-                <button class="customer-history-sync-button" type="submit" data-customer-history-button>
-                    {% if customer_history_info %}Rebuild customer history{% else %}Build customer history{% endif %}
+                <button
+                    class="customer-history-sync-button"
+                    type="submit"
+                    data-customer-history-button
+                    aria-label="{% if customer_history_info %}Rebuild customer history{% else %}Build customer history{% endif %}"
+                >
+                    <span class="toolbar-label toolbar-label--full">{% if customer_history_info %}Rebuild customer history{% else %}Build customer history{% endif %}</span>
+                    <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Customer history</span>
                 </button>
             </form>
             {% endif %}
             <form method="post" action="{{ url_for('dashboard.sync') }}" data-full-sync-form>
                 <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-                <button class="sync-button" type="submit" data-full-sync-button>
-                    {% if order_source == 'square' %}Full refresh from Square{% else %}Load sample data{% endif %}
-                    — {{ selected_date.strftime('%b %-d') }}
+                <button
+                    class="sync-button"
+                    type="submit"
+                    data-full-sync-button
+                    aria-label="{% if order_source == 'square' %}Full refresh from Square{% else %}Load sample data{% endif %} for {{ selected_date.strftime('%B %-d') }}"
+                >
+                    <span class="toolbar-label toolbar-label--full">
+                        {% if order_source == 'square' %}Full refresh from Square{% else %}Load sample data{% endif %}
+                        — {{ selected_date.strftime('%b %-d') }}
+                    </span>
+                    <span class="toolbar-label toolbar-label--compact" aria-hidden="true">
+                        {% if order_source == 'square' %}Full refresh{% else %}Load data{% endif %}
+                    </span>
                 </button>
             </form>
         </div>

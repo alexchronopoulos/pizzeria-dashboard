@@ -2619,6 +2619,45 @@ def test_done_timer_rail_can_be_dismissed_per_device() -> None:
     assert "window.localStorage" in javascript
 
 
+def test_ipad_landscape_toolbars_do_not_depend_on_orientation_media_feature() -> None:
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+
+    assert "iPad 11 landscape" in css
+    assert "@media (min-width: 901px) and (max-width: 1280px)" in css
+    ipad_rules = css.split("@media (min-width: 901px) and (max-width: 1280px)", 1)[1]
+    assert "orientation:" not in ipad_rules
+    assert ".masthead-tools--single-row {\n        flex-wrap: nowrap;" in css
+    assert ".board-section .sync-controls {" in css
+    assert "flex-wrap: nowrap;" in css
+    assert ".toolbar-label--full {\n        display: none;" in ipad_rules
+    assert ".toolbar-label--compact {\n        display: inline;" in ipad_rules
+    assert ".board-section .prep-view-control small {\n        display: none;" in css
+    assert ".board-section .auto-refresh-scope-note {\n        display: none;" in css
+
+
+def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path: Path) -> None:
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="test-token",
+        AUTO_SEED_SAMPLE_DATA=False,
+    )
+    today = datetime.now(ZoneInfo(app.config["SERVICE_TIMEZONE"])).date()
+    response = app.test_client().get(f"/?date={today.isoformat()}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'style.css?v=0.5.38' in html
+    assert 'class="toolbar-label toolbar-label--compact"' in html
+    assert '>Add</span>' in html
+    assert '>Notes</span>' in html
+    assert '>Prep</span>' in html
+    assert '>Setup</span>' in html
+    assert '>Update</span>' in html
+    assert '>Customer history</span>' in html
+    assert "Full refresh" in html
+
+
 def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
     html = response.get_data(as_text=True)

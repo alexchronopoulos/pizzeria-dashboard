@@ -1779,7 +1779,16 @@
             return;
         }
         incrementalButton.disabled = busy || !incrementalSyncAvailable;
-        incrementalButton.textContent = busy ? "Checking Square…" : "Incremental update";
+        const labels = incrementalButton.querySelectorAll("[data-incremental-sync-label]");
+        if (labels.length) {
+            labels.forEach((label) => {
+                label.textContent = busy
+                    ? "Checking…"
+                    : (label.classList.contains("toolbar-label--compact") ? "Update" : "Incremental update");
+            });
+        } else {
+            incrementalButton.textContent = busy ? "Checking Square…" : "Incremental update";
+        }
     };
 
     const schedule = (delaySeconds = seconds) => {

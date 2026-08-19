@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.20">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.21">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -10,15 +10,20 @@
             width="1200"
             height="225"
         >
-        <button class="manual-order-button" type="button" data-manual-order-open>Add order</button>
+        <button class="manual-order-button" type="button" data-manual-order-open aria-label="Add order">
+            <span class="toolbar-label toolbar-label--full">Add order</span>
+            <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Add</span>
+        </button>
         <button
             class="service-notes-button"
             type="button"
             data-service-notes-open
             data-service-date="{{ selected_date.isoformat() }}"
             data-service-notes-latest-id="{{ service_notes_latest_id }}"
+            aria-label="Open service notes"
         >
-            <span>Service notes</span>
+            <span class="toolbar-label toolbar-label--full">Service notes</span>
+            <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Notes</span>
             {% if service_notes %}<span class="service-notes-count" data-service-notes-count>{{ service_notes|length }}</span>{% else %}<span class="service-notes-count" data-service-notes-count hidden>0</span>{% endif %}
             <span class="service-notes-unread" data-service-notes-unread hidden aria-label="New service notes">!</span>
         </button>
@@ -28,8 +33,10 @@
             data-prep-list-open
             data-service-date="{{ selected_date.isoformat() }}"
             data-prep-list-url="{{ url_for('dashboard.prep_list_data') }}"
+            aria-label="Open prep list"
         >
-            <span>Prep list</span>
+            <span class="toolbar-label toolbar-label--full">Prep list</span>
+            <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Prep</span>
             <span class="prep-list-count" data-prep-list-count{% if prep_open_task_count == 0 %} hidden{% endif %}>{{ prep_open_task_count }}</span>
         </button>
         <button
@@ -38,11 +45,15 @@
             data-recipes-open
             data-service-date="{{ selected_date.isoformat() }}"
             data-recipes-url="{{ url_for('dashboard.recipe_library_data') }}"
+            aria-label="Open recipes"
         >
-            <span>Recipes</span>
+            <span class="toolbar-label">Recipes</span>
             <span class="recipes-count" data-recipes-count{% if prep_recipe_count == 0 %} hidden{% endif %}>{{ prep_recipe_count }}</span>
         </button>
-        <button class="service-setup-button" type="button" data-service-setup-open>Service setup</button>
+        <button class="service-setup-button" type="button" data-service-setup-open aria-label="Open service setup">
+            <span class="toolbar-label toolbar-label--full">Service setup</span>
+            <span class="toolbar-label toolbar-label--compact" aria-hidden="true">Setup</span>
+        </button>
         <nav class="date-navigation" aria-label="Service date navigation">
             <a class="date-step" href="{{ url_for('dashboard.index', date=previous_service_date.isoformat()) }}" aria-label="View previous day">←</a>
             <form class="date-picker" method="get" action="{{ url_for('dashboard.index') }}">
