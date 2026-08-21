@@ -2647,7 +2647,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.38' in html
+    assert 'style.css?v=0.5.39' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -2656,6 +2656,27 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     assert '>Update</span>' in html
     assert '>Customer history</span>' in html
     assert "Full refresh" in html
+
+
+def test_new_order_toasts_have_device_local_clear_all_control(tmp_path: Path) -> None:
+    response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
+    html = response.get_data(as_text=True)
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+
+    assert response.status_code == 200
+    assert 'dashboard.js?v=0.5.31' in html
+    assert 'data-new-order-toast-clear' in html
+    assert 'data-new-order-toast-list' in html
+    assert '>Clear all</button>' in html
+    assert 'pizzeria-dashboard:dismissed-order-toasts:${serviceDate}' in javascript
+    assert "const dismissAllOrders = () =>" in javascript
+    assert "pendingIds.forEach((orderId) => dismissedIds.add(orderId));" in javascript
+    assert "pendingIds.clear();" in javascript
+    assert 'clearAllButton.addEventListener("click", dismissAllOrders);' in javascript
+    assert "clearAllButton.hidden = visibleRows.length === 0;" in javascript
+    assert ".new-order-toast-clear" in css
+    assert ".new-order-toast-clear[hidden]" in css
 
 
 def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:

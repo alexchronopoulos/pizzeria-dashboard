@@ -3648,6 +3648,41 @@ h2 {
     pointer-events: none;
 }
 
+.new-order-toast-clear {
+    min-height: 36px;
+    justify-self: end;
+    padding: 6px 12px;
+    border: 3px solid var(--black);
+    border-radius: 8px;
+    background: white;
+    color: var(--brand-red);
+    box-shadow: 0 6px 18px rgba(0, 35, 56, 0.22);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 950;
+    pointer-events: auto;
+}
+
+.new-order-toast-clear:hover,
+.new-order-toast-clear:focus-visible {
+    background: var(--brand-red);
+    color: white;
+}
+
+.new-order-toast-clear:focus-visible {
+    outline: 4px solid white;
+    outline-offset: 2px;
+}
+
+.new-order-toast-clear[hidden] {
+    display: none;
+}
+
+.new-order-toast-list {
+    display: grid;
+    gap: 10px;
+}
+
 .new-order-toast {
     display: grid;
     gap: 4px;

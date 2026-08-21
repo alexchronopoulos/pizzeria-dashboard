@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.21">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.22">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -271,7 +271,15 @@
 {% endif %}
 
 <button class="jump-to-top" type="button" data-jump-to-top aria-label="Jump to all-day counts">↑ Top</button>
-<div class="new-order-toast-region" data-new-order-toast-region aria-live="polite" aria-atomic="false"></div>
+<aside class="new-order-toast-region" data-new-order-toast-region aria-label="New order notifications">
+    <button
+        class="new-order-toast-clear"
+        type="button"
+        data-new-order-toast-clear
+        hidden
+    >Clear all</button>
+    <div class="new-order-toast-list" data-new-order-toast-list aria-live="polite" aria-atomic="false"></div>
+</aside>
 
 <dialog id="order-details-dialog" class="order-details-dialog" aria-labelledby="order-details-dialog-title">
     <div class="order-details-dialog-shell">
@@ -287,5 +295,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.30') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.31') }}" defer></script>
 {% endblock %}

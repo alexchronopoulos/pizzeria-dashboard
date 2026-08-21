@@ -870,9 +870,11 @@
 (() => {
     const board = document.getElementById("production-board");
     const region = document.querySelector("[data-new-order-toast-region]");
+    const toastList = region?.querySelector("[data-new-order-toast-list]");
+    const clearAllButton = region?.querySelector("[data-new-order-toast-clear]");
     const rows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
     const serviceDate = board?.dataset.serviceDate;
-    if (!board || !region || !serviceDate) {
+    if (!board || !region || !toastList || !clearAllButton || !serviceDate) {
         return;
     }
 
@@ -947,6 +949,14 @@
         renderToasts();
     };
 
+    const dismissAllOrders = () => {
+        pendingIds.forEach((orderId) => dismissedIds.add(orderId));
+        pendingIds.clear();
+        saveStringSet(window.localStorage, pendingStorageKey, pendingIds);
+        saveStringSet(window.localStorage, dismissedStorageKey, dismissedIds);
+        renderToasts();
+    };
+
     const createToast = (row) => {
         const orderId = row.dataset.orderId;
         const toast = document.createElement("div");
@@ -987,15 +997,16 @@
     };
 
     function renderToasts() {
-        region.replaceChildren();
-        Array.from(pendingIds)
+        const visibleRows = Array.from(pendingIds)
             .filter((orderId) => !dismissedIds.has(orderId))
             .map((orderId) => rowsById.get(orderId))
             .filter(Boolean)
-            .slice(-4)
-            .forEach((row) => region.appendChild(createToast(row)));
+            .slice(-4);
+        toastList.replaceChildren(...visibleRows.map(createToast));
+        clearAllButton.hidden = visibleRows.length === 0;
     }
 
+    clearAllButton.addEventListener("click", dismissAllOrders);
     renderToasts();
 })();
 
