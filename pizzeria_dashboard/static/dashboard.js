@@ -917,6 +917,7 @@
 
     const pendingIds = loadStringSet(window.localStorage, pendingStorageKey);
     const dismissedIds = loadStringSet(window.localStorage, dismissedStorageKey);
+    let finishedTimerPopupCount = 0;
 
     // The first load establishes a device-local baseline. After that, newly seen
     // orders become persistent alerts on this browser until this browser dismisses
@@ -955,6 +956,7 @@
         saveStringSet(window.localStorage, pendingStorageKey, pendingIds);
         saveStringSet(window.localStorage, dismissedStorageKey, dismissedIds);
         renderToasts();
+        document.dispatchEvent(new CustomEvent("pizzeria-dashboard:clear-finished-timer-alerts"));
     };
 
     const createToast = (row) => {
@@ -1003,9 +1005,13 @@
             .filter(Boolean)
             .slice(-4);
         toastList.replaceChildren(...visibleRows.map(createToast));
-        clearAllButton.hidden = visibleRows.length === 0;
+        clearAllButton.hidden = visibleRows.length === 0 && finishedTimerPopupCount === 0;
     }
 
+    document.addEventListener("pizzeria-dashboard:finished-timer-alert-count", (event) => {
+        finishedTimerPopupCount = Math.max(0, Number(event.detail?.count || 0));
+        renderToasts();
+    });
     clearAllButton.addEventListener("click", dismissAllOrders);
     renderToasts();
 })();
@@ -1072,6 +1078,7 @@
     let pieStates = {};
     let boxedOrders = {};
     let lastPizzaCountdownRemaining = null;
+    let lastFinishedTimerPopupCount = null;
     const completionPosts = new Set();
 
     const initialPieState = (key) => {
@@ -1277,7 +1284,25 @@
             timerRail.appendChild(button);
         });
         timerRail.hidden = hiddenTimers.length === 0;
+        const finishedTimerPopupCount = hiddenTimers.filter(({status}) => status === "done").length;
+        if (finishedTimerPopupCount !== lastFinishedTimerPopupCount) {
+            lastFinishedTimerPopupCount = finishedTimerPopupCount;
+            document.dispatchEvent(new CustomEvent(
+                "pizzeria-dashboard:finished-timer-alert-count",
+                {detail: {count: finishedTimerPopupCount}},
+            ));
+        }
     };
+
+    document.addEventListener("pizzeria-dashboard:clear-finished-timer-alerts", () => {
+        timersByKey.forEach((_timer, key) => {
+            if (effectiveTimerState(key).timer_status === "done") {
+                dismissedDoneTimers.add(key);
+            }
+        });
+        saveDismissedDoneTimers();
+        renderActiveTimerRail();
+    });
 
     const isDoughCommittedTimerStatus = (status) => (
         status === "running" || status === "paused" || status === "done"

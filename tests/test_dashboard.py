@@ -2658,14 +2658,14 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     assert "Full refresh" in html
 
 
-def test_new_order_toasts_have_device_local_clear_all_control(tmp_path: Path) -> None:
+def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
     html = response.get_data(as_text=True)
     javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.31' in html
+    assert 'dashboard.js?v=0.5.32' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html
@@ -2674,7 +2674,11 @@ def test_new_order_toasts_have_device_local_clear_all_control(tmp_path: Path) ->
     assert "pendingIds.forEach((orderId) => dismissedIds.add(orderId));" in javascript
     assert "pendingIds.clear();" in javascript
     assert 'clearAllButton.addEventListener("click", dismissAllOrders);' in javascript
-    assert "clearAllButton.hidden = visibleRows.length === 0;" in javascript
+    assert 'pizzeria-dashboard:clear-finished-timer-alerts' in javascript
+    assert 'pizzeria-dashboard:finished-timer-alert-count' in javascript
+    assert "finishedTimerPopupCount === 0" in javascript
+    assert 'effectiveTimerState(key).timer_status === "done"' in javascript
+    assert "dismissedDoneTimers.add(key);" in javascript
     assert ".new-order-toast-clear" in css
     assert ".new-order-toast-clear[hidden]" in css
 
