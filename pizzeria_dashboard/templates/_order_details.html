@@ -262,12 +262,23 @@
           <select name="pickup_at">
             <option value=""{% if assigned_pickup_at is none %} selected{% endif %}>Unscheduled</option>
             {% if assigned_pickup_at and assigned_pickup_at not in pickup_slots %}
-            <option value="{{ assigned_pickup_at.isoformat() }}" selected>Current assignment — {{ assigned_pickup_at.strftime('%-I:%M %p') }} (past)</option>
+            <option value="{{ assigned_pickup_at.isoformat() }}" selected>Current assignment — {{ assigned_pickup_at.strftime('%-I:%M %p') }}{% if assigned_pickup_at in configured_pickup_slots %} (past){% else %} (custom){% endif %}</option>
             {% endif %}
             {% for slot in pickup_slots %}
             <option value="{{ slot.isoformat() }}"{% if assigned_pickup_at and assigned_pickup_at.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}>{{ slot.strftime('%-I:%M %p') }}</option>
             {% endfor %}
+            <option value="__custom__">Choose another time…</option>
           </select>
+        </label>
+        <label class="walk-in-custom-time" data-walk-in-custom-time hidden>
+          <span>Any other time</span>
+          <input
+            type="time"
+            name="custom_pickup_time"
+            step="60"
+            {% if selected_date == today %}min="{{ current_service_time.strftime('%H:%M') }}"{% endif %}
+            disabled
+          >
         </label>
         <button type="submit">Save pickup time</button>
         <span class="walk-in-slot-status" data-walk-in-assignment-status aria-live="polite"></span>

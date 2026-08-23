@@ -662,6 +662,19 @@
             return;
         }
 
+        let pickupAt = formData.get("pickup_at");
+        if (pickupAt === "__custom__") {
+            const customTime = String(formData.get("custom_pickup_time") || "").trim();
+            if (!customTime) {
+                if (status) {
+                    status.textContent = "Choose a custom pickup time.";
+                }
+                form.querySelector('[name="custom_pickup_time"]')?.focus();
+                return;
+            }
+            pickupAt = `${formData.get("service_date")}T${customTime}`;
+        }
+
         submitButton.disabled = true;
         if (status) {
             status.textContent = "Saving…";
@@ -676,7 +689,7 @@
                 body: JSON.stringify({
                     service_date: formData.get("service_date"),
                     order_id: formData.get("order_id"),
-                    pickup_at: formData.get("pickup_at"),
+                    pickup_at: pickupAt,
                 }),
             });
             const result = await response.json();
@@ -692,6 +705,26 @@
             submitButton.disabled = false;
             if (status) {
                 status.textContent = String(error);
+            }
+        }
+    });
+
+    document.addEventListener("change", (event) => {
+        const select = event.target.closest('[data-walk-in-assignment-form] select[name="pickup_at"]');
+        if (!select) {
+            return;
+        }
+        const customControl = select.form?.querySelector("[data-walk-in-custom-time]");
+        const customInput = customControl?.querySelector('input[name="custom_pickup_time"]');
+        const customSelected = select.value === "__custom__";
+        if (customControl) {
+            customControl.hidden = !customSelected;
+        }
+        if (customInput) {
+            customInput.disabled = !customSelected;
+            customInput.required = customSelected;
+            if (customSelected) {
+                customInput.focus();
             }
         }
     });

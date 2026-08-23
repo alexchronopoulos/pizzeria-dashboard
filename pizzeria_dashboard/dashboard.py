@@ -265,6 +265,7 @@ def _online_order_slot_reserve(
     windows: tuple[PickupWindow, ...],
     *,
     pizzas_per_online_order_slot: int,
+    orderable_pickup_times: tuple[datetime, ...] | None = None,
 ) -> tuple[int, int]:
     """Return (online pizza capacity still sellable, dough reserved for it).
 
@@ -275,8 +276,18 @@ def _online_order_slot_reserve(
     from the consumed-online total, immediately reserving those dough balls again.
     """
     max_pizzas = max(int(pizzas_per_online_order_slot), 0)
+    orderable_slots = (
+        {_local_service_time(value) for value in orderable_pickup_times}
+        if orderable_pickup_times is not None
+        else None
+    )
     available_online_pizzas = 0
     for window in windows:
+        # A saved walk-in override can create a production-board slot outside
+        # configured pickup hours. It is never an online-orderable slot and must
+        # not reserve dough for hypothetical online orders.
+        if orderable_slots is not None and window.pickup_at not in orderable_slots:
+            continue
         active_online_pizzas = sum(
             order.pizza_units
             for order in window.orders
@@ -336,13 +347,14 @@ def index() -> str:
     pickup_overrides = load_order_slot_assignment_overrides(
         database_path, selected_date
     )
+    configured_pickup_times = service_configuration.pickup_times(selected_date)
     service = build_service_board(
         selected_date,
         orders,
         pizza_capacity_per_window=int(
             current_app.config["PIZZA_CAPACITY_PER_WINDOW"]
         ),
-        pickup_times=service_configuration.pickup_times(selected_date),
+        pickup_times=configured_pickup_times,
         pickup_time_overrides=pickup_overrides,
     )
     inventory_salad_types = tuple(
@@ -410,6 +422,7 @@ def index() -> str:
             pizzas_per_online_order_slot=(
                 service_configuration.pizzas_per_online_order_slot
             ),
+            orderable_pickup_times=configured_pickup_times,
         )
     else:
         online_order_available_pizzas = 0
@@ -784,6 +797,7 @@ def order_details():
         pickup_slot_loads=pickup_slot_loads,
         pizza_capacity_per_window=service.pizza_capacity_per_window,
         pickup_slots=selectable_pickup_slots,
+        configured_pickup_slots=pickup_slots,
         current_service_time=current_service_time,
         selected_date=selected_date,
         today=_now().date(),
@@ -1641,17 +1655,10 @@ def update_walk_in_assignment():
             return jsonify(ok=False, error="The pickup time is invalid."), 400
         if pickup_at.date() != selected_date:
             return jsonify(ok=False, error="The pickup time is on another day."), 400
+        pickup_at = _local_service_time(pickup_at)
         current_service_time = _now().replace(tzinfo=None)
         if selected_date == current_service_time.date() and pickup_at < current_service_time:
             return jsonify(ok=False, error="Choose a pickup time that has not passed."), 400
-
-        configuration = load_configuration(_database_path())
-        allowed_slots = {
-            value.replace(tzinfo=None)
-            for value in configuration.pickup_times(selected_date)
-        }
-        if pickup_at.replace(tzinfo=None) not in allowed_slots:
-            return jsonify(ok=False, error="Choose one of the configured service slots."), 400
 
     save_order_slot_assignment(
         _database_path(), selected_date, order_id, pickup_at

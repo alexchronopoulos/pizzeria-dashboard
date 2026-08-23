@@ -1062,6 +1062,26 @@ def test_online_order_reserve_uses_pizza_capacity_and_released_capacity() -> Non
     assert walk_in_available == 2
     assert walk_in_reserve == 2
 
+    custom_pickup_at = datetime(2026, 7, 31, 14, 7)
+    custom_walk_in_service = build_service_board(
+        selected,
+        (replace(one_pizza_order, order_id="walk-in-custom", square_order_id=None, is_walk_in=True),),
+        pizza_capacity_per_window=3,
+        pickup_times=(pickup_at,),
+        pickup_time_overrides={"walk-in-custom": custom_pickup_at},
+    )
+    assert tuple(window.pickup_at for window in custom_walk_in_service.windows) == (
+        custom_pickup_at,
+        pickup_at,
+    )
+    custom_available, custom_reserve = dashboard_module._online_order_slot_reserve(
+        custom_walk_in_service.windows,
+        pizzas_per_online_order_slot=2,
+        orderable_pickup_times=(pickup_at,),
+    )
+    assert custom_available == 2
+    assert custom_reserve == 2
+
 
 def test_releasing_one_pizza_increments_reserve_and_reduces_dough_remaining() -> None:
     import pizzeria_dashboard.dashboard as dashboard_module
@@ -1488,12 +1508,24 @@ def test_non_pizza_walk_in_does_not_render_on_production_board(tmp_path: Path) -
     assert b'data-walk-in-order-id="walk-in-pizza"' in response.data
 
 
-def test_walk_in_assignment_rejects_non_service_slot(tmp_path: Path) -> None:
+def test_walk_in_assignment_accepts_any_same_day_time_outside_service_hours(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     from datetime import datetime
 
-    from pizzeria_dashboard.database import replace_orders_for_date
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.database import (
+        load_order_slot_assignments,
+        replace_orders_for_date,
+    )
     from pizzeria_dashboard.domain import Item, Order
 
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("America/New_York")),
+    )
     app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
     selected = date(2026, 7, 31)
     replace_orders_for_date(
@@ -1516,12 +1548,34 @@ def test_walk_in_assignment_rejects_non_service_slot(tmp_path: Path) -> None:
         json={
             "service_date": "2026-07-31",
             "order_id": "walk-in-square-2",
-            "pickup_at": "2026-07-31T16:07:00",
+            "pickup_at": "2026-07-31T14:07:00",
         },
     )
 
-    assert response.status_code == 400
-    assert response.get_json()["error"] == "Choose one of the configured service slots."
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert load_order_slot_assignments(Path(app.config["DATABASE_PATH"]), selected) == {
+        "walk-in-square-2": datetime(2026, 7, 31, 14, 7)
+    }
+
+    board = app.test_client().get("/?date=2026-07-31")
+    assert board.status_code == 200
+    board_html = board.get_data(as_text=True)
+    assert 'data-pickup-at="2026-07-31T14:07:00"' in board_html
+    # The 2:07 PM walk-in-only slot appears on the board, but the reserve still
+    # covers only the 16 configured online slots from 4:00 through 7:45 PM.
+    assert "<strong>32</strong> Online Order Reserve" in board_html
+
+    details = app.test_client().get(
+        "/order-details",
+        query_string={"date": "2026-07-31", "order_id": "walk-in-square-2"},
+    )
+    details_html = details.get_data(as_text=True)
+    assert details.status_code == 200
+    assert "Current assignment — 2:07 PM (custom)" in details_html
+    assert 'value="__custom__">Choose another time…' in details_html
+    assert 'type="time"' in details_html
+    assert 'name="custom_pickup_time"' in details_html
 
 
 def test_ticket_name_auto_assigns_walk_in_and_modal_can_override_slot(
@@ -2647,7 +2701,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.39' in html
+    assert 'style.css?v=0.5.40' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -2665,7 +2719,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.32' in html
+    assert 'dashboard.js?v=0.5.33' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html
