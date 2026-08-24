@@ -65,6 +65,9 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b"Pizzeria Mari Production Dashboard" not in response.data
     assert b'class="pizzeria-mari-logo"' in response.data
     assert b'pizzeria-mari-logo.png' in response.data
+    assert b'rel="icon" type="image/png"' in response.data
+    assert b'rel="apple-touch-icon"' in response.data
+    assert b'pizzeria-mari-icon.png?v=0.5.28' in response.data
     assert b'data-service-setup-open' in response.data
     assert response.data.index(b'data-service-setup-open') < response.data.index(b'id="service-date"')
     assert b'id="service-setup-dialog"' in response.data
@@ -97,6 +100,15 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert b'data-order-pizza-units=' in response.data
     assert b'data-total-pizzas="16"' in response.data
     assert len(load_orders_for_date(Path(app.config["DATABASE_PATH"]), date(2026, 7, 31))) == 14
+
+
+def test_favicon_asset_is_served_as_png(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    response = app.test_client().get("/static/pizzeria-mari-icon.png")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert response.data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_order_details_show_square_debug_identifiers(tmp_path: Path) -> None:
