@@ -52,7 +52,7 @@ class ServiceConfiguration:
     salad_types: tuple[str, ...]
     side_types: tuple[str, ...] = ()
     slot_minutes: int = 15
-    pizzas_per_online_order_slot: int = 2
+    online_order_reserve: int = 32
 
     def hours_for_date(self, service_date: date) -> DayHours:
         return self.days[service_date.weekday()]
@@ -149,33 +149,25 @@ def _configuration_from_payload(raw: object) -> ServiceConfiguration:
     except (TypeError, ValueError):
         slot_minutes = defaults.slot_minutes
 
-    # Current setting: each 15-minute pickup slot can expose a configurable
-    # number of pizzas to online ordering. One pizza always consumes one dough
-    # ball. Older installations stored this as ``online_order_slots_per_window``;
-    # that field represented the same numeric capacity while the short-lived
-    # ``online_order_dough_per_slot`` setting is intentionally ignored.
-    legacy_online_capacity = raw.get(
-        "online_order_slots_per_window", defaults.pizzas_per_online_order_slot
-    )
+    # Online reserve is now a fixed service-day allocation, independent of how
+    # many pickup slots are exposed online. Older per-slot settings cannot be
+    # converted reliably because configured hours vary by weekday, so existing
+    # installations receive the former standard Friday allocation of 32 until
+    # the new Service Setup input is saved explicitly.
     try:
-        pizzas_per_online_order_slot = max(
-            int(
-                raw.get(
-                    "pizzas_per_online_order_slot",
-                    legacy_online_capacity,
-                )
-            ),
+        online_order_reserve = max(
+            int(raw.get("online_order_reserve", defaults.online_order_reserve)),
             0,
         )
     except (TypeError, ValueError):
-        pizzas_per_online_order_slot = defaults.pizzas_per_online_order_slot
+        online_order_reserve = defaults.online_order_reserve
 
     return ServiceConfiguration(
-        tuple(days),
-        salad_types,
-        side_types,
-        slot_minutes,
-        pizzas_per_online_order_slot,
+        days=tuple(days),
+        salad_types=salad_types,
+        side_types=side_types,
+        slot_minutes=slot_minutes,
+        online_order_reserve=online_order_reserve,
     )
 
 
@@ -203,7 +195,7 @@ def save_configuration(path: Path, configuration: ServiceConfiguration) -> None:
         "salad_types": list(configuration.salad_types),
         "side_types": list(configuration.side_types),
         "slot_minutes": configuration.slot_minutes,
-        "pizzas_per_online_order_slot": configuration.pizzas_per_online_order_slot,
+        "online_order_reserve": configuration.online_order_reserve,
     }
     save_app_metadata(
         path,
@@ -239,22 +231,17 @@ def configuration_from_form(form: Mapping[str, str]) -> ServiceConfiguration:
     else:
         side_types = defaults.side_types
     try:
-        pizzas_per_online_order_slot = max(
-            int(
-                form.get(
-                    "pizzas_per_online_order_slot",
-                    defaults.pizzas_per_online_order_slot,
-                )
-            ),
+        online_order_reserve = max(
+            int(form.get("online_order_reserve", defaults.online_order_reserve)),
             0,
         )
     except (TypeError, ValueError):
-        pizzas_per_online_order_slot = defaults.pizzas_per_online_order_slot
+        online_order_reserve = defaults.online_order_reserve
 
     return ServiceConfiguration(
-        tuple(days),
-        salad_types,
-        side_types,
-        defaults.slot_minutes,
-        pizzas_per_online_order_slot,
+        days=tuple(days),
+        salad_types=salad_types,
+        side_types=side_types,
+        slot_minutes=defaults.slot_minutes,
+        online_order_reserve=online_order_reserve,
     )

@@ -17,7 +17,7 @@ def test_default_schedule_matches_current_service_hours() -> None:
     assert len(config.pickup_times(date(2026, 8, 2))) == 20  # Sunday 11–4
     assert config.pickup_times(date(2026, 7, 29)) == ()  # Wednesday closed
     assert config.pickup_times(date(2026, 7, 30))[-1].strftime("%H:%M") == "19:45"
-    assert config.pizzas_per_online_order_slot == 2
+    assert config.online_order_reserve == 32
 
 
 def test_configuration_round_trips_through_sqlite(tmp_path: Path) -> None:
@@ -29,7 +29,7 @@ def test_configuration_round_trips_through_sqlite(tmp_path: Path) -> None:
             "day_3_start": "17:00",
             "day_3_end": "19:00",
             "salad_types": "Tomato Salad\nTomato Salad\nLittle Gem Salad",
-            "pizzas_per_online_order_slot": "3",
+            "online_order_reserve": "45",
         }
     )
     save_configuration(database_path, config)
@@ -39,10 +39,10 @@ def test_configuration_round_trips_through_sqlite(tmp_path: Path) -> None:
     assert loaded.days[3].end_value == "19:00"
     assert loaded.salad_types == ("Tomato Salad", "Little Gem Salad")
     assert loaded.side_types == ("Side Ranch", "Side Hot Honey")
-    assert loaded.pizzas_per_online_order_slot == 3
+    assert loaded.online_order_reserve == 45
 
 
-def test_legacy_online_order_capacity_migrates_to_pizzas_per_slot(tmp_path: Path) -> None:
+def test_legacy_per_slot_capacity_uses_fixed_reserve_default(tmp_path: Path) -> None:
     import json
 
     from pizzeria_dashboard.database import save_app_metadata
@@ -62,4 +62,4 @@ def test_legacy_online_order_capacity_migrates_to_pizzas_per_slot(tmp_path: Path
     )
 
     loaded = load_configuration(database_path)
-    assert loaded.pizzas_per_online_order_slot == 4
+    assert loaded.online_order_reserve == 32

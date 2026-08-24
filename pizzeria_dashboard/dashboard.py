@@ -261,46 +261,26 @@ def _available_pickup_windows(
     )
 
 
-def _online_order_slot_reserve(
-    windows: tuple[PickupWindow, ...],
-    *,
-    pizzas_per_online_order_slot: int,
-    orderable_pickup_times: tuple[datetime, ...] | None = None,
-) -> tuple[int, int]:
-    """Return (online pizza capacity still sellable, dough reserved for it).
+def _online_order_reserve(
+    orders: tuple[Order, ...], *, configured_reserve: int
+) -> int:
+    """Return the configured online pizza allocation that remains available.
 
-    Each 15-minute pickup slot can expose a configurable number of *pizzas* to
-    online ordering. One pizza equals one dough ball. Existing unreleased online
-    pizza quantities consume that capacity; walk-ins and dashboard-only manual
-    orders do not. Releasing a Square order's capacity removes its pizza quantity
-    from the consumed-online total, immediately reserving those dough balls again.
+    The allocation is independent of pickup-slot count and distribution. Active
+    online pizza quantities consume it; walk-ins and dashboard-only manual orders
+    do not. Releasing or completing a Square order returns its pizza quantity to
+    the reserve. One reserved online pizza always holds one dough ball.
     """
-    max_pizzas = max(int(pizzas_per_online_order_slot), 0)
-    orderable_slots = (
-        {_local_service_time(value) for value in orderable_pickup_times}
-        if orderable_pickup_times is not None
-        else None
+    active_online_pizzas = sum(
+        order.pizza_units
+        for order in orders
+        if order.pizza_units > 0
+        and not order.is_walk_in
+        and not order.is_manual
+        and not order.released
+        and order.fulfillment_state != "COMPLETED"
     )
-    available_online_pizzas = 0
-    for window in windows:
-        # A saved walk-in override can create a production-board slot outside
-        # configured pickup hours. It is never an online-orderable slot and must
-        # not reserve dough for hypothetical online orders.
-        if orderable_slots is not None and window.pickup_at not in orderable_slots:
-            continue
-        active_online_pizzas = sum(
-            order.pizza_units
-            for order in window.orders
-            if order.pizza_units > 0
-            and not order.is_walk_in
-            and not order.is_manual
-            and not order.released
-            and order.fulfillment_state != "COMPLETED"
-        )
-        available_online_pizzas += max(max_pizzas - active_online_pizzas, 0)
-
-    # One online pizza always reserves one dough ball.
-    return available_online_pizzas, available_online_pizzas
+    return max(max(int(configured_reserve), 0) - active_online_pizzas, 0)
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
@@ -417,15 +397,11 @@ def index() -> str:
         if service.open_capacity(window) >= 2
     )
     if selected_date >= now.date():
-        online_order_available_pizzas, online_order_dough_reserve = _online_order_slot_reserve(
-            buffer_eligible_windows,
-            pizzas_per_online_order_slot=(
-                service_configuration.pizzas_per_online_order_slot
-            ),
-            orderable_pickup_times=configured_pickup_times,
+        online_order_dough_reserve = _online_order_reserve(
+            orders,
+            configured_reserve=service_configuration.online_order_reserve,
         )
     else:
-        online_order_available_pizzas = 0
         online_order_dough_reserve = 0
     inventory = build_inventory_summary(
         service,
@@ -510,8 +486,7 @@ def index() -> str:
         board_content_revision=board_content_revision,
         future_one_pie_windows=future_one_pie_windows,
         future_two_pie_windows=future_two_pie_windows,
-        online_order_available_pizzas=online_order_available_pizzas,
-        pizzas_per_online_order_slot=service_configuration.pizzas_per_online_order_slot,
+        online_order_reserve=service_configuration.online_order_reserve,
         pickup_overrides=pickup_overrides,
         original_pickup_times={
             order.order_id: _local_service_time(order.pickup_at)
