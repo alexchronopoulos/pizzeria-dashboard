@@ -168,6 +168,8 @@ def _inventory_demand_from_orders(
     sides: dict[str, int] = {}
     cookies = 0
     for order in orders:
+        if not order.requires_preparation:
+            continue
         for name, quantity in order.salad_counts.items():
             salads[name] = salads.get(name, 0) + quantity
         for name, quantity in order.side_counts.items():

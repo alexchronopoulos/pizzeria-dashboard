@@ -199,6 +199,47 @@ def test_square_orders_are_filtered_by_pickup_date_and_keep_modifiers() -> None:
     ]
 
 
+def test_pmoc_orders_require_verified_completed_payment_not_just_a_tender() -> None:
+    raw_order = dict(_raw_square_orders()[0])
+    raw_order["reference_id"] = "PMOC-checkout-123"
+    raw_order["tenders"] = [
+        {"id": "tender-1", "payment_id": "payment-declined"}
+    ]
+
+    unpaid = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+    paid = convert_square_orders(
+        (raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        paid_order_ids={"square-order-1"},
+        rules=ClassificationRules(),
+    )
+
+    assert unpaid[0].is_paid is False
+    assert paid[0].is_paid is True
+
+    generic_raw_order = dict(raw_order)
+    generic_raw_order["reference_id"] = "external-checkout-123"
+    generic = convert_square_orders(
+        (generic_raw_order,),
+        service_date=SERVICE_DATE,
+        timezone_name="America/New_York",
+        catalog_index=_catalog_index(),
+        modifier_index={},
+        rules=ClassificationRules(),
+    )
+    assert generic[0].is_paid is True
+
+
 def test_pickup_note_is_scoped_to_its_matching_fulfillment() -> None:
     raw_order = dict(_raw_square_orders()[0])
     raw_order["fulfillments"] = [
@@ -1145,6 +1186,122 @@ def test_square_sync_includes_completed_order_without_payment_metadata(
     assert cached[0].is_walk_in is True
     assert cached[0].receipt_number is None
     assert cached[0].pickup_at.strftime("%-I:%M %p") == "2:04 PM"
+
+
+@pytest.mark.parametrize(
+    ("payment_status", "expected_paid", "expects_warning"),
+    (
+        ("COMPLETED", True, False),
+        ("FAILED", False, False),
+        ("CANCELED", False, False),
+        ("PENDING", False, False),
+        (None, False, False),
+        ("LOOKUP_ERROR", False, True),
+    ),
+)
+def test_pmoc_sync_uses_completed_payment_status_only(
+    tmp_path: Path,
+    payment_status: str | None,
+    expected_paid: bool,
+    expects_warning: bool,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+
+        def __init__(self):
+            self.payment_queries: list[dict[str, object]] = []
+
+        def resolve_location(self):
+            return {
+                "id": "LOCATION-1",
+                "name": "Pizzeria Mari",
+                "timezone": "America/New_York",
+            }
+
+        def search_orders_for_service_date(self, **kwargs):
+            return (
+                {
+                    "id": "pmoc-square-order",
+                    "location_id": "LOCATION-1",
+                    "state": "OPEN",
+                    "version": 1,
+                    "created_at": "2026-07-31T18:00:00Z",
+                    "reference_id": "PMOC-checkout-123",
+                    "tenders": [
+                        {"id": "tender-1", "payment_id": "pmoc-payment-1"}
+                    ],
+                    "line_items": [
+                        {
+                            "uid": "line-plain",
+                            "catalog_object_id": "variation-plain",
+                            "name": "Plain Pie",
+                            "quantity": "1",
+                        }
+                    ],
+                    "fulfillments": [
+                        {
+                            "uid": "pickup-1",
+                            "type": "PICKUP",
+                            "state": "RESERVED",
+                            "pickup_details": {
+                                "pickup_at": "2026-07-31T20:00:00Z",
+                                "recipient": {"display_name": "Portal Guest"},
+                            },
+                        }
+                    ],
+                },
+            )
+
+        def batch_retrieve_catalog_objects(
+            self, object_ids, *, include_related_objects=False
+        ):
+            return ()
+
+        def list_payments(self, **kwargs):
+            self.payment_queries.append(kwargs)
+            if payment_status == "LOOKUP_ERROR":
+                raise SquareAPIError("Payment lookup unavailable")
+            payment = {
+                "id": "pmoc-payment-1",
+                "order_id": "pmoc-square-order",
+            }
+            if payment_status is not None:
+                payment["status"] = payment_status
+            return (payment,)
+
+        def get_payment(self, payment_id):
+            raise AssertionError("PMOC sync must not retrieve payments one at a time")
+
+    fake_client = FakeSquareClient()
+    result = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        {
+            "ORDER_SOURCE": "square",
+            "SQUARE_ACCESS_TOKEN": "token",
+            "SQUARE_LOCATION_ID": "LOCATION-1",
+            "SERVICE_TIMEZONE": "America/New_York",
+            "SQUARE_ORDER_LOOKBACK_DAYS": 60,
+        },
+        square_client=fake_client,
+    )
+
+    cached = load_orders_for_date(database_path, SERVICE_DATE)
+    assert len(cached) == 1
+    assert cached[0].is_paid is expected_paid
+    assert cached[0].reference_id == "PMOC-checkout-123"
+    assert cached[0].payment_ids == ("pmoc-payment-1",)
+    assert fake_client.payment_queries == [
+        {
+            "location_id": "LOCATION-1",
+            "begin_time": "2026-07-31T17:55:00Z",
+            "end_time": "2026-08-01T18:00:00Z",
+        }
+    ]
+    assert any("Unpaid — Do Not Prepare" in warning for warning in result.warnings) is expects_warning
 
 
 def test_square_location_must_be_selected_when_multiple_are_active() -> None:

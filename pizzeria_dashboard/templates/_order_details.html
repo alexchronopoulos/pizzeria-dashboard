@@ -1,6 +1,7 @@
 {% if error %}
 <div class="order-details-error" role="alert"><strong>Order details unavailable</strong><p>{{ error }}</p></div>
 {% elif order %}
+{% set is_unpaid = order.is_paid is sameas false or (order.is_pmoc_order and order.is_paid is not sameas true) %}
 <div class="order-details-content">
   <nav class="order-details-tabs" aria-label="Order details sections">
     <button class="order-details-tab is-active" type="button" data-order-details-tab="order" aria-selected="true">Order</button>
@@ -32,6 +33,12 @@
         </p>
       </div>
     </header>
+    {% if is_unpaid %}
+    <div class="order-unpaid-warning" role="alert" aria-label="Unpaid order. Do not prepare.">
+      <strong>UNPAID — DO NOT PREPARE</strong>
+      <span>Square has not confirmed a completed payment.</span>
+    </div>
+    {% endif %}
     <section class="detail-summary-grid" aria-label="Order identifiers">
       <div>
         <span>Order ID</span>

@@ -292,6 +292,22 @@ class Order:
         return str(self.creation_product or "").upper() == "MANUAL_DASHBOARD"
 
     @property
+    def is_pmoc_order(self) -> bool:
+        """Whether the order originated in the custom online ordering portal."""
+        return str(self.reference_id or "").upper().startswith("PMOC-")
+
+    @property
+    def requires_preparation(self) -> bool:
+        """Whether this order should contribute to kitchen production demand.
+
+        PMOC orders require an explicitly verified completed payment. Keeping a
+        declined or unverified order visible while excluding it from production
+        counts makes the safety warning useful without consuming dough or slot
+        capacity for an order that must not be prepared.
+        """
+        return not self.is_pmoc_order or self.is_paid is True
+
+    @property
     def display_customer_name(self) -> str:
         """Return the label shown on the production dashboard.
 
@@ -494,7 +510,9 @@ class PickupWindow:
 
     @property
     def pizza_units(self) -> int:
-        return sum(order.pizza_units for order in self.orders)
+        return sum(
+            order.pizza_units for order in self.orders if order.requires_preparation
+        )
 
     @property
     def order_count(self) -> int:
@@ -529,7 +547,11 @@ class ServiceBoard:
 
     @property
     def total_pizzas(self) -> int:
-        return sum(order.pizza_units for order in self.all_orders)
+        return sum(
+            order.pizza_units
+            for order in self.all_orders
+            if order.requires_preparation
+        )
 
     @property
     def pizza_counts(self) -> Counter[str]:
@@ -542,6 +564,8 @@ class ServiceBoard:
         """
         counts: Counter[str] = Counter()
         for order in self.all_orders:
+            if not order.requires_preparation:
+                continue
             for item in order.production_items:
                 if item.category == "pizza":
                     counts[item.display_name] += item.quantity
@@ -570,6 +594,8 @@ class ServiceBoard:
         """
         counts: Counter[str] = Counter()
         for order in self.all_orders:
+            if not order.requires_preparation:
+                continue
             for item in order.production_items:
                 if item.category != "pizza":
                     continue
@@ -590,6 +616,8 @@ class ServiceBoard:
     def salad_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
         for order in self.all_orders:
+            if not order.requires_preparation:
+                continue
             counts.update(order.salad_counts)
         return counts
 
@@ -601,6 +629,8 @@ class ServiceBoard:
     def side_counts(self) -> Counter[str]:
         counts: Counter[str] = Counter()
         for order in self.all_orders:
+            if not order.requires_preparation:
+                continue
             counts.update(order.side_counts)
         return counts
 
@@ -610,11 +640,17 @@ class ServiceBoard:
 
     @property
     def total_cookies(self) -> int:
-        return sum(order.cookie_count for order in self.all_orders)
+        return sum(
+            order.cookie_count
+            for order in self.all_orders
+            if order.requires_preparation
+        )
 
     def is_release_candidate(self, order: Order, window: PickupWindow) -> bool:
         return (
             not order.is_walk_in
+            and
+            order.requires_preparation
             and
             order.is_single_pie_unreleased
             and window.pizza_units < self.pizza_capacity_per_window

@@ -275,6 +275,7 @@ def _online_order_reserve(
         order.pizza_units
         for order in orders
         if order.pizza_units > 0
+        and order.requires_preparation
         and not order.is_walk_in
         and not order.is_manual
         and not order.released
@@ -705,6 +706,7 @@ def order_details():
         and order.square_order_id
         and order.square_order_state == "OPEN"
         and order.is_paid is False
+        and not order.payment_ids
     )
     debug_order_id = order.square_order_id or order.order_id
     debug_reference_id = order.reference_id
@@ -745,6 +747,7 @@ def order_details():
         live_payment_ids = _raw_square_order_payment_ids(live_order)
         if live_payment_ids:
             debug_payment_ids = live_payment_ids
+            can_remove_unpaid_order = False
         if (
             not is_walk_in
             and (order.square_order_state is None or order.is_paid is None)

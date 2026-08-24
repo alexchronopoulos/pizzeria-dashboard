@@ -2024,7 +2024,7 @@ def test_unpaid_order_is_prominently_flagged_on_main_card(tmp_path: Path) -> Non
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "UNPAID — DO NOT PREP" in html
+    assert "UNPAID — DO NOT PREPARE" in html
     assert 'data-order-id="cached-unpaid-main-card"' in html
     unpaid_start = html.index('data-order-id="cached-unpaid-main-card"')
     unpaid_class_start = html.rfind('class="order-row', 0, unpaid_start)
@@ -2035,6 +2035,62 @@ def test_unpaid_order_is_prominently_flagged_on_main_card(tmp_path: Path) -> Non
     paid_class_start = html.rfind('class="order-row', 0, paid_start)
     paid_class_end = html.index('"', paid_class_start + len('class="'))
     assert "order-row--unpaid" not in html[paid_class_start:paid_class_end]
+
+
+def test_unpaid_pmoc_order_stays_visible_but_not_in_production_counts(
+    tmp_path: Path,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import Item, Order, build_service_board
+
+    selected = date(2026, 7, 31)
+    unpaid = Order(
+        order_id="pmoc-unpaid",
+        customer_name="Unpaid Portal Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 0),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-pmoc-unpaid",
+        square_order_state="OPEN",
+        is_paid=False,
+        reference_id="PMOC-unpaid-checkout",
+        payment_ids=("failed-payment",),
+    )
+    paid = replace(
+        unpaid,
+        order_id="pmoc-paid",
+        customer_name="Paid Portal Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 15),
+        square_order_id="square-pmoc-paid",
+        is_paid=True,
+        reference_id="PMOC-paid-checkout",
+        payment_ids=("completed-payment",),
+    )
+    service = build_service_board(
+        selected,
+        (unpaid, paid),
+        pizza_capacity_per_window=3,
+        pickup_times=(unpaid.pickup_at, paid.pickup_at),
+    )
+    inventory = build_inventory_summary(
+        service,
+        replace(default_state(), dough_balls_prepared=20),
+        orders=(unpaid, paid),
+        open_slot_dough_reserve=9,
+    )
+
+    assert service.total_orders == 2
+    assert service.total_pizzas == 1
+    assert service.pizza_summary == (("Plain Pie", 1),)
+    assert service.windows[0].orders == (unpaid,)
+    assert service.windows[0].pizza_units == 0
+    assert inventory.dough_ordered == 1
+    assert inventory.dough_remaining == 10
+    assert (
+        dashboard_module._online_order_reserve(
+            (unpaid, paid), configured_reserve=10
+        )
+        == 9
+    )
 
 
 def test_today_dashboard_has_active_timer_rail_and_jump_to_top(tmp_path: Path, monkeypatch) -> None:

@@ -7,7 +7,7 @@
 {% set pickup_override = pickup_overrides.get(order.order_id) if pickup_overrides and order.order_id in pickup_overrides and not order.is_walk_in else none %}
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
-{% set is_unpaid = order.is_paid is sameas false %}
+{% set is_unpaid = order.is_paid is sameas false or (order.is_pmoc_order and order.is_paid is not sameas true) %}
 {% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
@@ -96,8 +96,8 @@
     </div>
     {% if is_unpaid %}
     <div class="order-unpaid-warning" role="alert" aria-label="Unpaid order. Do not prepare.">
-        <strong>UNPAID — DO NOT PREP</strong>
-        <span>Payment has not been processed.</span>
+        <strong>UNPAID — DO NOT PREPARE</strong>
+        <span>Square has not confirmed a completed payment.</span>
     </div>
     {% endif %}
     {% if internal_note %}
@@ -123,7 +123,7 @@
                     <span class="item-quantity">{{ item.quantity }}×</span>
                     <span class="item-name">{{ item.display_name }}</span>
                 </div>
-                {% if item.category == "pizza" and selected_date >= today %}
+                {% if item.category == "pizza" and selected_date >= today and not is_unpaid %}
                 <div class="pizza-bake-controls">
                     {% if selected_date >= today and not boxed_action.rendered %}
                     <button
@@ -194,7 +194,7 @@
         </li>
         {% endfor %}
     </ul>
-    {% if selected_date >= today and not boxed_action.rendered %}
+    {% if selected_date >= today and not boxed_action.rendered and not is_unpaid %}
     <div class="order-boxed-fallback">
         <button
             type="button"
@@ -208,7 +208,7 @@
     </div>
     {% endif %}
     </div>
-    {% if selected_date >= today and order.pizza_units %}
+    {% if selected_date >= today and order.pizza_units and not is_unpaid %}
     <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">
         {% for item in order.production_items %}
         {% set item_index = loop.index0 %}

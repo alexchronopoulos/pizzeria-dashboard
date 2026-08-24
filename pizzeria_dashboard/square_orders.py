@@ -404,12 +404,21 @@ def pull_square_orders_for_date(
             f"classify pizzas and drinks. Square said: {exc}"
         )
 
+    completed_pmoc_order_ids = _completed_pmoc_order_ids(
+        client,
+        raw_orders,
+        location_id=location_id,
+        fallback_begin_time=full_start_at,
+        fallback_end_time=full_end_at,
+        warnings=warnings,
+    )
     orders = convert_square_orders(
         raw_orders,
         service_date=service_date,
         timezone_name=timezone_name,
         catalog_index=catalog_index,
         modifier_index=modifier_index,
+        paid_order_ids=completed_pmoc_order_ids,
         rules=rules,
     )
     candidate_ids = tuple(
@@ -483,6 +492,91 @@ def _payment_ids_for_order(raw_order: Mapping[str, object]) -> tuple[str, ...]:
             if (payment_id := _optional_string(tender.get("payment_id")))
         )
     )
+
+
+def _completed_pmoc_order_ids(
+    client: SquareClient,
+    raw_orders: Iterable[Mapping[str, object]],
+    *,
+    location_id: str,
+    fallback_begin_time: str,
+    fallback_end_time: str,
+    warnings: list[str],
+) -> set[str]:
+    """Return PMOC order IDs with a bulk-verified COMPLETED payment.
+
+    Custom ordering portal orders can contain a tender whose associated payment
+    later fails or is canceled. For these orders, neither a tender nor Square's
+    OPEN order state proves payment. Missing, pending, unknown, and temporarily
+    unverifiable payment states intentionally remain outside the paid set. One
+    bounded ListPayments request replaces one blocking request per PMOC order.
+    """
+    pmoc_payment_ids: dict[str, set[str]] = {}
+    created_times: list[datetime] = []
+    missing_created_time = False
+    for raw_order in raw_orders:
+        reference_id = _optional_string(raw_order.get("reference_id"))
+        if not reference_id or not reference_id.upper().startswith("PMOC-"):
+            continue
+        order_id = _optional_string(raw_order.get("id"))
+        if not order_id:
+            continue
+        pmoc_payment_ids[order_id] = set(_payment_ids_for_order(raw_order))
+        created_at = _parse_square_datetime(raw_order.get("created_at"))
+        if created_at is None:
+            missing_created_time = True
+        else:
+            created_times.append(created_at)
+
+    if not pmoc_payment_ids:
+        return set()
+
+    list_payments = getattr(client, "list_payments", None)
+    if not callable(list_payments):
+        warnings.append(
+            "Could not verify a completed Square payment for "
+            f"{len(pmoc_payment_ids)} PMOC order(s); they were marked "
+            "Unpaid — Do Not Prepare."
+        )
+        return set()
+
+    if created_times and not missing_created_time:
+        begin_time = _rfc3339_utc(min(created_times) - timedelta(minutes=5))
+        end_time = _rfc3339_utc(max(created_times) + timedelta(days=1))
+    else:
+        begin_time = fallback_begin_time
+        end_time = fallback_end_time
+
+    try:
+        payments = list_payments(
+            location_id=location_id,
+            begin_time=begin_time,
+            end_time=end_time,
+        )
+    except SquareAPIError:
+        warnings.append(
+            "Could not verify a completed Square payment for "
+            f"{len(pmoc_payment_ids)} PMOC order(s); they were marked "
+            "Unpaid — Do Not Prepare."
+        )
+        return set()
+
+    payment_owner_by_id = {
+        payment_id: order_id
+        for order_id, payment_ids in pmoc_payment_ids.items()
+        for payment_id in payment_ids
+    }
+    completed: set[str] = set()
+    for payment in payments:
+        if str(payment.get("status", "")).strip().upper() != "COMPLETED":
+            continue
+        linked_order_id = _optional_string(payment.get("order_id"))
+        if linked_order_id in pmoc_payment_ids:
+            completed.add(linked_order_id)
+        payment_id = _optional_string(payment.get("id"))
+        if payment_id and payment_id in payment_owner_by_id:
+            completed.add(payment_owner_by_id[payment_id])
+    return completed
 
 
 def _receipt_number_for_order(
@@ -692,8 +786,15 @@ def convert_square_orders(
         square_order_id = _optional_string(raw_order.get("id"))
         if not square_order_id:
             continue
-        is_paid = order_state == "COMPLETED" or bool(
-            _mapping_list(raw_order.get("tenders"))
+        reference_id = _optional_string(raw_order.get("reference_id"))
+        is_pmoc_order = bool(
+            reference_id and reference_id.upper().startswith("PMOC-")
+        )
+        is_paid = (
+            square_order_id in paid_order_ids
+            if is_pmoc_order
+            else order_state == "COMPLETED"
+            or bool(_mapping_list(raw_order.get("tenders")))
         )
 
         raw_fulfillments = _mapping_list(raw_order.get("fulfillments"))
@@ -729,7 +830,6 @@ def convert_square_orders(
         creation_product = _creation_product(raw_order)
         ticket_name = _optional_string(raw_order.get("ticket_name"))
         order_note = _optional_string(raw_order.get("note"))
-        reference_id = _optional_string(raw_order.get("reference_id"))
         payment_ids = _payment_ids_for_order(raw_order)
 
         for fulfillment, pickup_at in matching_fulfillments:
