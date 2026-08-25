@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in · Pizzeria Mari Service Dashboard{% endblock %}
+
+{% block content %}
+<section class="dashboard-login" aria-labelledby="dashboard-login-title">
+    <img
+        class="dashboard-login-logo"
+        src="{{ url_for('static', filename='pizzeria-mari-logo.png') }}?v=cream-1"
+        alt="Pizzeria Mari"
+        width="1200"
+        height="225"
+    >
+    <div class="dashboard-login-card">
+        <p class="eyebrow">Service dashboard</p>
+        <h1 id="dashboard-login-title">Sign in</h1>
+        <p class="dashboard-login-intro">
+            Enter the shared dashboard credentials. This browser will stay signed in for
+            {{ remember_days }} days.
+        </p>
+
+        {% if error %}
+        <div class="dashboard-login-error" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <form class="dashboard-login-form" method="post" action="{{ url_for('dashboard_login') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <label>
+                <span>Username</span>
+                <input
+                    type="text"
+                    name="username"
+                    autocomplete="username"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    required
+                    autofocus
+                >
+            </label>
+            <label>
+                <span>Password</span>
+                <input
+                    type="password"
+                    name="password"
+                    autocomplete="current-password"
+                    required
+                >
+            </label>
+            <button type="submit">Sign in</button>
+        </form>
+    </div>
+</section>
+{% endblock %}

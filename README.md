@@ -328,17 +328,27 @@ show **History unavailable** rather than being matched by name.
 
 ## Internet access and dashboard authentication
 
-The dashboard can require a single shared username and password using HTTP Basic
-Authentication. Add both values to `.env` and restart the service:
+The dashboard can require a single shared username and password. Add both values
+to `.env` and restart the service:
 
 ```dotenv
 DASHBOARD_AUTH_USERNAME=mari
 DASHBOARD_AUTH_PASSWORD=use-a-long-unique-password-here
+DASHBOARD_AUTH_REMEMBER_DAYS=30
+DASHBOARD_SESSION_COOKIE_SECURE=true
 ```
 
 Authentication remains disabled when both values are blank. If only one is set,
 the application refuses to start rather than accidentally running with a partial
-configuration.
+configuration. After a successful sign-in, the browser receives a signed,
+HTTP-only session cookie that expires after 30 days. The password itself is never
+stored in the cookie. Changing the configured username or password invalidates
+existing sign-ins.
+
+When `SECRET_KEY` is blank, the dashboard creates a stable private signing key at
+`data/.dashboard-secret-key`. Keep the `data` directory persistent and private so
+service restarts do not sign every device out. You may still set `SECRET_KEY`
+explicitly if preferred.
 
 For a public hostname, you may also restrict accepted `Host` headers:
 
@@ -346,10 +356,11 @@ For a public hostname, you may also restrict accepted `Host` headers:
 DASHBOARD_TRUSTED_HOSTS=dashboard.example.com,localhost,127.0.0.1
 ```
 
-Basic Authentication protects access but does **not** encrypt credentials on its
-own. Put the dashboard behind an HTTPS reverse proxy (for example nginx, Caddy,
-or another TLS-terminating proxy) instead of forwarding the Flask port directly
-to the Internet. Once the public endpoint is HTTPS-only, HSTS can be enabled:
+The sign-in form and cookie do **not** encrypt traffic on their own. Put the
+dashboard behind an HTTPS reverse proxy (for example nginx, Caddy, or another
+TLS-terminating proxy) instead of forwarding the Flask port directly to the
+Internet. Keep `DASHBOARD_SESSION_COOKIE_SECURE=true` for HTTPS deployments. Once
+the public endpoint is HTTPS-only, HSTS can be enabled:
 
 ```dotenv
 DASHBOARD_HSTS=true

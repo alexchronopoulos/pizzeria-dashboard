@@ -52,6 +52,104 @@ textarea {
     padding: 28px 0 48px;
 }
 
+.dashboard-login {
+    display: grid;
+    width: min(520px, 100%);
+    min-height: calc(100vh - 76px);
+    margin: 0 auto;
+    align-content: center;
+    gap: 28px;
+}
+
+.dashboard-login-logo {
+    display: block;
+    width: min(360px, 80%);
+    height: auto;
+    margin: 0 auto;
+}
+
+.dashboard-login-card {
+    padding: clamp(28px, 6vw, 42px);
+    border: 4px solid var(--black);
+    border-radius: 20px;
+    background: var(--board-background);
+    box-shadow: var(--shadow);
+}
+
+.dashboard-login-card .eyebrow {
+    color: var(--brand-blue);
+}
+
+.dashboard-login-card h1 {
+    margin-bottom: 14px;
+    color: var(--brand-blue);
+    font-size: clamp(2.5rem, 10vw, 4rem);
+}
+
+.dashboard-login-intro {
+    margin-bottom: 24px;
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.dashboard-login-error {
+    margin-bottom: 20px;
+    padding: 12px 14px;
+    border: 3px solid var(--brand-red);
+    border-radius: 10px;
+    background: #fff0ed;
+    color: var(--brand-red);
+    font-weight: 900;
+}
+
+.dashboard-login-form {
+    display: grid;
+    gap: 18px;
+}
+
+.dashboard-login-form label {
+    display: grid;
+    gap: 7px;
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.dashboard-login-form input {
+    width: 100%;
+    min-height: 54px;
+    padding: 10px 13px;
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    background: white;
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.dashboard-login-form input:focus-visible,
+.dashboard-login-form button:focus-visible {
+    outline: 4px solid var(--brand-orange);
+    outline-offset: 3px;
+}
+
+.dashboard-login-form button {
+    min-height: 56px;
+    margin-top: 4px;
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    background: var(--brand-yellow);
+    color: var(--text);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.dashboard-login-form button:hover {
+    background: #ffeb67;
+}
+
 .masthead,
 .section-heading,
 .order-heading,

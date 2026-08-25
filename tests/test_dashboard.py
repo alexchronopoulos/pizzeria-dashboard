@@ -1,4 +1,3 @@
-import base64
 import re
 import secrets
 from dataclasses import replace
@@ -42,6 +41,8 @@ def _visible_text(response) -> str:
 def _test_app(tmp_path: Path, **overrides):
     config = {
         "TESTING": True,
+        "SECRET_KEY": "dashboard-test-secret-key",
+        "SESSION_COOKIE_SECURE": False,
         "DATABASE_PATH": str(tmp_path / "dashboard.db"),
         "LEGACY_SERVICE_STATE_PATH": str(tmp_path / "service_state.json"),
         "AUTO_SEED_SAMPLE_DATA": True,
@@ -1166,7 +1167,7 @@ def test_health_endpoint(tmp_path: Path) -> None:
     assert response.get_json() == {"status": "ok"}
 
 
-def test_basic_auth_protects_dashboard_when_configured(tmp_path: Path) -> None:
+def test_dashboard_login_is_remembered_for_thirty_days(tmp_path: Path) -> None:
     generated_user = secrets.token_urlsafe(12)
     generated_secret = secrets.token_urlsafe(24)
     app = _test_app(
@@ -1177,21 +1178,99 @@ def test_basic_auth_protects_dashboard_when_configured(tmp_path: Path) -> None:
     client = app.test_client()
 
     unauthorized = client.get("/?date=2026-07-31")
-    assert unauthorized.status_code == 401
-    assert unauthorized.headers["WWW-Authenticate"].startswith("Basic ")
+    assert unauthorized.status_code == 302
+    assert unauthorized.headers["Location"].startswith("/login?next=")
+    assert "WWW-Authenticate" not in unauthorized.headers
     assert client.get("/healthz").status_code == 200
+    assert client.get("/static/style.css").status_code == 200
 
-    encoded_credentials = base64.b64encode(
-        f"{generated_user}:{generated_secret}".encode("utf-8")
-    ).decode("ascii")
-    authorized = client.get(
-        "/?date=2026-07-31",
-        headers={"Authorization": f"Basic {encoded_credentials}"},
+    login_page = client.get(unauthorized.headers["Location"])
+    assert login_page.status_code == 200
+    assert b"This browser will stay signed in for\n            30 days" in login_page.data
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+
+    rejected = client.post(
+        "/login",
+        data={
+            "username": generated_user,
+            "password": "wrong-password",
+            "csrf_token": csrf_match.group(1).decode(),
+            "next": "/?date=2026-07-31",
+        },
     )
+    assert rejected.status_code == 401
+    assert b"not recognized" in rejected.data
+    assert "WWW-Authenticate" not in rejected.headers
+
+    refreshed_csrf_match = re.search(
+        rb'name="csrf_token" value="([^"]+)"',
+        rejected.data,
+    )
+    assert refreshed_csrf_match is not None
+    authenticated = client.post(
+        "/login",
+        data={
+            "username": generated_user,
+            "password": generated_secret,
+            "csrf_token": refreshed_csrf_match.group(1).decode(),
+            "next": "/?date=2026-07-31",
+        },
+    )
+    assert authenticated.status_code == 303
+    assert authenticated.headers["Location"] == "/?date=2026-07-31"
+    assert "HttpOnly" in authenticated.headers["Set-Cookie"]
+    assert "SameSite=Lax" in authenticated.headers["Set-Cookie"]
+    assert app.config["PERMANENT_SESSION_LIFETIME"] == timedelta(days=30)
+
+    authorized = client.get("/?date=2026-07-31")
     assert authorized.status_code == 200
     assert authorized.headers["X-Content-Type-Options"] == "nosniff"
     assert authorized.headers["X-Frame-Options"] == "DENY"
     assert authorized.headers["Cache-Control"] == "no-store"
+
+
+def test_dashboard_login_rejects_external_next_url(tmp_path: Path) -> None:
+    app = _test_app(
+        tmp_path,
+        DASHBOARD_AUTH_USERNAME="mari",
+        DASHBOARD_AUTH_PASSWORD="test-password",
+    )
+    client = app.test_client()
+    login_page = client.get("/login?next=https://example.com/phishing")
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+
+    response = client.post(
+        "/login",
+        data={
+            "username": "mari",
+            "password": "test-password",
+            "csrf_token": csrf_match.group(1).decode(),
+            "next": "https://example.com/phishing",
+        },
+    )
+
+    assert response.status_code == 303
+    assert response.headers["Location"] == "/"
+
+
+def test_generated_session_signing_key_survives_restart(tmp_path: Path) -> None:
+    config = {
+        "TESTING": True,
+        "DASHBOARD_SECRET_KEY_FILE": str(tmp_path / ".dashboard-secret-key"),
+        "DATABASE_PATH": str(tmp_path / "dashboard.db"),
+        "LEGACY_SERVICE_STATE_PATH": str(tmp_path / "service_state.json"),
+        "AUTO_SEED_SAMPLE_DATA": False,
+        "ORDER_SOURCE": "sample",
+    }
+
+    first_app = create_app(config)
+    second_app = create_app(config)
+
+    assert first_app.secret_key == second_app.secret_key
+    assert len(str(first_app.secret_key)) == 64
+    assert (tmp_path / ".dashboard-secret-key").read_text().strip() == first_app.secret_key
 
 
 def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path: Path) -> None:
@@ -2716,7 +2795,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.40' in html
+    assert 'style.css?v=0.5.41' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
