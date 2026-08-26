@@ -26,6 +26,7 @@ class ServiceState:
     side_prepared: dict[str, int]
     cookie_prepared: int
     slice_pies: int = 0
+    online_order_reserve: int = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,7 @@ def _unique_names(names: Sequence[str]) -> tuple[str, ...]:
 def default_state(
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    online_order_reserve: int = 32,
 ) -> ServiceState:
     return ServiceState(
         dough_balls_prepared=DEFAULT_DOUGH_BALLS,
@@ -111,6 +113,7 @@ def default_state(
         },
         cookie_prepared=0,
         slice_pies=0,
+        online_order_reserve=_nonnegative_int(online_order_reserve, 32),
     )
 
 
@@ -130,8 +133,9 @@ def _state_from_payload(
     raw: object,
     salad_types: Sequence[str],
     side_types: Sequence[str],
+    online_order_reserve: int,
 ) -> ServiceState:
-    defaults = default_state(salad_types, side_types)
+    defaults = default_state(salad_types, side_types, online_order_reserve)
     if not isinstance(raw, dict):
         return defaults
 
@@ -149,6 +153,9 @@ def _state_from_payload(
             raw.get("cookie_prepared"), defaults.cookie_prepared
         ),
         slice_pies=_nonnegative_int(raw.get("slice_pies"), defaults.slice_pies),
+        online_order_reserve=_nonnegative_int(
+            raw.get("online_order_reserve"), defaults.online_order_reserve
+        ),
     )
 
 
@@ -156,9 +163,15 @@ def state_from_payload(
     raw: object,
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    online_order_reserve: int = 32,
 ) -> ServiceState:
     """Hydrate a service state payload using the current configured lineup."""
-    return _state_from_payload(raw, salad_types, side_types)
+    return _state_from_payload(
+        raw,
+        salad_types,
+        side_types,
+        online_order_reserve,
+    )
 
 
 def _inventory_demand_from_orders(
@@ -191,6 +204,7 @@ def carryover_state(
     previous_orders: Iterable[Order],
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    online_order_reserve: int = 32,
 ) -> ServiceState:
     """Start a new service day with yesterday's unsold prepared food.
 
@@ -213,7 +227,11 @@ def carryover_state(
         ordered = _casefold_value(demand_values, name) or 0
         return max(prepared - ordered, 0)
 
-    defaults = default_state(salad_names, side_names)
+    defaults = default_state(
+        salad_names,
+        side_names,
+        online_order_reserve,
+    )
     return ServiceState(
         dough_balls_prepared=defaults.dough_balls_prepared,
         salad_prepared={
@@ -226,6 +244,7 @@ def carryover_state(
         },
         cookie_prepared=max(previous_state.cookie_prepared - demand_cookies, 0),
         slice_pies=0,
+        online_order_reserve=defaults.online_order_reserve,
     )
 
 
@@ -234,10 +253,14 @@ def load_state(
     service_date: date | None = None,
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    online_order_reserve: int = 32,
 ) -> ServiceState:
     selected_date = service_date or date.today()
     return _state_from_payload(
-        load_service_state_payload(path, selected_date), salad_types, side_types
+        load_service_state_payload(path, selected_date),
+        salad_types,
+        side_types,
+        online_order_reserve,
     )
 
 
@@ -251,6 +274,7 @@ def save_state(path: Path, service_date: date, state: ServiceState) -> None:
             "side_prepared": state.side_prepared,
             "cookie_prepared": state.cookie_prepared,
             "slice_pies": state.slice_pies,
+            "online_order_reserve": state.online_order_reserve,
         },
     )
 
@@ -259,10 +283,15 @@ def state_from_form(
     form: Mapping[str, str],
     salad_types: Sequence[str] = DEFAULT_SALAD_TYPES,
     side_types: Sequence[str] = DEFAULT_SIDE_TYPES,
+    online_order_reserve: int = 32,
 ) -> ServiceState:
     salad_names = _unique_names(tuple(salad_types))
     side_names = _unique_names(tuple(side_types))
-    defaults = default_state(salad_names, side_names)
+    defaults = default_state(
+        salad_names,
+        side_names,
+        online_order_reserve,
+    )
     return ServiceState(
         dough_balls_prepared=_nonnegative_int(
             form.get("dough_balls_prepared"), defaults.dough_balls_prepared
@@ -285,6 +314,10 @@ def state_from_form(
             form.get("cookie_prepared"), defaults.cookie_prepared
         ),
         slice_pies=_nonnegative_int(form.get("slice_pies"), defaults.slice_pies),
+        online_order_reserve=_nonnegative_int(
+            form.get("online_order_reserve"),
+            defaults.online_order_reserve,
+        ),
     )
 
 

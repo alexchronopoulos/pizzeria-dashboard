@@ -1468,6 +1468,14 @@ h2 {
     text-align: center;
 }
 
+.prep-input small {
+    grid-column: 1 / -1;
+    color: var(--text);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
 .operations-grid {
     grid-template-columns: minmax(210px, 0.8fr) minmax(320px, 1.35fr) minmax(300px, 1fr);
 }

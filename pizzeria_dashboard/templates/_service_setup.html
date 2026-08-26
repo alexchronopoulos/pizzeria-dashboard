@@ -30,26 +30,6 @@
                 </div>
             </div>
 
-            <div class="setup-section setup-section--online-reserve">
-                <div class="setup-section-heading">
-                    <strong>Online Order Reserve</strong>
-                    <span>Set the total pizzas allocated to online ordering for each service day. This total is not multiplied by the number of pickup slots. One pizza reserves one dough ball; walk-in capacity is separate.</span>
-                </div>
-                <div class="online-reserve-grid">
-                    <label class="prep-input prep-input--dough">
-                        <span>Pizzas Reserved for Online Orders</span>
-                        <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            inputmode="numeric"
-                            name="online_order_reserve"
-                            value="{{ service_configuration.online_order_reserve }}"
-                        >
-                    </label>
-                </div>
-            </div>
-
             <div class="setup-menu-grid">
                 <div class="setup-section setup-section--salads">
                     <div class="setup-section-heading">
@@ -98,6 +78,18 @@
                         value="{{ inventory.dough_slice_pies }}"
                     >
                 </label>
+                <label class="prep-input prep-input--dough">
+                    <span>Pizzas Reserved for Online Orders</span>
+                    <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputmode="numeric"
+                        name="online_order_reserve"
+                        value="{{ online_order_reserve }}"
+                    >
+                    <small>One pizza reserves one dough ball; walk-in capacity is separate.</small>
+                </label>
                 {% for salad in inventory.salads %}
                 <input type="hidden" name="salad_name" value="{{ salad.name }}">
                 <label class="prep-input prep-input--salad">
@@ -140,6 +132,6 @@
                 </label>
                 {% endfor %}
             </div>
-            <button class="save-inventory-button" type="submit">Save prepared counts</button>
+            <button class="save-inventory-button" type="submit">Save service counts</button>
         </form>
     </div>

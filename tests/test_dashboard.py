@@ -73,9 +73,20 @@ def test_dashboard_renders_cached_orders_and_pizza_totals(tmp_path: Path) -> Non
     assert response.data.index(b'data-service-setup-open') < response.data.index(b'id="service-date"')
     assert b'id="service-setup-dialog"' in response.data
     assert b'Weekly pickup hours' in response.data
-    assert b'Online Order Reserve' in response.data
     assert b'Pizzas Reserved for Online Orders' in response.data
     assert b'name="online_order_reserve"' in response.data
+    html = response.get_data(as_text=True)
+    settings_form = html.split('<form class="setup-form"', 1)[1].split("</form>", 1)[0]
+    inventory_form = html.split('<form class="prep-form"', 1)[1].split("</form>", 1)[0]
+    assert 'name="online_order_reserve"' not in settings_form
+    assert 'name="online_order_reserve"' in inventory_form
+    assert inventory_form.index('name="dough_balls_prepared"') < inventory_form.index(
+        'name="online_order_reserve"'
+    )
+    assert inventory_form.index('name="slice_pies"') < inventory_form.index(
+        'name="online_order_reserve"'
+    )
+    assert "Save service counts" in inventory_form
     assert b'name="pizzas_per_online_order_slot"' not in response.data
     assert b'name="online_order_slots_per_window"' not in response.data
     assert b'name="online_order_dough_per_slot"' not in response.data
@@ -885,6 +896,7 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
             "service_date": "2026-07-31",
             "dough_balls_prepared": "30",
             "slice_pies": "4",
+            "online_order_reserve": "36",
             "salad_cucumber_salad": "12",
             "salad_kale_caesar_salad": "9",
             "side_name": ["Side Hot Honey", "Side Ranch"],
@@ -902,6 +914,7 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
     assert payload == {
         "dough_balls_prepared": 30,
         "slice_pies": 4,
+        "online_order_reserve": 36,
         "salad_prepared": {
             "Cucumber Salad": 12,
             "Kale Caesar Salad": 9,
@@ -915,6 +928,33 @@ def test_inventory_persists_in_sqlite_by_service_date(tmp_path: Path) -> None:
     assert b'value="30"' in response.data
     assert b'name="slice_pies"' in response.data
     assert b'value="4"' in response.data
+    assert b'name="online_order_reserve"' in response.data
+    assert b'value="36"' in response.data
+
+
+def test_online_order_reserve_is_saved_independently_for_each_service_date(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(tmp_path)
+    client = app.test_client()
+
+    for service_date, reserve in (("2026-07-31", "36"), ("2026-08-01", "18")):
+        response = client.post(
+            "/inventory",
+            data={
+                "service_date": service_date,
+                "dough_balls_prepared": "30",
+                "slice_pies": "4",
+                "online_order_reserve": reserve,
+            },
+        )
+        assert response.status_code == 303
+
+    database_path = Path(app.config["DATABASE_PATH"])
+    first = load_service_state_payload(database_path, date(2026, 7, 31))
+    second = load_service_state_payload(database_path, date(2026, 8, 1))
+    assert first is not None and first["online_order_reserve"] == 36
+    assert second is not None and second["online_order_reserve"] == 18
 
 
 def test_sync_replaces_cache_and_records_sync_time(tmp_path: Path) -> None:
@@ -1129,7 +1169,6 @@ def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
             "day_4_start": "17:00",
             "day_4_end": "18:00",
             "salad_types": "Tomato Salad\nLittle Gem Salad",
-            "online_order_reserve": "45",
         },
         follow_redirects=True,
     )
@@ -1145,7 +1184,7 @@ def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
     assert len(configuration.pickup_times(date(2026, 7, 31))) == 4
     assert configuration.salad_types == ("Tomato Salad", "Little Gem Salad")
     assert configuration.side_types == ("Side Ranch", "Side Hot Honey")
-    assert configuration.online_order_reserve == 45
+    assert configuration.online_order_reserve == 32
 
     # Real cached orders outside newly shortened hours intentionally stay visible.
     assert b"Tomato Salad" in response.data
@@ -2974,7 +3013,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.41' in html
+    assert 'style.css?v=0.5.42' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html

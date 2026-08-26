@@ -149,11 +149,9 @@ def _configuration_from_payload(raw: object) -> ServiceConfiguration:
     except (TypeError, ValueError):
         slot_minutes = defaults.slot_minutes
 
-    # Online reserve is now a fixed service-day allocation, independent of how
-    # many pickup slots are exposed online. Older per-slot settings cannot be
-    # converted reliably because configured hours vary by weekday, so existing
-    # installations receive the former standard Friday allocation of 32 until
-    # the new Service Setup input is saved explicitly.
+    # Keep the former installation-wide value as the fallback for service dates
+    # that have not saved their own inventory counts yet. The editable reserve
+    # now lives in the per-service state alongside dough and slice-pie counts.
     try:
         online_order_reserve = max(
             int(raw.get("online_order_reserve", defaults.online_order_reserve)),
@@ -204,8 +202,11 @@ def save_configuration(path: Path, configuration: ServiceConfiguration) -> None:
     )
 
 
-def configuration_from_form(form: Mapping[str, str]) -> ServiceConfiguration:
-    defaults = default_configuration()
+def configuration_from_form(
+    form: Mapping[str, str],
+    current: ServiceConfiguration | None = None,
+) -> ServiceConfiguration:
+    defaults = current or default_configuration()
     days: list[DayHours] = []
     for default_day in defaults.days:
         prefix = f"day_{default_day.weekday}"

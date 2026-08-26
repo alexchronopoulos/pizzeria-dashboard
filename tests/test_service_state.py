@@ -41,6 +41,7 @@ def test_carryover_uses_previous_remaining_and_drops_removed_menu_items() -> Non
         previous_orders,
         salad_types=("Cucumber Salad",),
         side_types=("Side Hot Honey",),
+        online_order_reserve=28,
     )
 
     assert carried.dough_balls_prepared == 24
@@ -49,6 +50,7 @@ def test_carryover_uses_previous_remaining_and_drops_removed_menu_items() -> Non
     assert carried.side_prepared == {"Side Hot Honey": 3}
     assert "Side Ranch" not in carried.side_prepared
     assert carried.cookie_prepared == 5
+    assert carried.online_order_reserve == 28
 
 
 def test_inventory_counts_cookie_only_walk_ins_even_when_hidden_from_board() -> None:

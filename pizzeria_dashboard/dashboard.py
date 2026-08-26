@@ -347,7 +347,10 @@ def index() -> str:
     saved_state_payload = load_service_state_payload(database_path, selected_date)
     if saved_state_payload is not None:
         inventory_state = state_from_payload(
-            saved_state_payload, inventory_salad_types, inventory_side_types
+            saved_state_payload,
+            inventory_salad_types,
+            inventory_side_types,
+            service_configuration.online_order_reserve,
         )
     else:
         previous_saved_state = load_latest_service_state_before(
@@ -359,6 +362,7 @@ def index() -> str:
                 selected_date,
                 inventory_salad_types,
                 inventory_side_types,
+                service_configuration.online_order_reserve,
             )
         else:
             previous_date, previous_payload = previous_saved_state
@@ -366,12 +370,14 @@ def index() -> str:
                 previous_payload,
                 service_configuration.salad_types,
                 service_configuration.side_types,
+                service_configuration.online_order_reserve,
             )
             inventory_state = carryover_state(
                 previous_state,
                 load_orders_for_date(database_path, previous_date),
                 service_configuration.salad_types,
                 service_configuration.side_types,
+                service_configuration.online_order_reserve,
             )
         # Freeze the inherited opening inventory once the service date actually
         # arrives. This gives the next service day a reliable carryover source
@@ -400,7 +406,7 @@ def index() -> str:
     if selected_date >= now.date():
         online_order_dough_reserve = _online_order_reserve(
             orders,
-            configured_reserve=service_configuration.online_order_reserve,
+            configured_reserve=inventory_state.online_order_reserve,
         )
     else:
         online_order_dough_reserve = 0
@@ -487,7 +493,7 @@ def index() -> str:
         board_content_revision=board_content_revision,
         future_one_pie_windows=future_one_pie_windows,
         future_two_pie_windows=future_two_pie_windows,
-        online_order_reserve=service_configuration.online_order_reserve,
+        online_order_reserve=inventory_state.online_order_reserve,
         pickup_overrides=pickup_overrides,
         original_pickup_times={
             order.order_id: _local_service_time(order.pickup_at)
@@ -1418,15 +1424,22 @@ def update_inventory():
     save_state(
         _database_path(),
         selected_date,
-        state_from_form(request.form, salad_types, side_types),
+        state_from_form(
+            request.form,
+            salad_types,
+            side_types,
+            configured.online_order_reserve,
+        ),
     )
+    flash("Service counts saved.", "success")
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
 
 
 @blueprint.post("/settings")
 def update_settings():
     selected_date = _parse_service_date(request.form.get("service_date"))
-    configuration = configuration_from_form(request.form)
+    current_configuration = load_configuration(_database_path())
+    configuration = configuration_from_form(request.form, current_configuration)
     save_configuration(_database_path(), configuration)
     flash("Service setup saved.", "success")
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
