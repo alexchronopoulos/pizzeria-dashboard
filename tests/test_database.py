@@ -1,9 +1,12 @@
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from pizzeria_dashboard.database import (
+    clear_authentication_failures,
+    dashboard_auth_session_is_valid,
+    delete_dashboard_auth_session,
     delete_order_slot_assignment,
     initialize_database,
     load_board_content_revision,
@@ -23,11 +26,13 @@ from pizzeria_dashboard.database import (
     load_service_notes_for_date,
     load_sync_info,
     load_vip_customer_keys,
+    load_authentication_throttle,
     merge_orders_for_date,
     migrate_legacy_service_state,
     prune_pie_production_states,
     reorder_prep_tasks,
     remove_order_from_dashboard,
+    record_authentication_failure,
     replace_orders_for_date,
     save_manual_order,
     save_order_internal_note,
@@ -39,6 +44,7 @@ from pizzeria_dashboard.database import (
     save_service_state_payload,
     save_service_note,
     save_vip_customer,
+    save_dashboard_auth_session,
     delete_vip_customers,
     delete_prep_assignee,
     delete_prep_recipe,
@@ -79,7 +85,164 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "pie_production_states",
         "order_ready_states",
         "vip_customers",
+        "dashboard_auth_failures",
+        "dashboard_auth_sessions",
     } <= tables
+
+
+def test_authentication_throttle_escalates_and_resets_after_window(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    started_at = datetime(2026, 8, 25, 16, 0, tzinfo=UTC)
+    parameters = {
+        "client_limit": 2,
+        "account_limit": 100,
+        "window_seconds": 900,
+        "base_lockout_seconds": 60,
+        "max_lockout_seconds": 900,
+    }
+
+    first = record_authentication_failure(
+        database_path,
+        "client-key",
+        "account-key",
+        now=started_at,
+        **parameters,
+    )
+    second = record_authentication_failure(
+        database_path,
+        "client-key",
+        "account-key",
+        now=started_at + timedelta(seconds=1),
+        **parameters,
+    )
+    active = load_authentication_throttle(
+        database_path,
+        "client-key",
+        "account-key",
+        now=started_at + timedelta(seconds=2),
+    )
+    escalated = record_authentication_failure(
+        database_path,
+        "client-key",
+        "account-key",
+        now=started_at + timedelta(seconds=62),
+        **parameters,
+    )
+    reset = record_authentication_failure(
+        database_path,
+        "client-key",
+        "account-key",
+        now=started_at + timedelta(minutes=16),
+        **parameters,
+    )
+
+    assert first.limited is False
+    assert second.retry_after_seconds == 60
+    assert active.retry_after_seconds == 59
+    assert escalated.retry_after_seconds == 120
+    assert reset.limited is False
+
+    clear_authentication_failures(database_path, "client-key", "account-key")
+    assert load_authentication_throttle(
+        database_path,
+        "client-key",
+        "different-account-key",
+        now=started_at + timedelta(minutes=16),
+    ).limited is False
+
+
+def test_authentication_account_limit_combines_distributed_clients(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    now = datetime(2026, 8, 25, 16, 0, tzinfo=UTC)
+    parameters = {
+        "client_limit": 100,
+        "account_limit": 3,
+        "window_seconds": 900,
+        "base_lockout_seconds": 60,
+        "max_lockout_seconds": 900,
+    }
+
+    first = record_authentication_failure(
+        database_path,
+        "client-one",
+        "shared-account",
+        now=now,
+        **parameters,
+    )
+    second = record_authentication_failure(
+        database_path,
+        "client-two",
+        "shared-account",
+        now=now + timedelta(seconds=1),
+        **parameters,
+    )
+    third = record_authentication_failure(
+        database_path,
+        "client-three",
+        "shared-account",
+        now=now + timedelta(seconds=2),
+        **parameters,
+    )
+
+    assert first.limited is False
+    assert second.limited is False
+    assert third.retry_after_seconds == 60
+    assert load_authentication_throttle(
+        database_path,
+        "new-client",
+        "shared-account",
+        now=now + timedelta(seconds=3),
+    ).retry_after_seconds == 59
+
+
+def test_dashboard_auth_sessions_are_hashed_expiring_and_revocable(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    now = datetime(2026, 8, 25, 16, 0, tzinfo=UTC)
+    expires_at = now + timedelta(days=30)
+
+    save_dashboard_auth_session(
+        database_path,
+        "hashed-session-token",
+        "auth-fingerprint",
+        expires_at,
+        now=now,
+    )
+
+    assert dashboard_auth_session_is_valid(
+        database_path,
+        "hashed-session-token",
+        "auth-fingerprint",
+        now=now + timedelta(days=29),
+    )
+    assert not dashboard_auth_session_is_valid(
+        database_path,
+        "hashed-session-token",
+        "wrong-fingerprint",
+        now=now + timedelta(days=29),
+    )
+    assert not dashboard_auth_session_is_valid(
+        database_path,
+        "hashed-session-token",
+        "auth-fingerprint",
+        now=expires_at,
+    )
+
+    delete_dashboard_auth_session(database_path, "hashed-session-token")
+    assert not dashboard_auth_session_is_valid(
+        database_path,
+        "hashed-session-token",
+        "auth-fingerprint",
+        now=now,
+    )
 
 
 def test_vip_customer_keys_can_be_saved_and_removed(tmp_path: Path) -> None:

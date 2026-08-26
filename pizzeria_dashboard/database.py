@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hmac
 import json
+import math
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -17,7 +19,7 @@ from .customer_history import (
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -74,6 +76,15 @@ class PrepRecipe:
     body: str
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationThrottle:
+    retry_after_seconds: int = 0
+
+    @property
+    def limited(self) -> bool:
+        return self.retry_after_seconds > 0
 
 
 OVEN_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
@@ -268,6 +279,29 @@ def initialize_database(path: Path) -> None:
                 payment_count INTEGER NOT NULL,
                 order_count INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS dashboard_auth_failures (
+                scope TEXT NOT NULL CHECK (scope IN ('client', 'account')),
+                subject_key TEXT NOT NULL,
+                window_started_at TEXT NOT NULL,
+                failure_count INTEGER NOT NULL CHECK (failure_count >= 0),
+                locked_until TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (scope, subject_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_dashboard_auth_failures_updated
+                ON dashboard_auth_failures (updated_at);
+
+            CREATE TABLE IF NOT EXISTS dashboard_auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                auth_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_dashboard_auth_sessions_expires
+                ON dashboard_auth_sessions (expires_at);
             """
         )
         prep_task_columns = {
@@ -294,6 +328,216 @@ def initialize_database(path: Path) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (str(SCHEMA_VERSION),),
+        )
+
+
+def _authentication_retry_after_for_row(
+    row: sqlite3.Row | None,
+    now: datetime,
+) -> int:
+    if row is None or row["locked_until"] is None:
+        return 0
+    locked_until = datetime.fromisoformat(str(row["locked_until"]))
+    return max(0, math.ceil((locked_until - now).total_seconds()))
+
+
+def load_authentication_throttle(
+    path: Path,
+    client_key: str,
+    account_key: str,
+    *,
+    now: datetime | None = None,
+) -> AuthenticationThrottle:
+    """Return the active persistent lockout for a client or the shared account."""
+    checked_at = now or _utc_now()
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT scope, locked_until
+            FROM dashboard_auth_failures
+            WHERE (scope = 'client' AND subject_key = ?)
+               OR (scope = 'account' AND subject_key = ?)
+            """,
+            (client_key, account_key),
+        ).fetchall()
+    retry_after = max(
+        (_authentication_retry_after_for_row(row, checked_at) for row in rows),
+        default=0,
+    )
+    return AuthenticationThrottle(retry_after_seconds=retry_after)
+
+
+def record_authentication_failure(
+    path: Path,
+    client_key: str,
+    account_key: str,
+    *,
+    client_limit: int,
+    account_limit: int,
+    window_seconds: int,
+    base_lockout_seconds: int,
+    max_lockout_seconds: int,
+    now: datetime | None = None,
+) -> AuthenticationThrottle:
+    """Persist a failed login and return any escalating lockout it triggers."""
+    failed_at = now or _utc_now()
+    window = timedelta(seconds=max(1, window_seconds))
+    retry_after = 0
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        for scope, subject_key, attempt_limit in (
+            ("client", client_key, max(1, client_limit)),
+            ("account", account_key, max(1, account_limit)),
+        ):
+            row = connection.execute(
+                """
+                SELECT window_started_at, failure_count, locked_until
+                FROM dashboard_auth_failures
+                WHERE scope = ? AND subject_key = ?
+                """,
+                (scope, subject_key),
+            ).fetchone()
+            if row is None:
+                window_started_at = failed_at
+                failure_count = 1
+            else:
+                previous_window_started_at = datetime.fromisoformat(
+                    str(row["window_started_at"])
+                )
+                if failed_at - previous_window_started_at >= window:
+                    window_started_at = failed_at
+                    failure_count = 1
+                else:
+                    window_started_at = previous_window_started_at
+                    failure_count = int(row["failure_count"]) + 1
+
+            locked_until: datetime | None = None
+            if failure_count >= attempt_limit:
+                escalation = min(failure_count - attempt_limit, 16)
+                lockout_seconds = min(
+                    max(1, max_lockout_seconds),
+                    max(1, base_lockout_seconds) * (2**escalation),
+                )
+                locked_until = failed_at + timedelta(seconds=lockout_seconds)
+                retry_after = max(retry_after, lockout_seconds)
+
+            connection.execute(
+                """
+                INSERT INTO dashboard_auth_failures (
+                    scope,
+                    subject_key,
+                    window_started_at,
+                    failure_count,
+                    locked_until,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, subject_key) DO UPDATE SET
+                    window_started_at = excluded.window_started_at,
+                    failure_count = excluded.failure_count,
+                    locked_until = excluded.locked_until,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    scope,
+                    subject_key,
+                    window_started_at.isoformat(),
+                    failure_count,
+                    locked_until.isoformat() if locked_until else None,
+                    failed_at.isoformat(),
+                ),
+            )
+
+        stale_before = failed_at - timedelta(
+            seconds=max(window_seconds, max_lockout_seconds, 3600) * 4
+        )
+        connection.execute(
+            "DELETE FROM dashboard_auth_failures WHERE updated_at < ?",
+            (stale_before.isoformat(),),
+        )
+    return AuthenticationThrottle(retry_after_seconds=retry_after)
+
+
+def clear_authentication_failures(
+    path: Path,
+    client_key: str,
+    account_key: str,
+) -> None:
+    """Clear client and account failures after a successful credential check."""
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            DELETE FROM dashboard_auth_failures
+            WHERE (scope = 'client' AND subject_key = ?)
+               OR (scope = 'account' AND subject_key = ?)
+            """,
+            (client_key, account_key),
+        )
+
+
+def save_dashboard_auth_session(
+    path: Path,
+    token_hash: str,
+    auth_fingerprint: str,
+    expires_at: datetime,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Persist a revocable server-side dashboard session token hash."""
+    created_at = now or _utc_now()
+    with _connect(path) as connection:
+        connection.execute(
+            "DELETE FROM dashboard_auth_sessions WHERE expires_at <= ?",
+            (created_at.isoformat(),),
+        )
+        connection.execute(
+            """
+            INSERT INTO dashboard_auth_sessions (
+                token_hash, auth_fingerprint, created_at, expires_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                token_hash,
+                auth_fingerprint,
+                created_at.isoformat(),
+                expires_at.isoformat(),
+            ),
+        )
+
+
+def dashboard_auth_session_is_valid(
+    path: Path,
+    token_hash: str,
+    auth_fingerprint: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Validate a signed-cookie token against its server-side session record."""
+    checked_at = now or _utc_now()
+    with _connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT auth_fingerprint, expires_at
+            FROM dashboard_auth_sessions
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+    if row is None:
+        return False
+    saved_fingerprint = str(row["auth_fingerprint"])
+    expires_at = datetime.fromisoformat(str(row["expires_at"]))
+    return expires_at > checked_at and hmac.compare_digest(
+        saved_fingerprint,
+        auth_fingerprint,
+    )
+
+
+def delete_dashboard_auth_session(path: Path, token_hash: str) -> None:
+    """Revoke one server-side dashboard session."""
+    with _connect(path) as connection:
+        connection.execute(
+            "DELETE FROM dashboard_auth_sessions WHERE token_hash = ?",
+            (token_hash,),
         )
 
 

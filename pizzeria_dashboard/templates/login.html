@@ -23,9 +23,8 @@
         <div class="dashboard-login-error" role="alert">{{ error }}</div>
         {% endif %}
 
-        <form class="dashboard-login-form" method="post" action="{{ url_for('dashboard_login') }}">
+        <form class="dashboard-login-form" method="post" action="{{ url_for('dashboard_login', next=next_url) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="next" value="{{ next_url }}">
             <label>
                 <span>Username</span>
                 <input

@@ -336,6 +336,11 @@ DASHBOARD_AUTH_USERNAME=mari
 DASHBOARD_AUTH_PASSWORD=use-a-long-unique-password-here
 DASHBOARD_AUTH_REMEMBER_DAYS=30
 DASHBOARD_SESSION_COOKIE_SECURE=true
+DASHBOARD_AUTH_ATTEMPT_WINDOW_MINUTES=15
+DASHBOARD_AUTH_MAX_ATTEMPTS_PER_CLIENT=5
+DASHBOARD_AUTH_MAX_ATTEMPTS_GLOBAL=50
+DASHBOARD_AUTH_LOCKOUT_BASE_SECONDS=60
+DASHBOARD_AUTH_LOCKOUT_MAX_MINUTES=15
 ```
 
 Authentication remains disabled when both values are blank. If only one is set,
@@ -344,6 +349,21 @@ configuration. After a successful sign-in, the browser receives a signed,
 HTTP-only session cookie that expires after 30 days. The password itself is never
 stored in the cookie. Changing the configured username or password invalidates
 existing sign-ins.
+
+Failed sign-ins are throttled in SQLite, so restarting the service does not clear
+the protection. By default, five failures from one client within 15 minutes
+trigger an escalating temporary lockout starting at one minute and capped at 15
+minutes. A higher account-wide threshold also limits attempts distributed across
+many client addresses. Rate-limit identifiers are keyed hashes; raw IP addresses,
+submitted usernames, and submitted passwords are not stored. The application log
+records only a short keyed client identifier for successful and failed sign-ins.
+
+Credential checks use a slow scrypt verifier and the page returns the same error
+for an incorrect username, password, or CSRF token. Successful logins create a
+random server-side session that can be revoked and expires after the configured
+30-day lifetime. Login requests are size-limited, redirect targets are restricted
+to local paths, and all state-changing login requests require a session-bound
+CSRF token.
 
 When `SECRET_KEY` is blank, the dashboard creates a stable private signing key at
 `data/.dashboard-secret-key`. Keep the `data` directory persistent and private so
@@ -366,6 +386,9 @@ the public endpoint is HTTPS-only, HSTS can be enabled:
 DASHBOARD_HSTS=true
 ```
 
-The app also sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-`Referrer-Policy: no-referrer`, and `Cache-Control: no-store` for dashboard
-responses. The bundled launch commands run with Flask debug mode disabled.
+The session cookie uses the `Secure`, `HttpOnly`, `SameSite=Strict`, and HTTPS
+`__Host-` protections. The app also sends a restrictive Content Security Policy,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer`, cross-origin isolation headers, a restrictive
+Permissions Policy, and `Cache-Control: no-store` for dashboard responses. The
+bundled launch commands run with Flask debug mode disabled.

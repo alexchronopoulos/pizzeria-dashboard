@@ -1187,6 +1187,11 @@ def test_dashboard_login_is_remembered_for_thirty_days(tmp_path: Path) -> None:
     login_page = client.get(unauthorized.headers["Location"])
     assert login_page.status_code == 200
     assert b"This browser will stay signed in for\n            30 days" in login_page.data
+    login_csp = login_page.headers["Content-Security-Policy"]
+    assert "script-src 'self'" in login_csp
+    assert "style-src 'self'" in login_csp
+    assert "'unsafe-inline'" not in login_csp
+    assert b"<script>" not in login_page.data
     csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
     assert csrf_match is not None
 
@@ -1209,18 +1214,17 @@ def test_dashboard_login_is_remembered_for_thirty_days(tmp_path: Path) -> None:
     )
     assert refreshed_csrf_match is not None
     authenticated = client.post(
-        "/login",
+        "/login?next=/?date=2026-07-31",
         data={
             "username": generated_user,
             "password": generated_secret,
             "csrf_token": refreshed_csrf_match.group(1).decode(),
-            "next": "/?date=2026-07-31",
         },
     )
     assert authenticated.status_code == 303
     assert authenticated.headers["Location"] == "/?date=2026-07-31"
     assert "HttpOnly" in authenticated.headers["Set-Cookie"]
-    assert "SameSite=Lax" in authenticated.headers["Set-Cookie"]
+    assert "SameSite=Strict" in authenticated.headers["Set-Cookie"]
     assert app.config["PERMANENT_SESSION_LIFETIME"] == timedelta(days=30)
 
     authorized = client.get("/?date=2026-07-31")
@@ -1228,6 +1232,182 @@ def test_dashboard_login_is_remembered_for_thirty_days(tmp_path: Path) -> None:
     assert authorized.headers["X-Content-Type-Options"] == "nosniff"
     assert authorized.headers["X-Frame-Options"] == "DENY"
     assert authorized.headers["Cache-Control"] == "no-store"
+    assert "frame-ancestors 'none'" in authorized.headers["Content-Security-Policy"]
+    assert authorized.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+    assert authorized.headers["Permissions-Policy"] == "camera=(), geolocation=(), microphone=()"
+
+
+def test_dashboard_login_rate_limit_persists_and_does_not_store_ip(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "DASHBOARD_AUTH_USERNAME": "mari",
+        "DASHBOARD_AUTH_PASSWORD": "test-password",
+        "DASHBOARD_AUTH_MAX_ATTEMPTS_PER_CLIENT": 3,
+        "DASHBOARD_AUTH_MAX_ATTEMPTS_GLOBAL": 50,
+        "DASHBOARD_AUTH_LOCKOUT_BASE_SECONDS": 60,
+    }
+    app = _test_app(tmp_path, **config)
+    client = app.test_client()
+    client_address = "198.51.100.24"
+
+    responses = []
+    for _ in range(3):
+        login_page = client.get(
+            "/login",
+            environ_base={"REMOTE_ADDR": client_address},
+        )
+        csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+        assert csrf_match is not None
+        responses.append(
+            client.post(
+                "/login",
+                data={
+                    "username": "mari",
+                    "password": "wrong-password",
+                    "csrf_token": csrf_match.group(1).decode(),
+                },
+                environ_base={"REMOTE_ADDR": client_address},
+            )
+        )
+
+    assert [response.status_code for response in responses] == [401, 401, 429]
+    assert int(responses[-1].headers["Retry-After"]) >= 59
+    assert b"temporarily unavailable" in responses[-1].data
+
+    database_path = Path(app.config["DATABASE_PATH"])
+    with sqlite3.connect(database_path) as connection:
+        stored_subjects = [
+            row[0]
+            for row in connection.execute(
+                "SELECT subject_key FROM dashboard_auth_failures"
+            )
+        ]
+    assert stored_subjects
+    assert all(client_address not in subject for subject in stored_subjects)
+
+    restarted_app = _test_app(tmp_path, **config)
+    restarted_client = restarted_app.test_client()
+    login_page = restarted_client.get(
+        "/login",
+        environ_base={"REMOTE_ADDR": client_address},
+    )
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+    still_limited = restarted_client.post(
+        "/login",
+        data={
+            "username": "mari",
+            "password": "test-password",
+            "csrf_token": csrf_match.group(1).decode(),
+        },
+        environ_base={"REMOTE_ADDR": client_address},
+    )
+    assert still_limited.status_code == 429
+
+    other_client = restarted_app.test_client()
+    other_login_page = other_client.get(
+        "/login",
+        environ_base={"REMOTE_ADDR": "198.51.100.25"},
+    )
+    other_csrf_match = re.search(
+        rb'name="csrf_token" value="([^"]+)"',
+        other_login_page.data,
+    )
+    assert other_csrf_match is not None
+    other_response = other_client.post(
+        "/login",
+        data={
+            "username": "mari",
+            "password": "test-password",
+            "csrf_token": other_csrf_match.group(1).decode(),
+        },
+        environ_base={"REMOTE_ADDR": "198.51.100.25"},
+    )
+    assert other_response.status_code == 303
+
+
+def test_secure_dashboard_login_uses_host_prefixed_cookie(tmp_path: Path) -> None:
+    app = _test_app(
+        tmp_path,
+        DASHBOARD_AUTH_USERNAME="mari",
+        DASHBOARD_AUTH_PASSWORD="test-password",
+        SESSION_COOKIE_SECURE=True,
+    )
+    client = app.test_client()
+    login_page = client.get("/login", base_url="https://dashboard.example.com")
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+
+    response = client.post(
+        "/login?next=https://example.com/phishing",
+        base_url="https://dashboard.example.com",
+        data={
+            "username": "mari",
+            "password": "test-password",
+            "csrf_token": csrf_match.group(1).decode(),
+        },
+    )
+
+    set_cookie = response.headers["Set-Cookie"]
+    assert response.status_code == 303
+    assert set_cookie.startswith("__Host-pizzeria_dashboard_session=")
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "Path=/" in set_cookie
+    assert "SameSite=Strict" in set_cookie
+
+
+def test_dashboard_login_handles_hostile_unicode_as_generic_failure(
+    tmp_path: Path,
+) -> None:
+    app = _test_app(
+        tmp_path,
+        DASHBOARD_AUTH_USERNAME="mari",
+        DASHBOARD_AUTH_PASSWORD="test-password",
+    )
+    client = app.test_client()
+    login_page = client.get("/login")
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+
+    response = client.post(
+        "/login",
+        data={
+            "username": "ｍａｒｉ🔒",
+            "password": "not-the-password",
+            "csrf_token": csrf_match.group(1).decode(),
+        },
+    )
+
+    assert response.status_code == 401
+    assert b"username or password was not recognized" in response.data
+
+
+def test_dashboard_logout_revokes_server_side_session(tmp_path: Path) -> None:
+    app = _test_app(
+        tmp_path,
+        DASHBOARD_AUTH_USERNAME="mari",
+        DASHBOARD_AUTH_PASSWORD="test-password",
+    )
+    client = app.test_client()
+    login_page = client.get("/login")
+    csrf_match = re.search(rb'name="csrf_token" value="([^"]+)"', login_page.data)
+    assert csrf_match is not None
+    assert client.post(
+        "/login",
+        data={
+            "username": "mari",
+            "password": "test-password",
+            "csrf_token": csrf_match.group(1).decode(),
+        },
+    ).status_code == 303
+    assert client.get("/").status_code == 200
+
+    logout_response = client.post("/logout")
+
+    assert logout_response.status_code == 303
+    assert client.get("/").status_code == 302
 
 
 def test_dashboard_login_rejects_external_next_url(tmp_path: Path) -> None:
@@ -1247,7 +1427,6 @@ def test_dashboard_login_rejects_external_next_url(tmp_path: Path) -> None:
             "username": "mari",
             "password": "test-password",
             "csrf_token": csrf_match.group(1).decode(),
-            "next": "https://example.com/phishing",
         },
     )
 
