@@ -59,6 +59,42 @@
         </strong>
       </div>
     </section>
+    {% if is_manual and manual_payment_match %}
+    <section class="order-details-section manual-payment-details{% if manual_payment_match.paid_in_square %} manual-payment-details--paid{% endif %}">
+      <div>
+        <h3>Square payment</h3>
+        {% if manual_payment_match.paid_in_square %}
+        <p class="manual-payment-state"><strong>Paid in Square</strong></p>
+        <p>
+          Automatically matched from Ticket Name
+          <strong>{{ manual_payment_match.match_token }}</strong>.
+        </p>
+        <dl class="manual-payment-link-details">
+          <div>
+            <dt>Square order</dt>
+            <dd>{{ manual_payment_match.square_order_id }}</dd>
+          </div>
+          {% if manual_payment_match.square_receipt_number %}
+          <div>
+            <dt>Receipt</dt>
+            <dd>{{ manual_payment_match.square_receipt_number }}</dd>
+          </div>
+          {% endif %}
+        </dl>
+        {% if manual_payment_match.item_discrepancy %}
+        <div class="manual-payment-discrepancy" role="alert">
+          <strong>Items differ</strong>
+          <span>The items charged in Square differ from this manual production order. The manual items remain in control of production and dough counts.</span>
+        </div>
+        {% endif %}
+        {% else %}
+        <p>When collecting payment, enter this exact name in Square’s Ticket Name field:</p>
+        <strong class="manual-payment-token">{{ manual_payment_match.match_token }}</strong>
+        <p class="manual-payment-help">Spaces, hyphens, underscores, and capitalization are all accepted.</p>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
     {% if not is_walk_in %}
     <section class="order-details-section scheduled-slot-editor">
       <div class="scheduled-slot-editor-heading">
@@ -163,7 +199,11 @@
         <h3>Remove from dashboard</h3>
         <p>
           {% if is_manual %}
+          {% if manual_payment_match and manual_payment_match.paid_in_square %}
+          This permanently deletes the manual production order. Its linked Square payment is unchanged and will remain hidden from the production dashboard.
+          {% else %}
           This permanently deletes this dashboard-only manual order. No Square order is involved.
+          {% endif %}
           {% else %}
           This hides the order from the production dashboard only. Square is not changed, and future Square refreshes will keep this order hidden here.
           {% endif %}

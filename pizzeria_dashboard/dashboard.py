@@ -28,6 +28,7 @@ from .database import (
     load_customer_summaries_for_orders,
     load_vip_customer_keys,
     load_latest_service_state_before,
+    load_manual_payment_matches_for_date,
     load_order_slot_assignment_overrides,
     load_order_for_date,
     load_order_internal_note,
@@ -315,6 +316,9 @@ def index() -> str:
 
     database_path = _database_path()
     orders = load_orders_for_date(database_path, selected_date)
+    manual_payment_matches = load_manual_payment_matches_for_date(
+        database_path, selected_date
+    )
     prune_pie_production_states(
         database_path, selected_date, _production_pie_keys(selected_date, orders)
     )
@@ -500,6 +504,7 @@ def index() -> str:
             order.order_id: _local_service_time(order.pickup_at)
             for order in orders
         },
+        manual_payment_matches=manual_payment_matches,
         manual_order_default_date=(
             selected_date if selected_date >= now.date() else now.date()
         ),
@@ -574,9 +579,17 @@ def create_manual_order():
         source_created_at=now,
         creation_product="MANUAL_DASHBOARD",
     )
-    save_manual_order(_database_path(), pickup_date, order)
+    database_path = _database_path()
+    save_manual_order(database_path, pickup_date, order)
+    match_token = load_manual_payment_matches_for_date(
+        database_path, pickup_date
+    )[order.order_id].match_token
     flash(
-        f"Added manual order for {order.display_customer_name} at {pickup_at.strftime('%-I:%M %p')}.",
+        (
+            f"Added manual order for {order.display_customer_name} at "
+            f"{pickup_at.strftime('%-I:%M %p')}. Use Square Ticket Name "
+            f"“{match_token}” when payment is collected."
+        ),
         "success",
     )
     return redirect(url_for("dashboard.index", date=pickup_date.isoformat()), code=303)
@@ -647,6 +660,13 @@ def order_details():
         and order.fulfillment_uid is None
     )
     is_manual = order.is_manual
+    manual_payment_match = (
+        load_manual_payment_matches_for_date(database_path, selected_date).get(
+            order.order_id
+        )
+        if is_manual
+        else None
+    )
     assigned_pickup_at, assignment_source = _effective_walk_in_assignment(
         order, selected_date, pickup_slots, assignment_overrides
     )
@@ -774,6 +794,7 @@ def order_details():
         modal_customer_name=modal_customer_name,
         is_walk_in=is_walk_in,
         is_manual=is_manual,
+        manual_payment_match=manual_payment_match,
         assigned_pickup_at=assigned_pickup_at,
         assignment_source=assignment_source,
         original_pickup_at=original_pickup_at,
@@ -1755,6 +1776,7 @@ def quick_sync():
         incremental=result.incremental,
         changed_count=result.changed_count,
         removed_count=result.removed_count,
+        reconciled_count=result.reconciled_count,
         order_count=result.info.order_count,
         candidates_scanned=result.candidates_scanned or 0,
         synced_at=result.info.synced_at.isoformat(),

@@ -7,8 +7,13 @@ from typing import Mapping
 
 import pytest
 
-from pizzeria_dashboard.database import initialize_database, load_orders_for_date
-from pizzeria_dashboard.domain import build_service_board
+from pizzeria_dashboard.database import (
+    initialize_database,
+    load_manual_payment_matches_for_date,
+    load_orders_for_date,
+    save_manual_order,
+)
+from pizzeria_dashboard.domain import Item, Order, build_service_board
 from pizzeria_dashboard.square_api import (
     SquareClient,
     SquareAPIError,
@@ -1564,6 +1569,149 @@ def test_full_sync_prefilters_unrelated_dates_before_walk_in_enrichment(
     cached = load_orders_for_date(database_path, SERVICE_DATE)
     assert [order.square_order_id for order in cached] == ["today-walk-in"]
     assert cached[0].ticket_name == "Sam 7:45"
+
+
+def test_square_ticket_name_reconciles_paid_manual_order_idempotently(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    manual = Order(
+        order_id="manual-phone-order",
+        customer_name="Alex",
+        pickup_at=datetime(2026, 7, 31, 18, 15),
+        items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+        creation_product="MANUAL_DASHBOARD",
+    )
+    save_manual_order(database_path, SERVICE_DATE, manual)
+    token = load_manual_payment_matches_for_date(database_path, SERVICE_DATE)[
+        manual.order_id
+    ].match_token
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+
+        def resolve_location(self):
+            return {
+                "id": "LOCATION-1",
+                "name": "Pizzeria Mari",
+                "timezone": "America/New_York",
+            }
+
+        def search_orders_for_service_date(self, **kwargs):
+            return (
+                {
+                    "id": "square-counter-payment",
+                    "location_id": "LOCATION-1",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-31T22:00:00Z",
+                    "closed_at": "2026-07-31T22:02:00Z",
+                    "ticket_name": f"Alex / {token.upper().replace(' ', '_')}",
+                    "line_items": [
+                        {
+                            "uid": "line-plain",
+                            "name": "Plain Pie",
+                            "quantity": "1",
+                        }
+                    ],
+                },
+            )
+
+        def batch_retrieve_catalog_objects(
+            self, object_ids, *, include_related_objects=False
+        ):
+            return ()
+
+    config = {
+        "ORDER_SOURCE": "square",
+        "SQUARE_ACCESS_TOKEN": "token",
+        "SQUARE_LOCATION_ID": "LOCATION-1",
+        "SERVICE_TIMEZONE": "America/New_York",
+        "SQUARE_ORDER_LOOKBACK_DAYS": 60,
+    }
+    first = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        config,
+        square_client=FakeSquareClient(),
+    )
+    second = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        config,
+        square_client=FakeSquareClient(),
+    )
+
+    assert first.reconciled_count == 1
+    assert second.reconciled_count == 0
+    assert load_orders_for_date(database_path, SERVICE_DATE) == (manual,)
+    match = load_manual_payment_matches_for_date(database_path, SERVICE_DATE)[
+        manual.order_id
+    ]
+    assert match.paid_in_square is True
+    assert match.square_order_id == "square-counter-payment"
+    assert match.square_ticket_name == f"Alex / {token.upper().replace(' ', '_')}"
+    assert match.item_discrepancy is False
+
+
+def test_mistyped_manual_payment_name_leaves_square_order_visible(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    manual = Order(
+        order_id="manual-phone-order",
+        customer_name="Alex",
+        pickup_at=datetime(2026, 7, 31, 18, 15),
+        items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+        creation_product="MANUAL_DASHBOARD",
+    )
+    save_manual_order(database_path, SERVICE_DATE, manual)
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+
+        def resolve_location(self):
+            return {"id": "LOCATION-1", "name": "Pizzeria Mari"}
+
+        def search_orders_for_service_date(self, **kwargs):
+            return (
+                {
+                    "id": "square-unmatched-payment",
+                    "state": "COMPLETED",
+                    "created_at": "2026-07-31T22:00:00Z",
+                    "closed_at": "2026-07-31T22:02:00Z",
+                    "ticket_name": "Alex / Mistyped Name",
+                    "line_items": [{"name": "Plain Pie", "quantity": "1"}],
+                },
+            )
+
+        def batch_retrieve_catalog_objects(
+            self, object_ids, *, include_related_objects=False
+        ):
+            return ()
+
+    result = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        {
+            "ORDER_SOURCE": "square",
+            "SQUARE_ACCESS_TOKEN": "token",
+            "SQUARE_LOCATION_ID": "LOCATION-1",
+            "SERVICE_TIMEZONE": "America/New_York",
+        },
+        square_client=FakeSquareClient(),
+    )
+
+    assert result.reconciled_count == 0
+    assert {
+        order.order_id
+        for order in load_orders_for_date(database_path, SERVICE_DATE)
+    } == {"manual-phone-order", "square-unmatched-payment"}
+    match = load_manual_payment_matches_for_date(database_path, SERVICE_DATE)[
+        manual.order_id
+    ]
+    assert match.paid_in_square is False
 
 
 def test_square_client_completes_pickup_fulfillment_and_order() -> None:

@@ -4316,6 +4316,103 @@ html {
     color: white;
 }
 
+.badge--manual-match {
+    border-color: var(--black);
+    background: var(--brand-yellow);
+    color: var(--brand-blue);
+}
+
+.badge--manual-paid {
+    border-color: var(--black);
+    background: var(--brand-green);
+    color: white;
+}
+
+.badge--manual-payment-warning {
+    border-color: var(--black);
+    background: var(--brand-red);
+    color: white;
+}
+
+.manual-payment-details {
+    background: var(--brand-yellow);
+}
+
+.manual-payment-details--paid {
+    border-color: var(--brand-green);
+    background: #eef8ef;
+}
+
+.manual-payment-details p {
+    margin: 7px 0 0;
+}
+
+.manual-payment-state strong {
+    color: var(--brand-green);
+    font-size: 1.05rem;
+    font-weight: 950;
+}
+
+.manual-payment-token {
+    display: block;
+    width: fit-content;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border: 3px solid var(--black);
+    border-radius: 9px;
+    background: white;
+    color: var(--brand-blue);
+    font-size: 1.3rem;
+    font-weight: 950;
+    letter-spacing: 0.02em;
+}
+
+.manual-payment-help {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.manual-payment-link-details {
+    display: grid;
+    gap: 6px;
+    margin: 12px 0 0;
+}
+
+.manual-payment-link-details > div {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    gap: 8px;
+}
+
+.manual-payment-link-details dt {
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.manual-payment-link-details dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-weight: 900;
+}
+
+.manual-payment-discrepancy {
+    display: grid;
+    gap: 3px;
+    margin-top: 12px;
+    padding: 10px;
+    border: 3px solid var(--brand-red);
+    border-radius: 8px;
+    background: white;
+}
+
+.manual-payment-discrepancy strong {
+    color: var(--brand-red);
+}
+
 @media (max-width: 760px) {
     .manual-order-basics,
     .manual-order-item-row {

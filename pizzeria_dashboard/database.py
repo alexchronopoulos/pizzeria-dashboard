@@ -17,9 +17,10 @@ from .customer_history import (
     CustomerSummary,
 )
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
+from .manual_payments import generate_match_token
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -76,6 +77,22 @@ class PrepRecipe:
     body: str
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ManualPaymentMatch:
+    service_date: date
+    manual_order_id: str
+    match_token: str
+    square_order_id: str | None = None
+    square_receipt_number: str | None = None
+    square_ticket_name: str | None = None
+    linked_at: datetime | None = None
+    item_discrepancy: bool = False
+
+    @property
+    def paid_in_square(self) -> bool:
+        return self.square_order_id is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +156,23 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_manual_orders_service_pickup
                 ON manual_orders (service_date, pickup_at);
+
+            CREATE TABLE IF NOT EXISTS manual_order_payment_matches (
+                service_date TEXT NOT NULL,
+                manual_order_id TEXT NOT NULL,
+                match_token TEXT NOT NULL COLLATE NOCASE,
+                square_order_id TEXT UNIQUE,
+                square_receipt_number TEXT,
+                square_ticket_name TEXT,
+                linked_at TEXT,
+                item_discrepancy INTEGER NOT NULL DEFAULT 0
+                    CHECK (item_discrepancy IN (0, 1)),
+                PRIMARY KEY (service_date, manual_order_id),
+                UNIQUE (service_date, match_token)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_manual_payment_matches_service
+                ON manual_order_payment_matches (service_date, match_token);
 
             CREATE TABLE IF NOT EXISTS dashboard_hidden_orders (
                 service_date TEXT NOT NULL,
@@ -909,6 +943,67 @@ def reschedule_cached_order(
                 (source_key, order.order_id),
             )
 
+            if is_manual:
+                payment_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM manual_order_payment_matches
+                    WHERE service_date = ? AND manual_order_id = ?
+                    """,
+                    (source_key, order.order_id),
+                ).fetchone()
+                if payment_row is not None:
+                    match_token = str(payment_row["match_token"])
+                    collision = connection.execute(
+                        """
+                        SELECT 1
+                        FROM manual_order_payment_matches
+                        WHERE service_date = ? AND match_token = ? COLLATE NOCASE
+                          AND manual_order_id != ?
+                        """,
+                        (target_key, match_token, order.order_id),
+                    ).fetchone()
+                    if collision is not None:
+                        used_tokens = tuple(
+                            str(row["match_token"])
+                            for row in connection.execute(
+                                """
+                                SELECT match_token
+                                FROM manual_order_payment_matches
+                                WHERE service_date = ?
+                                """,
+                                (target_key,),
+                            ).fetchall()
+                        )
+                        match_token = generate_match_token(used_tokens)
+                    connection.execute(
+                        """
+                        DELETE FROM manual_order_payment_matches
+                        WHERE (service_date = ? OR service_date = ?)
+                          AND manual_order_id = ?
+                        """,
+                        (source_key, target_key, order.order_id),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO manual_order_payment_matches (
+                            service_date, manual_order_id, match_token,
+                            square_order_id, square_receipt_number,
+                            square_ticket_name, linked_at, item_discrepancy
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            target_key,
+                            order.order_id,
+                            match_token,
+                            payment_row["square_order_id"],
+                            payment_row["square_receipt_number"],
+                            payment_row["square_ticket_name"],
+                            payment_row["linked_at"],
+                            payment_row["item_discrepancy"],
+                        ),
+                    )
+
             note_row = connection.execute(
                 """
                 SELECT note, updated_at
@@ -1048,9 +1143,212 @@ def save_manual_order(
                 now,
             ),
         )
+        _ensure_manual_payment_match_row(
+            connection,
+            service_date.isoformat(),
+            order.order_id,
+        )
         if existing is None or str(existing["source_payload_json"]) != payload:
             _touch_board_content_revision(connection, service_date.isoformat())
     return order
+
+
+def _ensure_manual_payment_match_row(
+    connection: sqlite3.Connection,
+    date_key: str,
+    manual_order_id: str,
+) -> str:
+    existing = connection.execute(
+        """
+        SELECT match_token
+        FROM manual_order_payment_matches
+        WHERE service_date = ? AND manual_order_id = ?
+        """,
+        (date_key, manual_order_id),
+    ).fetchone()
+    if existing is not None:
+        return str(existing["match_token"])
+
+    used_tokens = tuple(
+        str(row["match_token"])
+        for row in connection.execute(
+            """
+            SELECT match_token
+            FROM manual_order_payment_matches
+            WHERE service_date = ?
+            """,
+            (date_key,),
+        ).fetchall()
+    )
+    token = generate_match_token(used_tokens)
+    connection.execute(
+        """
+        INSERT INTO manual_order_payment_matches (
+            service_date, manual_order_id, match_token
+        ) VALUES (?, ?, ?)
+        """,
+        (date_key, manual_order_id, token),
+    )
+    return token
+
+
+def _manual_payment_match_from_row(row: sqlite3.Row) -> ManualPaymentMatch:
+    linked_at = None
+    if row["linked_at"]:
+        try:
+            linked_at = datetime.fromisoformat(str(row["linked_at"]))
+        except ValueError:
+            linked_at = None
+    return ManualPaymentMatch(
+        service_date=date.fromisoformat(str(row["service_date"])),
+        manual_order_id=str(row["manual_order_id"]),
+        match_token=str(row["match_token"]),
+        square_order_id=(
+            str(row["square_order_id"]) if row["square_order_id"] else None
+        ),
+        square_receipt_number=(
+            str(row["square_receipt_number"])
+            if row["square_receipt_number"]
+            else None
+        ),
+        square_ticket_name=(
+            str(row["square_ticket_name"])
+            if row["square_ticket_name"]
+            else None
+        ),
+        linked_at=linked_at,
+        item_discrepancy=bool(row["item_discrepancy"]),
+    )
+
+
+def load_manual_payment_matches_for_date(
+    path: Path,
+    service_date: date,
+) -> dict[str, ManualPaymentMatch]:
+    """Load payment names/statuses, backfilling names for older manual orders."""
+    date_key = service_date.isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        manual_order_ids = tuple(
+            str(row["order_id"])
+            for row in connection.execute(
+                "SELECT order_id FROM manual_orders WHERE service_date = ?",
+                (date_key,),
+            ).fetchall()
+        )
+        for manual_order_id in manual_order_ids:
+            _ensure_manual_payment_match_row(
+                connection,
+                date_key,
+                manual_order_id,
+            )
+        rows = connection.execute(
+            """
+            SELECT payment.*
+            FROM manual_order_payment_matches AS payment
+            INNER JOIN manual_orders AS manual
+                ON manual.service_date = payment.service_date
+               AND manual.order_id = payment.manual_order_id
+            WHERE payment.service_date = ?
+            ORDER BY payment.manual_order_id
+            """,
+            (date_key,),
+        ).fetchall()
+    return {
+        match.manual_order_id: match
+        for match in (_manual_payment_match_from_row(row) for row in rows)
+    }
+
+
+def load_linked_manual_square_order_ids(
+    path: Path,
+    service_date: date,
+) -> set[str]:
+    """Return Square orders already represented by a linked manual order.
+
+    A paid manual order can later be moved to another production date. Square's
+    counter order still belongs to the date when payment was taken, so suppress
+    linked Square IDs globally rather than letting that move resurrect a
+    duplicate on the original board.
+    """
+    del service_date
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT square_order_id
+            FROM manual_order_payment_matches
+            WHERE square_order_id IS NOT NULL
+            """
+        ).fetchall()
+    return {str(row["square_order_id"]) for row in rows}
+
+
+def link_manual_order_square_payment(
+    path: Path,
+    service_date: date,
+    manual_order_id: str,
+    *,
+    square_order_id: str,
+    square_receipt_number: str | None,
+    square_ticket_name: str | None,
+    item_discrepancy: bool,
+) -> bool:
+    """Attach one completed Square walk-in to one pending manual order."""
+    date_key = service_date.isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT square_order_id
+            FROM manual_order_payment_matches
+            WHERE service_date = ? AND manual_order_id = ?
+            """,
+            (date_key, manual_order_id),
+        ).fetchone()
+        if row is None:
+            return False
+        existing_square_order_id = (
+            str(row["square_order_id"]) if row["square_order_id"] else None
+        )
+        if existing_square_order_id not in {None, square_order_id}:
+            return False
+        claimed = connection.execute(
+            """
+            SELECT service_date, manual_order_id
+            FROM manual_order_payment_matches
+            WHERE square_order_id = ?
+            """,
+            (square_order_id,),
+        ).fetchone()
+        if claimed is not None and (
+            str(claimed["service_date"]) != date_key
+            or str(claimed["manual_order_id"]) != manual_order_id
+        ):
+            return False
+
+        linked_at = _utc_now().isoformat()
+        connection.execute(
+            """
+            UPDATE manual_order_payment_matches
+            SET square_order_id = ?,
+                square_receipt_number = ?,
+                square_ticket_name = ?,
+                linked_at = ?,
+                item_discrepancy = ?
+            WHERE service_date = ? AND manual_order_id = ?
+            """,
+            (
+                square_order_id,
+                square_receipt_number,
+                square_ticket_name,
+                linked_at,
+                int(item_discrepancy),
+                date_key,
+                manual_order_id,
+            ),
+        )
+        _touch_board_content_revision(connection, date_key)
+    return True
 
 
 def load_manual_orders_for_date(
@@ -1092,6 +1390,11 @@ def load_orders_for_date(path: Path, service_date: date) -> tuple[Order, ...]:
                   WHERE hidden.service_date = o.service_date
                     AND hidden.order_id = o.order_id
               )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM manual_order_payment_matches AS payment
+                  WHERE payment.square_order_id = o.order_id
+              )
             UNION ALL
             SELECT pickup_at, order_id, source_payload_json
             FROM manual_orders
@@ -1127,6 +1430,11 @@ def load_order_for_date(
                   FROM dashboard_hidden_orders AS hidden
                   WHERE hidden.service_date = o.service_date
                     AND hidden.order_id = o.order_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM manual_order_payment_matches AS payment
+                  WHERE payment.square_order_id = o.order_id
               )
             UNION ALL
             SELECT source_payload_json
@@ -1204,10 +1512,26 @@ def remove_order_from_dashboard(
             pass
 
         if manual_row is not None:
+            payment_row = connection.execute(
+                """
+                SELECT square_order_id
+                FROM manual_order_payment_matches
+                WHERE service_date = ? AND manual_order_id = ?
+                """,
+                (date_key, order_id),
+            ).fetchone()
             connection.execute(
                 "DELETE FROM manual_orders WHERE service_date = ? AND order_id = ?",
                 (date_key, order_id),
             )
+            if payment_row is None or payment_row["square_order_id"] is None:
+                connection.execute(
+                    """
+                    DELETE FROM manual_order_payment_matches
+                    WHERE service_date = ? AND manual_order_id = ?
+                    """,
+                    (date_key, order_id),
+                )
             result = "manual"
         else:
             connection.execute(

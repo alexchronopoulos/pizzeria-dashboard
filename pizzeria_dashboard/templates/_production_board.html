@@ -9,6 +9,7 @@
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 {% set is_unpaid = order.is_paid is sameas false or (order.is_pmoc_order and order.is_paid is not sameas true) %}
 {% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
+{% set manual_payment = manual_payment_matches.get(order.order_id) if manual_payment_matches and order.is_manual else none %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
@@ -63,6 +64,14 @@
         <div class="order-badges">
             {% if order.is_manual %}
             <span class="badge badge--manual" title="Entered directly in the dashboard; no Square order exists">Manual</span>
+            {% if manual_payment and manual_payment.paid_in_square %}
+            <span class="badge badge--manual-paid" title="Matched automatically from Square Ticket Name {{ manual_payment.match_token }}">Paid in Square</span>
+            {% if manual_payment.item_discrepancy %}
+            <span class="badge badge--manual-payment-warning" title="The items charged in Square differ from this production order">Items differ</span>
+            {% endif %}
+            {% elif manual_payment %}
+            <span class="badge badge--manual-match" title="Use this exact Ticket Name when collecting payment in Square">Ticket: {{ manual_payment.match_token }}</span>
+            {% endif %}
             {% endif %}
             {% if order.is_walk_in %}
             <span class="badge badge--walk-in">{% if unscheduled %}Unscheduled {% endif %}Walk-in</span>

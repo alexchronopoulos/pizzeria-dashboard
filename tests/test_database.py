@@ -9,7 +9,9 @@ from pizzeria_dashboard.database import (
     delete_dashboard_auth_session,
     delete_order_slot_assignment,
     initialize_database,
+    link_manual_order_square_payment,
     load_board_content_revision,
+    load_manual_payment_matches_for_date,
     load_order_ready_states,
     load_order_slot_assignment_overrides,
     load_order_slot_assignments,
@@ -72,6 +74,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
     assert {
         "orders",
         "manual_orders",
+        "manual_order_payment_matches",
         "dashboard_hidden_orders",
         "service_states",
         "sync_runs",
@@ -922,4 +925,76 @@ def test_manual_order_is_deleted_locally_when_removed_from_dashboard(tmp_path: P
 
     assert remove_order_from_dashboard(database_path, service_date, manual.order_id) == "manual"
     assert load_order_for_date(database_path, service_date, manual.order_id) is None
+    assert load_orders_for_date(database_path, service_date) == ()
+
+
+def test_manual_order_gets_unique_memorable_payment_name(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 14)
+    initialize_database(database_path)
+    for index in range(2):
+        save_manual_order(
+            database_path,
+            service_date,
+            Order(
+                order_id=f"manual-{index}",
+                customer_name=f"Phone Order {index}",
+                pickup_at=datetime(2026, 8, 14, 18, 15 + index),
+                items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+                creation_product="MANUAL_DASHBOARD",
+            ),
+        )
+
+    matches = load_manual_payment_matches_for_date(database_path, service_date)
+    tokens = {match.match_token for match in matches.values()}
+
+    assert set(matches) == {"manual-0", "manual-1"}
+    assert len(tokens) == 2
+    assert all(len(token.split()) == 2 for token in tokens)
+
+
+def test_linked_square_payment_is_suppressed_from_board_cache(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 14)
+    initialize_database(database_path)
+    manual = Order(
+        order_id="manual-phone-order",
+        customer_name="Phone Order",
+        pickup_at=datetime(2026, 8, 14, 18, 15),
+        items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+        creation_product="MANUAL_DASHBOARD",
+    )
+    square = Order(
+        order_id="square-counter-payment",
+        customer_name="Toasty Pigeon",
+        pickup_at=datetime(2026, 8, 14, 18, 0),
+        items=(Item(name="Plain Pie", quantity=1, category="pizza"),),
+        square_order_id="square-counter-payment",
+        square_order_state="COMPLETED",
+        is_walk_in=True,
+        ticket_name="Toasty Pigeon",
+    )
+    save_manual_order(database_path, service_date, manual)
+    replace_orders_for_date(database_path, service_date, (square,), source="square")
+
+    assert link_manual_order_square_payment(
+        database_path,
+        service_date,
+        manual.order_id,
+        square_order_id="square-counter-payment",
+        square_receipt_number="R123",
+        square_ticket_name="Toasty Pigeon",
+        item_discrepancy=False,
+    )
+
+    assert load_orders_for_date(database_path, service_date) == (manual,)
+    match = load_manual_payment_matches_for_date(database_path, service_date)[
+        manual.order_id
+    ]
+    assert match.paid_in_square is True
+    assert match.square_receipt_number == "R123"
+
+    # The linked row remains as a tombstone, so a refresh cannot resurrect the
+    # paid Square duplicate after the manual production card is removed.
+    assert remove_order_from_dashboard(database_path, service_date, manual.order_id) == "manual"
     assert load_orders_for_date(database_path, service_date) == ()

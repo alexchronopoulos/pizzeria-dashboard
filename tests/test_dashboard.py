@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 
 from pizzeria_dashboard import create_app
 from pizzeria_dashboard.database import (
+    link_manual_order_square_payment,
     load_app_metadata,
+    load_manual_payment_matches_for_date,
     load_order_internal_note,
     load_order_ready_states,
     load_orders_for_date,
@@ -2861,6 +2863,32 @@ def test_manual_order_can_be_added_without_square_and_appears_on_board(
     assert board.status_code == 200
     assert "Phone Alex" in html
     assert ">Manual<" in html
+    match = load_manual_payment_matches_for_date(database_path, date(2026, 8, 14))[
+        manual.order_id
+    ]
+    assert f"Ticket: {match.match_token}" in html
+    details = client.get(
+        f"/order-details?date=2026-08-14&order_id={manual.order_id}"
+    ).get_data(as_text=True)
+    assert match.match_token in details
+    assert "Square’s Ticket Name field" in details
+    assert link_manual_order_square_payment(
+        database_path,
+        date(2026, 8, 14),
+        manual.order_id,
+        square_order_id="square-paid-manual",
+        square_receipt_number="R123",
+        square_ticket_name=match.match_token,
+        item_discrepancy=False,
+    )
+    paid_board = client.get("/?date=2026-08-14").get_data(as_text=True)
+    assert "Paid in Square" in paid_board
+    paid_details = client.get(
+        f"/order-details?date=2026-08-14&order_id={manual.order_id}"
+    ).get_data(as_text=True)
+    assert "square-paid-manual" in paid_details
+    assert "R123" in paid_details
+    assert "linked Square payment is unchanged" in paid_details
     assert "1× Plain Pie" in html
     assert "1× Pizzeria Mari Tee" in html
     assert "2× Drinks" in html
@@ -3112,7 +3140,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.43' in html
+    assert 'style.css?v=0.5.44' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
