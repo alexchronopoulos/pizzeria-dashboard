@@ -635,10 +635,14 @@
                 throw new Error(result.error || "The pickup time could not be saved.");
             }
             if (status) {
-                status.textContent = result.overridden ? "Adjusted" : "Original time restored";
+                status.textContent = result.square_updated ? "Updated in Square" : "Saved";
             }
             window.PizzeriaDashboardViewport?.remember();
-            window.location.reload();
+            if (result.dashboard_url) {
+                window.location.assign(result.dashboard_url);
+            } else {
+                window.location.reload();
+            }
         } catch (error) {
             submitButton.disabled = false;
             if (status) {

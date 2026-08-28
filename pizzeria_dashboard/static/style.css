@@ -2535,6 +2535,7 @@ h2 {
 .walk-in-slot-form input[type="time"],
 .walk-in-slot-form button,
 .scheduled-slot-form select,
+.scheduled-slot-form input[type="datetime-local"],
 .scheduled-slot-form button {
     min-height: 42px;
     border: 3px solid var(--black);
@@ -2545,7 +2546,8 @@ h2 {
 
 .walk-in-slot-form select,
 .walk-in-slot-form input[type="time"],
-.scheduled-slot-form select {
+.scheduled-slot-form select,
+.scheduled-slot-form input[type="datetime-local"] {
     width: 100%;
     padding: 7px 10px;
     background: white;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, Mapping, Sequence
 from uuid import uuid4
 from urllib.error import HTTPError, URLError
@@ -293,6 +294,90 @@ class SquareClient:
             {
                 "idempotency_key": str(uuid4()),
                 "order": sparse_order,
+            },
+        )
+        updated = response.get("order")
+        if not isinstance(updated, Mapping):
+            raise SquareAPIError("Square did not return the updated order document.")
+        return updated
+
+    def update_pickup_time(
+        self,
+        order_id: str,
+        *,
+        fulfillment_uid: str,
+        pickup_at: datetime,
+    ) -> Mapping[str, object]:
+        """Update one existing Square pickup fulfillment's scheduled time.
+
+        The current order is retrieved immediately before the sparse update so
+        the request always uses Square's latest version. ``pickup_at`` must be
+        timezone-aware because Square expects an RFC 3339 timestamp that
+        represents one unambiguous instant.
+        """
+        if pickup_at.tzinfo is None or pickup_at.utcoffset() is None:
+            raise SquareAPIError(
+                "The Square pickup time must include the service timezone."
+            )
+
+        current = self.retrieve_order(order_id)
+        order_state = str(current.get("state", "")).upper()
+        if order_state != "OPEN":
+            raise SquareAPIError(
+                f"Square order {order_id} is {order_state or 'not open'} and its pickup time cannot be changed."
+            )
+
+        raw_version = current.get("version")
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError) as exc:
+            raise SquareAPIError(
+                "Square did not provide an order version. Orders without a version "
+                "cannot be updated through the Orders API."
+            ) from exc
+
+        raw_fulfillments = current.get("fulfillments", [])
+        fulfillments = (
+            [value for value in raw_fulfillments if isinstance(value, Mapping)]
+            if isinstance(raw_fulfillments, list)
+            else []
+        )
+        target: Mapping[str, object] | None = None
+        for fulfillment in fulfillments:
+            if str(fulfillment.get("uid", "")).strip() == fulfillment_uid:
+                target = fulfillment
+                break
+        if target is None:
+            raise SquareAPIError(
+                "The pickup fulfillment is no longer present on the Square order. "
+                "Refresh the dashboard and try again."
+            )
+        if str(target.get("type", "")).upper() != "PICKUP":
+            raise SquareAPIError(
+                "The selected Square fulfillment is not a pickup fulfillment."
+            )
+        fulfillment_state = str(target.get("state", "PROPOSED")).upper()
+        if fulfillment_state in {"COMPLETED", "CANCELED", "FAILED"}:
+            raise SquareAPIError(
+                f"The Square pickup fulfillment is {fulfillment_state.lower()} and its time cannot be changed."
+            )
+
+        response = self._request(
+            "PUT",
+            f"/v2/orders/{quote(order_id, safe='')}",
+            {
+                "idempotency_key": str(uuid4()),
+                "order": {
+                    "version": version,
+                    "fulfillments": [
+                        {
+                            "uid": fulfillment_uid,
+                            "pickup_details": {
+                                "pickup_at": pickup_at.isoformat(timespec="seconds")
+                            },
+                        }
+                    ],
+                },
             },
         )
         updated = response.get("order")

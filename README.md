@@ -30,6 +30,7 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Shows new walk-ins in an **Unscheduled** lane using Square ticket names when available.
 - Parses configured pickup times from Ticket Names such as `Sam 7:30` or `5:45 Peter` and automatically places the walk-in into the matching service slot.
 - Supports dragging walk-ins into configured service slots or back to the Unscheduled lane.
+- Lets staff reschedule scheduled orders to any future date and minute; Square-backed pickup orders are updated in Square before the local production board moves them.
 - Adds a pickup-slot selector to the order-details modal for quick reassignment when the destination slot is far down the page.
 - Lets scheduled pickup orders be moved to another configured dashboard slot while retaining a one-click return to the original Square time.
 - Shows each destination slot's current pizza load before a scheduled order is moved and marks adjusted order cards with their original pickup time.

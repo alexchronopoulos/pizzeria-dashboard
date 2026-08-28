@@ -817,6 +817,193 @@ def merge_orders_for_date(
     )
 
 
+def reschedule_cached_order(
+    path: Path,
+    source_service_date: date,
+    target_service_date: date,
+    order: Order,
+) -> None:
+    """Move a cached order to its new service date in one local transaction.
+
+    Square is updated before this function is called. The cache write, legacy
+    pickup-override cleanup, and any cross-date move are kept atomic so the
+    production board cannot show a partial local result.
+    """
+    source_key = source_service_date.isoformat()
+    target_key = target_service_date.isoformat()
+    payload = json.dumps(
+        order_to_payload(order), separators=(",", ":"), sort_keys=True
+    )
+    changed_at = _utc_now().isoformat()
+    is_manual = order.is_manual
+    table = "manual_orders" if is_manual else "orders"
+
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            f"SELECT * FROM {table} WHERE service_date = ? AND order_id = ?",
+            (source_key, order.order_id),
+        ).fetchone()
+        if existing is None:
+            raise ValueError("The cached order no longer exists.")
+
+        if is_manual:
+            connection.execute(
+                """
+                INSERT INTO manual_orders (
+                    order_id, service_date, pickup_at, customer_name,
+                    source_payload_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id, service_date) DO UPDATE SET
+                    pickup_at = excluded.pickup_at,
+                    customer_name = excluded.customer_name,
+                    source_payload_json = excluded.source_payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    order.order_id,
+                    target_key,
+                    order.pickup_at.isoformat(),
+                    order.customer_name,
+                    payload,
+                    str(existing["created_at"]),
+                    changed_at,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO orders (
+                    order_id, service_date, pickup_at, customer_name, released,
+                    source_payload_json, metadata_json, source_updated_at, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id, service_date) DO UPDATE SET
+                    pickup_at = excluded.pickup_at,
+                    customer_name = excluded.customer_name,
+                    released = excluded.released,
+                    source_payload_json = excluded.source_payload_json,
+                    metadata_json = excluded.metadata_json,
+                    source_updated_at = excluded.source_updated_at,
+                    cached_at = excluded.cached_at
+                """,
+                (
+                    order.order_id,
+                    target_key,
+                    order.pickup_at.isoformat(),
+                    order.customer_name,
+                    int(order.released),
+                    payload,
+                    str(existing["metadata_json"]),
+                    (
+                        order.source_updated_at.isoformat()
+                        if order.source_updated_at
+                        else None
+                    ),
+                    changed_at,
+                ),
+            )
+
+        if source_key != target_key:
+            connection.execute(
+                f"DELETE FROM {table} WHERE service_date = ? AND order_id = ?",
+                (source_key, order.order_id),
+            )
+
+            note_row = connection.execute(
+                """
+                SELECT note, updated_at
+                FROM order_internal_notes
+                WHERE service_date = ? AND order_id = ?
+                """,
+                (source_key, order.order_id),
+            ).fetchone()
+            if note_row is not None:
+                connection.execute(
+                    """
+                    INSERT INTO order_internal_notes (
+                        service_date, order_id, note, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(service_date, order_id) DO UPDATE SET
+                        note = excluded.note,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        target_key,
+                        order.order_id,
+                        str(note_row["note"]),
+                        str(note_row["updated_at"]),
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM order_internal_notes
+                    WHERE service_date = ? AND order_id = ?
+                    """,
+                    (source_key, order.order_id),
+                )
+
+            # A cross-date reschedule represents a new production day. Do not
+            # carry boxed or running/done oven state into that day.
+            connection.execute(
+                """
+                DELETE FROM order_ready_states
+                WHERE order_id = ? AND service_date IN (?, ?)
+                """,
+                (order.order_id, source_key, target_key),
+            )
+            production_order_key = order.square_order_id or order.order_id
+            connection.execute(
+                """
+                DELETE FROM pie_production_states
+                WHERE service_date = ? AND pie_key LIKE ?
+                """,
+                (source_key, f"{source_key}|{production_order_key}|%"),
+            )
+
+        connection.execute(
+            """
+            DELETE FROM order_slot_assignments
+            WHERE order_id = ? AND service_date IN (?, ?)
+            """,
+            (order.order_id, source_key, target_key),
+        )
+        connection.execute(
+            """
+            DELETE FROM dashboard_hidden_orders
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (target_key, order.order_id),
+        )
+
+        if not is_manual:
+            for date_key in dict.fromkeys((source_key, target_key)):
+                count_row = connection.execute(
+                    "SELECT COUNT(*) AS total FROM orders WHERE service_date = ?",
+                    (date_key,),
+                ).fetchone()
+                order_count = int(count_row["total"]) if count_row else 0
+                source_row = connection.execute(
+                    "SELECT source FROM sync_runs WHERE service_date = ?",
+                    (date_key,),
+                ).fetchone()
+                sync_source = str(source_row["source"]) if source_row else "square"
+                connection.execute(
+                    """
+                    INSERT INTO sync_runs (service_date, source, synced_at, order_count)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(service_date) DO UPDATE SET
+                        source = excluded.source,
+                        synced_at = excluded.synced_at,
+                        order_count = excluded.order_count
+                    """,
+                    (date_key, sync_source, changed_at, order_count),
+                )
+
+        _touch_board_content_revision(connection, source_key)
+        if target_key != source_key:
+            _touch_board_content_revision(connection, target_key)
+
+
 def save_manual_order(
     path: Path, service_date: date, order: Order
 ) -> Order:

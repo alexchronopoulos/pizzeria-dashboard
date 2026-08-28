@@ -66,10 +66,12 @@
           <h3>Adjust pickup time</h3>
           <p>
             {% if is_manual %}
-            This moves the dashboard-only order to another configured service slot.
+            Choose any future date and time for this dashboard-only order.
+            {% elif order.square_order_id %}
+            This updates the pickup fulfillment in Square and moves the order on the
+            production dashboard.
             {% else %}
-            This moves the order on the production dashboard only. Square keeps the original
-            {{ original_pickup_at.strftime('%-I:%M %p') }} pickup time.
+            Choose any future date and time for this locally cached order.
             {% endif %}
           </p>
         </div>
@@ -82,26 +84,19 @@
         <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
         <input type="hidden" name="order_id" value="{{ order.order_id }}">
         <label>
-          <span>Dashboard pickup time</span>
-          <select name="pickup_at">
-            <option value="original"{% if not scheduled_pickup_override %} selected{% endif %}>
-              {% if is_manual %}Original manual time{% else %}Original Square time{% endif %} — {{ original_pickup_at.strftime('%-I:%M %p') }}
-            </option>
-            {% if scheduled_pickup_override and scheduled_pickup_override not in pickup_slots %}
-            <option value="{{ scheduled_pickup_override.isoformat() }}" selected>
-              Current adjusted time — {{ scheduled_pickup_override.strftime('%-I:%M %p') }} (past)
-            </option>
-            {% endif %}
-            {% for slot in pickup_slots %}
-            {% set slot_pizzas = pickup_slot_loads.get(slot, 0) %}
-            <option
-              value="{{ slot.isoformat() }}"
-              {% if scheduled_pickup_override and scheduled_pickup_override.strftime('%Y-%m-%d %H:%M') == slot.strftime('%Y-%m-%d %H:%M') %} selected{% endif %}
-            >{{ slot.strftime('%-I:%M %p') }} — {{ slot_pizzas }}/{{ pizza_capacity_per_window }} pizzas</option>
-            {% endfor %}
-          </select>
+          <span>Pickup date and time</span>
+          <input
+            type="datetime-local"
+            name="pickup_at"
+            value="{{ effective_pickup_at.strftime('%Y-%m-%dT%H:%M') }}"
+            min="{{ current_service_time.strftime('%Y-%m-%dT%H:%M') }}"
+            step="60"
+            required
+          >
         </label>
-        <button type="submit">Save pickup time</button>
+        <button type="submit">
+          {% if order.square_order_id %}Update Square &amp; dashboard{% else %}Save pickup time{% endif %}
+        </button>
         <span class="scheduled-slot-status" data-scheduled-pickup-time-status aria-live="polite"></span>
       </form>
     </section>

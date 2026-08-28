@@ -45,6 +45,7 @@ from .database import (
     prune_pie_production_states,
     reorder_prep_tasks,
     remove_order_from_dashboard,
+    reschedule_cached_order,
     save_app_metadata,
     save_manual_order,
     save_order_internal_note,
@@ -1178,7 +1179,7 @@ def update_order_internal_note():
 
 @blueprint.post("/scheduled-pickup-time")
 def update_scheduled_pickup_time():
-    """Save or clear a dashboard-only pickup-time override."""
+    """Reschedule an order locally and in Square when it is Square-backed."""
     payload = request.get_json(silent=True)
     if not isinstance(payload, Mapping):
         return jsonify(ok=False, error="Expected a JSON request."), 400
@@ -1210,56 +1211,104 @@ def update_scheduled_pickup_time():
         ), 400
 
     raw_pickup_at = str(payload.get("pickup_at", "")).strip()
-    if raw_pickup_at == "original":
-        delete_order_slot_assignment(database_path, selected_date, order_id)
-        return jsonify(
-            ok=True,
-            overridden=False,
-            pickup_at=_local_service_time(order.pickup_at).isoformat(),
-            board_content_revision=load_board_content_revision(
-                database_path, selected_date
-            ),
-        )
-
     if not raw_pickup_at:
-        return jsonify(ok=False, error="Choose a pickup time."), 400
+        return jsonify(ok=False, error="Choose a pickup date and time."), 400
     try:
-        pickup_at = _local_service_time(datetime.fromisoformat(raw_pickup_at))
+        pickup_at = datetime.fromisoformat(raw_pickup_at)
     except ValueError:
-        return jsonify(ok=False, error="The pickup time is invalid."), 400
-    if pickup_at.date() != selected_date:
-        return jsonify(ok=False, error="The pickup time is on another day."), 400
-    current_service_time = _now().replace(tzinfo=None)
-    if selected_date == current_service_time.date() and pickup_at < current_service_time:
-        return jsonify(ok=False, error="Choose a pickup time that has not passed."), 400
+        return jsonify(ok=False, error="The pickup date or time is invalid."), 400
+    if pickup_at.tzinfo is not None:
+        pickup_at = _local_service_time(pickup_at)
 
-    configuration = load_configuration(database_path)
-    allowed_slots = {
-        _local_service_time(value)
-        for value in configuration.pickup_times(selected_date)
-    }
-    if pickup_at not in allowed_slots:
+    service_timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    square_pickup_at = pickup_at.replace(tzinfo=service_timezone)
+    # Reject nonexistent local wall times during the spring DST transition.
+    if (
+        square_pickup_at.astimezone(UTC)
+        .astimezone(service_timezone)
+        .replace(tzinfo=None)
+        != pickup_at
+    ):
         return jsonify(
             ok=False,
-            error="Choose one of the configured service slots.",
+            error="That local time does not exist because of daylight saving time.",
         ), 400
 
-    original_pickup_at = _local_service_time(order.pickup_at)
-    if pickup_at == original_pickup_at:
-        delete_order_slot_assignment(database_path, selected_date, order_id)
-        overridden = False
-    else:
-        save_order_slot_assignment(
-            database_path, selected_date, order_id, pickup_at
+    current_service_time = _now().replace(tzinfo=None)
+    if pickup_at < current_service_time:
+        return jsonify(ok=False, error="Choose a pickup time that has not passed."), 400
+
+    square_updated = False
+    updated_raw: Mapping[str, object] | None = None
+    if order.square_order_id:
+        if not order.fulfillment_uid:
+            return jsonify(
+                ok=False,
+                error=(
+                    "This order does not identify a pickup fulfillment. Run a full "
+                    "refresh and try again."
+                ),
+            ), 400
+        try:
+            client = SquareClient(SquareSettings.from_mapping(current_app.config))
+            updated_raw = client.update_pickup_time(
+                order.square_order_id,
+                fulfillment_uid=order.fulfillment_uid,
+                pickup_at=square_pickup_at,
+            )
+            square_updated = True
+        except SquareAPIError as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        except SquareError as exc:
+            return jsonify(ok=False, error=str(exc)), 502
+
+    raw_version = updated_raw.get("version") if updated_raw is not None else None
+    try:
+        square_version = int(raw_version)
+    except (TypeError, ValueError):
+        square_version = order.square_version
+    fulfillment_state = (
+        _updated_fulfillment_state(updated_raw, order.fulfillment_uid)
+        if updated_raw is not None
+        else order.fulfillment_state
+    ) or order.fulfillment_state
+    square_order_state = (
+        str(updated_raw.get("state", "")).upper() or order.square_order_state
+        if updated_raw is not None
+        else order.square_order_state
+    )
+    updated_order = replace(
+        order,
+        pickup_at=(square_pickup_at if order.square_order_id else pickup_at),
+        square_version=square_version,
+        fulfillment_state=fulfillment_state,
+        square_order_state=square_order_state,
+        source_updated_at=(_now() if square_updated else order.source_updated_at),
+    )
+    destination_date = pickup_at.date()
+    try:
+        reschedule_cached_order(
+            database_path,
+            selected_date,
+            destination_date,
+            updated_order,
         )
-        overridden = True
+    except ValueError:
+        return jsonify(
+            ok=False,
+            error="The cached order no longer exists. Refresh the dashboard and try again.",
+        ), 404
 
     return jsonify(
         ok=True,
-        overridden=overridden,
+        square_updated=square_updated,
         pickup_at=pickup_at.isoformat(),
+        service_date=destination_date.isoformat(),
+        dashboard_url=url_for(
+            "dashboard.index", date=destination_date.isoformat()
+        ),
         board_content_revision=load_board_content_revision(
-            database_path, selected_date
+            database_path, destination_date
         ),
     )
 

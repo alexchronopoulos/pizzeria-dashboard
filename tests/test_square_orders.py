@@ -1621,6 +1621,104 @@ def test_square_client_completes_pickup_fulfillment_and_order() -> None:
     assert calls[1][1].endswith("/v2/orders/order-1")
 
 
+def test_square_client_updates_pickup_time_with_latest_order_version() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+    requested_pickup_at = datetime.fromisoformat("2026-08-01T14:07:00-04:00")
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        if method == "GET":
+            return {
+                "order": {
+                    "id": "order-1",
+                    "state": "OPEN",
+                    "version": 12,
+                    "fulfillments": [
+                        {
+                            "uid": "pickup-1",
+                            "type": "PICKUP",
+                            "state": "PROPOSED",
+                            "pickup_details": {
+                                "pickup_at": "2026-07-31T20:00:00Z"
+                            },
+                        }
+                    ],
+                }
+            }
+        assert payload is not None
+        assert payload["order"] == {
+            "version": 12,
+            "fulfillments": [
+                {
+                    "uid": "pickup-1",
+                    "pickup_details": {
+                        "pickup_at": "2026-08-01T14:07:00-04:00"
+                    },
+                }
+            ],
+        }
+        assert payload.get("idempotency_key")
+        return {
+            "order": {
+                "id": "order-1",
+                "state": "OPEN",
+                "version": 13,
+                "fulfillments": [
+                    {
+                        "uid": "pickup-1",
+                        "type": "PICKUP",
+                        "state": "PROPOSED",
+                        "pickup_details": {
+                            "pickup_at": "2026-08-01T18:07:00Z"
+                        },
+                    }
+                ],
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    updated = client.update_pickup_time(
+        "order-1",
+        fulfillment_uid="pickup-1",
+        pickup_at=requested_pickup_at,
+    )
+
+    assert updated["version"] == 13
+    assert [call[0] for call in calls] == ["GET", "PUT"]
+    assert calls[1][1].endswith("/v2/orders/order-1")
+
+
+def test_square_client_refuses_pickup_time_change_for_terminal_fulfillment() -> None:
+    def requester(method, url, headers, payload, timeout):
+        assert method == "GET"
+        return {
+            "order": {
+                "id": "order-1",
+                "state": "OPEN",
+                "version": 12,
+                "fulfillments": [
+                    {
+                        "uid": "pickup-1",
+                        "type": "PICKUP",
+                        "state": "COMPLETED",
+                    }
+                ],
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    with pytest.raises(SquareAPIError, match="completed"):
+        client.update_pickup_time(
+            "order-1",
+            fulfillment_uid="pickup-1",
+            pickup_at=datetime.fromisoformat("2026-08-01T14:07:00-04:00"),
+        )
+
+
 
 def test_square_client_cancels_unpaid_open_order_and_fulfillments() -> None:
     calls: list[tuple[str, str, Mapping[str, object] | None]] = []
