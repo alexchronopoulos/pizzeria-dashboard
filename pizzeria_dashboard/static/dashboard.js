@@ -191,7 +191,6 @@
 
     toggle.checked = savedPreference();
     applyPrepView();
-    window.PizzeriaDashboardViewport?.restoreSaved();
 
     toggle.addEventListener("change", () => {
         savePreference(toggle.checked);
@@ -2802,4 +2801,12 @@
     button.addEventListener("click", () => {
         window.scrollTo({top: 0, left: 0, behavior: "smooth"});
     });
+})();
+
+// Restore a pre-refresh viewport only after every dashboard controller has
+// performed its initial render. In particular, the fixed toast and timer rails
+// are now populated before the anchor is measured, so a new-order reload cannot
+// apply a second visible correction after the production board appears.
+(() => {
+    window.PizzeriaDashboardViewport?.restoreSaved();
 })();
