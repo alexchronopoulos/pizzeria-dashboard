@@ -3112,29 +3112,6 @@ def test_done_timer_rail_can_be_dismissed_per_device() -> None:
     assert "window.localStorage" in javascript
 
 
-def test_notification_and_timer_rails_do_not_shift_the_service_viewport() -> None:
-    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
-    css = Path("pizzeria_dashboard/static/style.css").read_text()
-
-    # The saved anchor is restored once, after the timer and toast controllers
-    # complete their initial render, rather than partway through initialization.
-    assert javascript.count("window.PizzeriaDashboardViewport?.restoreSaved();") == 1
-    assert javascript.rfind("window.PizzeriaDashboardViewport?.restoreSaved();") > javascript.rfind(
-        "renderAll();"
-    )
-
-    # A fixed top/bottom lane keeps existing timer cards stationary as alerts
-    # are added or removed. Clamped overflow cannot enlarge the page scroll area.
-    timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
-    assert "top: 50%;" in timer_rules
-    assert "bottom: 168px;" in timer_rules
-    assert "align-content: start;" in timer_rules
-    assert "overflow-y: auto;" in timer_rules
-    assert "translateY" not in timer_rules
-    assert "scrollbar-gutter: stable;" in css
-    assert "html:has(.active-timer-rail:not([hidden])) .new-order-toast-region" in css
-
-
 def test_ipad_landscape_toolbars_do_not_depend_on_orientation_media_feature() -> None:
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
@@ -3163,7 +3140,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.45' in html
+    assert 'style.css?v=0.5.44' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -3181,7 +3158,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.35' in html
+    assert 'dashboard.js?v=0.5.34' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html

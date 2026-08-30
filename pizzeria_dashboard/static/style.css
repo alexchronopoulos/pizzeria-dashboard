@@ -27,7 +27,6 @@
 
 html {
     font-size: 17px;
-    scrollbar-gutter: stable;
 }
 
 body {
@@ -3760,7 +3759,6 @@ h2 {
     display: grid;
     width: min(380px, calc(100vw - 36px));
     gap: 10px;
-    contain: layout;
     pointer-events: none;
 }
 
@@ -4553,17 +4551,12 @@ html {
     position: fixed;
     top: 50%;
     right: 14px;
-    bottom: 168px;
     z-index: 70;
     display: grid;
     width: 178px;
-    min-height: 0;
+    max-height: calc(100vh - 220px);
     gap: 8px;
-    align-content: start;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    contain: layout;
+    transform: translateY(-50%);
     pointer-events: none;
 }
 
@@ -4643,10 +4636,9 @@ html {
 
 @media (max-width: 820px) {
     .active-timer-rail {
-        top: 46%;
         right: 8px;
-        bottom: 130px;
         width: 158px;
+        max-height: calc(100vh - 205px);
         gap: 6px;
     }
 
@@ -4661,13 +4653,6 @@ html {
     .jump-to-top {
         left: 10px;
         bottom: 10px;
-    }
-}
-
-@media (min-width: 821px) {
-    /* Keep transient new-order cards clear of the stable timer lane. */
-    html:has(.active-timer-rail:not([hidden])) .new-order-toast-region {
-        right: 210px;
     }
 }
 
