@@ -513,7 +513,8 @@
                 throw new Error(result.error || "The VIP status could not be saved.");
             }
             if (status) {
-                status.textContent = result.vip ? "VIP saved" : "VIP removed";
+                const suffix = result.storage === "square" ? " in Square" : "";
+                status.textContent = result.vip ? `VIP saved${suffix}` : `VIP removed${suffix}`;
             }
             window.PizzeriaDashboardViewport?.remember();
             window.location.reload();
@@ -584,6 +585,79 @@
             }
             if (status) {
                 status.textContent = result.note ? "Saved" : "Cleared";
+            }
+            window.PizzeriaDashboardViewport?.remember();
+            window.location.reload();
+        } catch (error) {
+            submitButton.disabled = false;
+            if (clearButton) {
+                clearButton.disabled = false;
+            }
+            if (status) {
+                status.textContent = String(error);
+            }
+        }
+    });
+
+    document.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const clearButton = target?.closest("[data-customer-note-clear]");
+        if (!clearButton || !body.contains(clearButton)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const form = clearButton.closest("[data-customer-note-form]");
+        const textarea = form?.querySelector('textarea[name="note"]');
+        if (!form || !textarea) {
+            return;
+        }
+        textarea.value = "";
+        form.requestSubmit();
+    });
+
+    document.addEventListener("submit", async (event) => {
+        const form = event.target.closest("[data-customer-note-form]");
+        if (!form) {
+            return;
+        }
+        event.preventDefault();
+
+        const noteUrl = form.dataset.customerNoteUrl;
+        const status = form.querySelector("[data-customer-note-status]");
+        const submitButton = form.querySelector('button[type="submit"]');
+        const clearButton = form.querySelector("[data-customer-note-clear]");
+        const formData = new FormData(form);
+        if (!noteUrl || !submitButton) {
+            return;
+        }
+
+        submitButton.disabled = true;
+        if (clearButton) {
+            clearButton.disabled = true;
+        }
+        if (status) {
+            status.textContent = "Saving to Square…";
+        }
+        try {
+            const response = await fetch(noteUrl, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    service_date: formData.get("service_date"),
+                    order_id: formData.get("order_id"),
+                    note: formData.get("note"),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.error || "The Square customer note could not be saved.");
+            }
+            if (status) {
+                status.textContent = result.note ? "Saved in Square" : "Cleared in Square";
             }
             window.PizzeriaDashboardViewport?.remember();
             window.location.reload();

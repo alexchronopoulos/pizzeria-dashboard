@@ -14,8 +14,14 @@ from .database import (
     load_customer_history_sync_info,
     merge_customer_history,
     replace_customer_history,
+    save_square_customer_profiles,
 )
-from .square_api import SquareClient, SquareConfigurationError, SquareSettings
+from .square_api import (
+    SquareClient,
+    SquareConfigurationError,
+    SquareError,
+    SquareSettings,
+)
 from .square_orders import (
     ClassificationRules,
     build_catalog_index,
@@ -170,6 +176,27 @@ def sync_customer_history(
             updated_at_end_time=_rfc3339_utc(now + timedelta(seconds=5)),
         )
     links, link_warnings = _payment_order_links(payments, timezone)
+    customer_ids = tuple(
+        dict.fromkeys(customer_id for customer_id, _ in links.values())
+    )
+    profile_warnings: list[str] = []
+    batch_retrieve_customers = getattr(client, "batch_retrieve_customers", None)
+    if customer_ids and callable(batch_retrieve_customers):
+        try:
+            customer_profiles = batch_retrieve_customers(customer_ids)
+        except SquareError as exc:
+            profile_warnings.append(
+                f"Square customer notes and VIP groups could not be refreshed: {exc}"
+            )
+        else:
+            cached_profile_count = save_square_customer_profiles(
+                path, customer_profiles
+            )
+            if cached_profile_count < len(customer_ids):
+                profile_warnings.append(
+                    "Square did not return every linked customer profile; "
+                    "some persistent notes or VIP badges might remain unavailable."
+                )
     raw_orders = client.batch_retrieve_orders(tuple(links), location_id=location_id)
     raw_by_id = {
         str(raw_order.get("id")): raw_order
@@ -207,7 +234,7 @@ def sync_customer_history(
             )
         )
 
-    warnings = list(link_warnings)
+    warnings = [*link_warnings, *profile_warnings]
     if skipped_missing:
         warnings.append(
             f"Square did not return {skipped_missing} historical order document(s); those payments were skipped."

@@ -20,7 +20,7 @@ from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 from .manual_payments import generate_match_token
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -93,6 +93,17 @@ class ManualPaymentMatch:
     @property
     def paid_in_square(self) -> bool:
         return self.square_order_id is not None
+
+
+@dataclass(frozen=True, slots=True)
+class SquareCustomerProfile:
+    customer_id: str
+    canonical_customer_id: str
+    note: str
+    group_ids: tuple[str, ...]
+    version: int | None
+    square_updated_at: datetime | None
+    cached_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +315,16 @@ def initialize_database(path: Path) -> None:
                 customer_key TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS square_customer_profiles (
+                customer_id TEXT PRIMARY KEY,
+                canonical_customer_id TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                group_ids_json TEXT NOT NULL DEFAULT '[]',
+                square_version INTEGER,
+                square_updated_at TEXT,
+                cached_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS customer_history_sync (
@@ -2911,6 +2932,199 @@ def delete_vip_customers(path: Path, customer_keys: Iterable[str]) -> int:
             f"DELETE FROM vip_customers WHERE customer_key IN ({placeholders})", keys
         )
     return max(cursor.rowcount, 0)
+
+
+def save_square_customer_profiles(
+    path: Path,
+    customers: Iterable[Mapping[str, object]],
+) -> int:
+    """Cache complete Square customer profiles returned by the Customers API."""
+    cached_at = _utc_now().isoformat()
+    rows: list[tuple[object, ...]] = []
+    for customer in customers:
+        canonical_customer_id = str(customer.get("id", "")).strip()
+        customer_id = str(
+            customer.get("_requested_customer_id", canonical_customer_id)
+        ).strip()
+        if not customer_id or not canonical_customer_id:
+            continue
+        raw_groups = customer.get("group_ids", [])
+        group_ids = (
+            tuple(
+                dict.fromkeys(
+                    str(value).strip()
+                    for value in raw_groups
+                    if str(value).strip()
+                )
+            )
+            if isinstance(raw_groups, list)
+            else ()
+        )
+        raw_version = customer.get("version")
+        try:
+            version = int(raw_version) if raw_version is not None else None
+        except (TypeError, ValueError):
+            version = None
+        raw_updated_at = str(customer.get("updated_at", "")).strip()
+        rows.append(
+            (
+                customer_id,
+                canonical_customer_id,
+                str(customer.get("note", "") or "")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .strip(),
+                json.dumps(group_ids, separators=(",", ":")),
+                version,
+                raw_updated_at or None,
+                cached_at,
+            )
+        )
+    if not rows:
+        return 0
+    with _connect(path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO square_customer_profiles (
+                customer_id,
+                canonical_customer_id,
+                note,
+                group_ids_json,
+                square_version,
+                square_updated_at,
+                cached_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(customer_id) DO UPDATE SET
+                canonical_customer_id = excluded.canonical_customer_id,
+                note = excluded.note,
+                group_ids_json = excluded.group_ids_json,
+                square_version = excluded.square_version,
+                square_updated_at = excluded.square_updated_at,
+                cached_at = excluded.cached_at
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def load_square_customer_profiles(
+    path: Path,
+    customer_ids: Iterable[str],
+) -> dict[str, SquareCustomerProfile]:
+    unique_ids = tuple(
+        dict.fromkeys(str(value).strip() for value in customer_ids if str(value).strip())
+    )
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    with _connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                customer_id,
+                canonical_customer_id,
+                note,
+                group_ids_json,
+                square_version,
+                square_updated_at,
+                cached_at
+            FROM square_customer_profiles
+            WHERE customer_id IN ({placeholders})
+            """,
+            unique_ids,
+        ).fetchall()
+
+    profiles: dict[str, SquareCustomerProfile] = {}
+    for row in rows:
+        try:
+            raw_group_ids = json.loads(str(row["group_ids_json"]))
+        except (TypeError, json.JSONDecodeError):
+            raw_group_ids = []
+        group_ids = (
+            tuple(str(value) for value in raw_group_ids if str(value).strip())
+            if isinstance(raw_group_ids, list)
+            else ()
+        )
+        raw_updated_at = row["square_updated_at"]
+        square_updated_at: datetime | None = None
+        if raw_updated_at:
+            try:
+                square_updated_at = datetime.fromisoformat(
+                    str(raw_updated_at).replace("Z", "+00:00")
+                )
+            except ValueError:
+                square_updated_at = None
+        customer_id = str(row["customer_id"])
+        profiles[customer_id] = SquareCustomerProfile(
+            customer_id=customer_id,
+            canonical_customer_id=str(row["canonical_customer_id"]),
+            note=str(row["note"]),
+            group_ids=group_ids,
+            version=(
+                int(row["square_version"])
+                if row["square_version"] is not None
+                else None
+            ),
+            square_updated_at=square_updated_at,
+            cached_at=datetime.fromisoformat(str(row["cached_at"])),
+        )
+    return profiles
+
+
+def set_square_customer_group_membership(
+    path: Path,
+    customer_id: str,
+    group_id: str,
+    *,
+    member: bool,
+) -> None:
+    """Update cached membership immediately after Square confirms a group write."""
+    normalized_customer_id = str(customer_id or "").strip()
+    normalized_group_id = str(group_id or "").strip()
+    if not normalized_customer_id or not normalized_group_id:
+        raise ValueError("Square customer and group IDs are required.")
+    existing = load_square_customer_profiles(path, (normalized_customer_id,)).get(
+        normalized_customer_id
+    )
+    group_ids = set(existing.group_ids if existing else ())
+    if member:
+        group_ids.add(normalized_group_id)
+    else:
+        group_ids.discard(normalized_group_id)
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO square_customer_profiles (
+                customer_id,
+                canonical_customer_id,
+                note,
+                group_ids_json,
+                square_version,
+                square_updated_at,
+                cached_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(customer_id) DO UPDATE SET
+                group_ids_json = excluded.group_ids_json,
+                cached_at = excluded.cached_at
+            """,
+            (
+                normalized_customer_id,
+                (
+                    existing.canonical_customer_id
+                    if existing
+                    else normalized_customer_id
+                ),
+                existing.note if existing else "",
+                json.dumps(sorted(group_ids), separators=(",", ":")),
+                existing.version if existing else None,
+                (
+                    existing.square_updated_at.isoformat()
+                    if existing and existing.square_updated_at
+                    else None
+                ),
+                _utc_now().isoformat(),
+            ),
+        )
 
 
 def touch_board_content_revision(path: Path, service_date: date) -> str:

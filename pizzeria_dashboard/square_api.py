@@ -503,6 +503,120 @@ class SquareClient:
             raise SquareAPIError("Square did not return a payment document.")
         return payment
 
+    def retrieve_customer(self, customer_id: str) -> Mapping[str, object]:
+        """Retrieve the latest Square customer profile for a safe write."""
+        response = self._request(
+            "GET", f"/v2/customers/{quote(customer_id, safe='')}"
+        )
+        customer = response.get("customer")
+        if not isinstance(customer, Mapping):
+            raise SquareAPIError("Square did not return a customer profile.")
+        return customer
+
+    def batch_retrieve_customers(
+        self,
+        customer_ids: Sequence[str],
+    ) -> tuple[Mapping[str, object], ...]:
+        """Retrieve customer notes and group memberships in batches of 100."""
+        unique_ids = tuple(dict.fromkeys(value for value in customer_ids if value))
+        if not unique_ids:
+            return ()
+
+        customers: list[Mapping[str, object]] = []
+        for offset in range(0, len(unique_ids), 100):
+            response = self._request(
+                "POST",
+                "/v2/customers/bulk-retrieve",
+                {"customer_ids": list(unique_ids[offset : offset + 100])},
+            )
+            raw_responses = response.get("responses", {})
+            if not isinstance(raw_responses, Mapping):
+                continue
+            for requested_customer_id, item in raw_responses.items():
+                if not isinstance(item, Mapping):
+                    continue
+                customer = item.get("customer")
+                if isinstance(customer, Mapping):
+                    cached_customer = dict(customer)
+                    cached_customer["_requested_customer_id"] = str(
+                        requested_customer_id
+                    )
+                    customers.append(cached_customer)
+        return tuple(customers)
+
+    def update_customer_note(
+        self,
+        customer_id: str,
+        note: str,
+        *,
+        version: int | None,
+    ) -> Mapping[str, object]:
+        """Sparse-update only a customer's plain-text note."""
+        payload: dict[str, object] = {"note": note if note else None}
+        if version is not None:
+            payload["version"] = version
+        response = self._request(
+            "PUT",
+            f"/v2/customers/{quote(customer_id, safe='')}",
+            payload,
+        )
+        customer = response.get("customer")
+        if not isinstance(customer, Mapping):
+            raise SquareAPIError("Square did not return the updated customer profile.")
+        return customer
+
+    def list_customer_groups(self) -> tuple[Mapping[str, object], ...]:
+        """Return every explicit Square customer group."""
+        groups: list[Mapping[str, object]] = []
+        cursor: str | None = None
+        while True:
+            path = "/v2/customers/groups"
+            if cursor:
+                path = f"{path}?{urlencode({'cursor': cursor})}"
+            response = self._request("GET", path)
+            raw_groups = response.get("groups", [])
+            if isinstance(raw_groups, list):
+                groups.extend(
+                    group for group in raw_groups if isinstance(group, Mapping)
+                )
+            next_cursor = response.get("cursor")
+            cursor = str(next_cursor) if next_cursor else None
+            if not cursor:
+                break
+        return tuple(groups)
+
+    def create_customer_group(self, name: str) -> Mapping[str, object]:
+        response = self._request(
+            "POST",
+            "/v2/customers/groups",
+            {
+                "idempotency_key": str(uuid4()),
+                "group": {"name": name},
+            },
+        )
+        group = response.get("group")
+        if not isinstance(group, Mapping):
+            raise SquareAPIError("Square did not return the created customer group.")
+        return group
+
+    def add_group_to_customer(self, customer_id: str, group_id: str) -> None:
+        self._request(
+            "PUT",
+            (
+                f"/v2/customers/{quote(customer_id, safe='')}"
+                f"/groups/{quote(group_id, safe='')}"
+            ),
+        )
+
+    def remove_group_from_customer(self, customer_id: str, group_id: str) -> None:
+        self._request(
+            "DELETE",
+            (
+                f"/v2/customers/{quote(customer_id, safe='')}"
+                f"/groups/{quote(group_id, safe='')}"
+            ),
+        )
+
     def _search_orders(
         self,
         *,

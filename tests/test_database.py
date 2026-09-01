@@ -26,6 +26,7 @@ from pizzeria_dashboard.database import (
     load_latest_service_state_before,
     load_service_state_payload,
     load_service_notes_for_date,
+    load_square_customer_profiles,
     load_sync_info,
     load_vip_customer_keys,
     load_authentication_throttle,
@@ -45,9 +46,11 @@ from pizzeria_dashboard.database import (
     save_prep_task,
     save_service_state_payload,
     save_service_note,
+    save_square_customer_profiles,
     save_vip_customer,
     save_dashboard_auth_session,
     delete_vip_customers,
+    set_square_customer_group_membership,
     delete_prep_assignee,
     delete_prep_recipe,
     delete_prep_task,
@@ -88,6 +91,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "pie_production_states",
         "order_ready_states",
         "vip_customers",
+        "square_customer_profiles",
         "dashboard_auth_failures",
         "dashboard_auth_sessions",
     } <= tables
@@ -257,6 +261,60 @@ def test_vip_customer_keys_can_be_saved_and_removed(tmp_path: Path) -> None:
     assert load_vip_customer_keys(database_path) == {"square:CUSTOMER-1"}
     assert delete_vip_customers(database_path, ("square:CUSTOMER-1",)) == 1
     assert load_vip_customer_keys(database_path) == set()
+
+
+def test_square_customer_profiles_cache_notes_groups_and_merged_ids(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+
+    assert save_square_customer_profiles(
+        database_path,
+        (
+            {
+                "id": "CANONICAL-1",
+                "_requested_customer_id": "MERGED-OLD-1",
+                "note": "  Severe nut allergy.  ",
+                "group_ids": ["GROUP-VIP", "GROUP-OTHER", "GROUP-VIP"],
+                "version": 7,
+                "updated_at": "2026-08-31T18:00:00Z",
+            },
+        ),
+    ) == 1
+
+    profile = load_square_customer_profiles(
+        database_path, ("MERGED-OLD-1",)
+    )["MERGED-OLD-1"]
+    assert profile.canonical_customer_id == "CANONICAL-1"
+    assert profile.note == "Severe nut allergy."
+    assert profile.group_ids == ("GROUP-VIP", "GROUP-OTHER")
+    assert profile.version == 7
+    assert profile.square_updated_at == datetime(
+        2026, 8, 31, 18, 0, tzinfo=UTC
+    )
+
+    set_square_customer_group_membership(
+        database_path,
+        "MERGED-OLD-1",
+        "GROUP-NEW",
+        member=True,
+    )
+    profile = load_square_customer_profiles(
+        database_path, ("MERGED-OLD-1",)
+    )["MERGED-OLD-1"]
+    assert set(profile.group_ids) == {"GROUP-VIP", "GROUP-OTHER", "GROUP-NEW"}
+
+    set_square_customer_group_membership(
+        database_path,
+        "MERGED-OLD-1",
+        "GROUP-VIP",
+        member=False,
+    )
+    profile = load_square_customer_profiles(
+        database_path, ("MERGED-OLD-1",)
+    )["MERGED-OLD-1"]
+    assert set(profile.group_ids) == {"GROUP-OTHER", "GROUP-NEW"}
 
 
 def test_order_documents_round_trip_through_sqlite(tmp_path: Path) -> None:

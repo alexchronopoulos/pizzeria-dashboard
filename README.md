@@ -34,12 +34,13 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Adds a pickup-slot selector to the order-details modal for quick reassignment when the destination slot is far down the page.
 - Lets scheduled pickup orders be moved to another configured dashboard slot while retaining a one-click return to the original Square time.
 - Shows each destination slot's current pizza load before a scheduled order is moved and marks adjusted order cards with their original pickup time.
-- Stores scheduled-order adjustments, manual walk-in assignments, explicit Unscheduled overrides, and staff notes in SQLite so a Square refresh preserves them.
+- Stores scheduled-order adjustments, manual walk-in assignments, explicit Unscheduled overrides, and order-specific staff notes in SQLite so a Square refresh preserves them. Persistent customer notes can also be saved to the linked Square Customer profile and then appear on every future linked order.
 - Marks boxed-and-ready orders across every display with a gray card and a shared timestamp, and drives a fixed circular pizzas-remaining countdown from those shared ready states.
 - Summarizes pizza add-on modifiers for ingredient prep and hides elapsed pickup slots from today's operational selectors. Prep View hides empty slots only; populated past orders remain in place so active timer positions do not jump during service.
 - Publishes order-cache and staff-note revisions to all open displays every two seconds; when one display finds a new Square order, the others reload automatically and show a new-order toast with pickup time and item summary.
+- Stores reliable VIP customers in a configurable Square customer group and reads that membership back during batched customer-profile sync. Orders without a payment-linked Square customer retain the dashboard-only VIP fallback.
 - Adds dashboard-only manual orders for verbal/phone orders: customer name, pickup date/time, quantity, free-form item name, and item type. Manual orders live in a separate SQLite table so Square refreshes cannot delete them, and they participate in normal timers, prep counts, boxed-ready state, and cross-device sync. Each manual order also receives a memorable two-word payment name such as `Toasty Pigeon`; entering it in Square's Ticket Name field when collecting payment lets the next refresh link the completed counter sale without creating a duplicate production order or double-counting dough.
-- Does not write timer, oven-position, boxed-ready, staff-note, pickup-time override, or manual-order state back to Square.
+- Does not write timer, oven-position, boxed-ready, order-specific staff-note, pickup-time override, or manual-order state back to Square. Only the explicitly labeled persistent customer note and VIP customer-group controls modify Square Customer Directory data.
 
 The active database remains:
 
@@ -301,9 +302,10 @@ source of truth for orders, and a full Square refresh can rebuild the order cach
 ## Customer history
 
 The dashboard can build a rebuildable customer-history index from Square Payments and Orders.
-Square remains the source of truth; the local SQLite tables contain only opaque Square customer
-IDs, order IDs, timestamps, source labels, and summarized food items. They do not store customer
-email addresses, phone numbers, card details, or Customer Directory profiles.
+Square remains the source of truth. The local SQLite cache stores opaque Square customer IDs,
+order IDs, timestamps, source labels, summarized food items, the plain-text Customer note, and
+customer group IDs. It does not store customer email addresses, phone numbers, card details, or
+other Customer Directory contact fields.
 
 1. Set the earliest history date in `.env` if needed:
 
@@ -311,9 +313,11 @@ email addresses, phone numbers, card details, or Customer Directory profiles.
    CUSTOMER_HISTORY_START_DATE=2025-01-01
    CUSTOMER_HISTORY_REFRESH_SECONDS=60
    CUSTOMER_HISTORY_OVERLAP_HOURS=48
+   SQUARE_VIP_GROUP_NAME=Pizzeria Mari VIP
    ```
 
-2. Ensure the Square token has `PAYMENTS_READ`, `ORDERS_READ`, and catalog read access.
+2. Ensure the Square token has `PAYMENTS_READ`, `ORDERS_READ`, catalog read access,
+   `CUSTOMERS_READ`, and `CUSTOMERS_WRITE`.
 3. Press **Build customer history** once from the dashboard.
 4. Normal Square refreshes then merge payment updates into the index automatically.
 
@@ -326,6 +330,17 @@ Customer tags use linked Square payments:
 Open an order and select **Customer history** to see the five most recent linked orders. Older
 orders are available in an expandable section. Orders without a reliable `Payment.customer_id`
 show **History unavailable** rather than being matched by name.
+
+Order details keep two note types separate:
+
+- **Staff note** is local to that one order and is never written to Square.
+- **Customer note** updates the linked Square Customer profile and is shown on every current or
+  future dashboard order linked to the same customer.
+
+The first Square-backed **Mark as VIP** action reuses an exact-name customer group when one
+already exists or creates the configured group once. Later VIP changes add or remove the linked
+customer from that group. All customer profiles are retrieved in batches of up to 100 rather
+than one request per order.
 
 ## Internet access and dashboard authentication
 

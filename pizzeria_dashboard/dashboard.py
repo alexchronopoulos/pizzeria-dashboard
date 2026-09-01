@@ -41,6 +41,7 @@ from .database import (
     load_prep_tasks_for_date,
     load_service_state_payload,
     load_service_notes_for_date,
+    load_square_customer_profiles,
     load_sync_info,
     merge_orders_for_date,
     prune_pie_production_states,
@@ -56,11 +57,13 @@ from .database import (
     save_prep_recipe,
     save_prep_task,
     save_service_note,
+    save_square_customer_profiles,
     save_vip_customer,
     delete_prep_assignee,
     delete_prep_recipe,
     delete_prep_task,
     delete_vip_customers,
+    set_square_customer_group_membership,
     touch_board_content_revision,
     update_prep_recipe,
     update_prep_task,
@@ -97,6 +100,8 @@ blueprint = Blueprint("dashboard", __name__)
 AUTO_REFRESH_ENABLED_KEY = "square_auto_refresh_enabled"
 AUTO_REFRESH_SECONDS_KEY = "square_auto_refresh_seconds"
 AUTO_REFRESH_INTERVALS = (10, 15, 30, 60, 120, 300)
+SQUARE_VIP_GROUP_ID_KEY = "square_vip_group_id"
+DEFAULT_SQUARE_VIP_GROUP_NAME = "Pizzeria Mari VIP"
 MANUAL_ITEM_CATEGORIES = {
     "pizza",
     "salad",
@@ -141,14 +146,104 @@ def _vip_keys_for_order(order: Order, customer_summary=None) -> tuple[str, ...]:
 
 
 def _vip_order_ids(
-    orders: tuple[Order, ...], customer_summaries: Mapping[str, object], vip_keys: set[str]
+    orders: tuple[Order, ...],
+    customer_summaries: Mapping[str, object],
+    vip_keys: set[str],
+    *,
+    customer_profiles: Mapping[str, object] | None = None,
+    square_vip_group_id: str | None = None,
 ) -> set[str]:
     result: set[str] = set()
     for order in orders:
         summary = customer_summaries.get(order.square_order_id or order.order_id)
-        if any(key in vip_keys for key in _vip_keys_for_order(order, summary)):
+        customer_id = getattr(summary, "customer_id", None)
+        profile = (
+            customer_profiles.get(customer_id)
+            if customer_profiles and customer_id
+            else None
+        )
+        square_vip = bool(
+            square_vip_group_id
+            and profile is not None
+            and square_vip_group_id in getattr(profile, "group_ids", ())
+        )
+        local_vip = any(
+            key in vip_keys for key in _vip_keys_for_order(order, summary)
+        )
+        if square_vip or (
+            local_vip and not (square_vip_group_id and profile is not None)
+        ):
             result.add(order.order_id)
     return result
+
+
+def _customer_notes_for_orders(
+    orders: tuple[Order, ...],
+    customer_summaries: Mapping[str, object],
+    customer_profiles: Mapping[str, object],
+) -> dict[str, str]:
+    notes: dict[str, str] = {}
+    for order in orders:
+        summary = customer_summaries.get(order.square_order_id or order.order_id)
+        customer_id = getattr(summary, "customer_id", None)
+        profile = customer_profiles.get(customer_id) if customer_id else None
+        note = str(getattr(profile, "note", "") or "").strip()
+        if note:
+            notes[order.order_id] = note
+    return notes
+
+
+def _ensure_square_vip_group(client: SquareClient, database_path: Path) -> str:
+    stored_group_id = str(
+        load_app_metadata(database_path, SQUARE_VIP_GROUP_ID_KEY) or ""
+    ).strip()
+    if stored_group_id:
+        return stored_group_id
+
+    group_name = str(
+        current_app.config.get(
+            "SQUARE_VIP_GROUP_NAME", DEFAULT_SQUARE_VIP_GROUP_NAME
+        )
+    ).strip() or DEFAULT_SQUARE_VIP_GROUP_NAME
+    group = next(
+        (
+            candidate
+            for candidate in client.list_customer_groups()
+            if str(candidate.get("name", "")).strip().casefold()
+            == group_name.casefold()
+        ),
+        None,
+    )
+    if group is None:
+        group = client.create_customer_group(group_name)
+    group_id = str(group.get("id", "")).strip()
+    if not group_id:
+        raise SquareAPIError("Square did not return a usable VIP group ID.")
+
+    legacy_square_customer_ids = tuple(
+        key.removeprefix("square:")
+        for key in sorted(load_vip_customer_keys(database_path))
+        if key.startswith("square:") and key.removeprefix("square:")
+    )
+    legacy_profiles = load_square_customer_profiles(
+        database_path, legacy_square_customer_ids
+    )
+    for legacy_customer_id in legacy_square_customer_ids:
+        cached_profile = legacy_profiles.get(legacy_customer_id)
+        square_write_customer_id = (
+            cached_profile.canonical_customer_id
+            if cached_profile is not None
+            else legacy_customer_id
+        )
+        client.add_group_to_customer(square_write_customer_id, group_id)
+        set_square_customer_group_membership(
+            database_path,
+            legacy_customer_id,
+            group_id,
+            member=True,
+        )
+    save_app_metadata(database_path, SQUARE_VIP_GROUP_ID_KEY, group_id)
+    return group_id
 
 
 def _database_path() -> Path:
@@ -431,8 +526,30 @@ def index() -> str:
         database_path,
         (order.square_order_id or order.order_id for order in orders),
     )
+    customer_ids = tuple(
+        dict.fromkeys(
+            str(summary.customer_id)
+            for summary in customer_summaries.values()
+            if getattr(summary, "customer_id", None)
+        )
+    )
+    customer_profiles = load_square_customer_profiles(
+        database_path, customer_ids
+    )
+    square_vip_group_id = load_app_metadata(
+        database_path, SQUARE_VIP_GROUP_ID_KEY
+    )
     vip_customer_keys = load_vip_customer_keys(database_path)
-    vip_order_ids = _vip_order_ids(orders, customer_summaries, vip_customer_keys)
+    vip_order_ids = _vip_order_ids(
+        orders,
+        customer_summaries,
+        vip_customer_keys,
+        customer_profiles=customer_profiles,
+        square_vip_group_id=square_vip_group_id,
+    )
+    customer_notes = _customer_notes_for_orders(
+        orders, customer_summaries, customer_profiles
+    )
     customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
@@ -480,6 +597,7 @@ def index() -> str:
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
         customer_summaries=customer_summaries,
+        customer_notes=customer_notes,
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
         customer_history_info=customer_history_info,
@@ -784,9 +902,55 @@ def order_details():
     order_summary = load_customer_summaries_for_orders(
         database_path, (order.square_order_id or order.order_id,)
     ).get(order.square_order_id or order.order_id)
+    square_customer_id = (
+        str(order_summary.customer_id)
+        if order_summary is not None and getattr(order_summary, "customer_id", None)
+        else None
+    )
+    square_customer_profile = (
+        load_square_customer_profiles(database_path, (square_customer_id,)).get(
+            square_customer_id
+        )
+        if square_customer_id
+        else None
+    )
+    square_customer_available = bool(
+        square_customer_id
+        and source == "square"
+        and str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
+    )
+    customer_profile_error: str | None = None
+    if square_customer_available and square_customer_profile is None:
+        try:
+            live_customer = SquareClient(
+                SquareSettings.from_mapping(current_app.config)
+            ).retrieve_customer(square_customer_id)
+        except SquareError:
+            customer_profile_error = (
+                "Square customer details are temporarily unavailable. Refresh and try again."
+            )
+        else:
+            cached_customer = dict(live_customer)
+            cached_customer["_requested_customer_id"] = square_customer_id
+            save_square_customer_profiles(database_path, (cached_customer,))
+            square_customer_profile = load_square_customer_profiles(
+                database_path, (square_customer_id,)
+            ).get(square_customer_id)
     vip_keys = _vip_keys_for_order(order, order_summary)
     saved_vip_keys = load_vip_customer_keys(database_path)
-    is_vip = any(key in saved_vip_keys for key in vip_keys)
+    square_vip_group_id = load_app_metadata(
+        database_path, SQUARE_VIP_GROUP_ID_KEY
+    )
+    square_vip_is_authoritative = bool(
+        square_vip_group_id and square_customer_profile is not None
+    )
+    is_vip = bool(
+        square_vip_is_authoritative
+        and square_vip_group_id in square_customer_profile.group_ids
+    ) or bool(
+        not square_vip_is_authoritative
+        and any(key in saved_vip_keys for key in vip_keys)
+    )
 
     return render_template(
         "_order_details.html",
@@ -821,6 +985,14 @@ def order_details():
         debug_payment_ids=debug_payment_ids,
         is_vip=is_vip,
         can_toggle_vip=bool(vip_keys),
+        vip_is_square_backed=square_customer_available,
+        customer_note=(
+            square_customer_profile.note if square_customer_profile else ""
+        ),
+        can_edit_customer_note=bool(
+            square_customer_available and square_customer_profile is not None
+        ),
+        customer_profile_error=customer_profile_error,
     )
 
 
@@ -849,13 +1021,67 @@ def update_order_vip():
         return jsonify(ok=False, error="This order does not have a usable customer identity."), 400
 
     vip = bool(payload.get("vip"))
+    customer_id = (
+        str(summary.customer_id)
+        if summary is not None and getattr(summary, "customer_id", None)
+        else None
+    )
+    try:
+        source = _order_source()
+    except SquareError:
+        source = "configuration-error"
+    square_backed = bool(
+        customer_id
+        and source == "square"
+        and str(current_app.config.get("SQUARE_ACCESS_TOKEN", "")).strip()
+    )
+    storage = "dashboard"
+    if square_backed:
+        cached_profile = load_square_customer_profiles(
+            database_path, (customer_id,)
+        ).get(customer_id)
+        square_write_customer_id = (
+            cached_profile.canonical_customer_id
+            if cached_profile is not None
+            else customer_id
+        )
+        try:
+            client = SquareClient(SquareSettings.from_mapping(current_app.config))
+            group_id = _ensure_square_vip_group(client, database_path)
+            if vip:
+                client.add_group_to_customer(square_write_customer_id, group_id)
+            else:
+                client.remove_group_from_customer(square_write_customer_id, group_id)
+        except SquareError as exc:
+            return jsonify(
+                ok=False,
+                error=f"Square VIP status could not be saved: {exc}",
+            ), 502
+        set_square_customer_group_membership(
+            database_path,
+            customer_id,
+            group_id,
+            member=vip,
+        )
+        storage = "square"
+
     if vip:
-        preferred_key = keys[0]
-        save_vip_customer(database_path, preferred_key, order.display_customer_name, vip=True)
+        preferred_key = f"square:{customer_id}" if customer_id else keys[0]
+        save_vip_customer(
+            database_path,
+            preferred_key,
+            order.display_customer_name,
+            vip=True,
+        )
     else:
         delete_vip_customers(database_path, keys)
     revision = touch_board_content_revision(database_path, selected_date)
-    return jsonify(ok=True, vip=vip, board_content_revision=revision)
+    return jsonify(
+        ok=True,
+        vip=vip,
+        storage=storage,
+        board_content_revision=revision,
+    )
 
 
 def _prep_task_json(task) -> dict[str, object]:
@@ -1195,6 +1421,91 @@ def update_order_internal_note():
         board_content_revision=load_board_content_revision(
             database_path, selected_date
         ),
+    )
+
+
+@blueprint.post("/customer-note")
+def update_square_customer_note():
+    """Persist a reusable customer note in Square's Customer Directory."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return jsonify(ok=False, error="No cached order ID was supplied."), 400
+    raw_note = payload.get("note", "")
+    if raw_note is None:
+        raw_note = ""
+    if not isinstance(raw_note, str):
+        return jsonify(ok=False, error="The note must be text."), 400
+    normalized_note = raw_note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(normalized_note) > 2000:
+        return jsonify(
+            ok=False,
+            error="Persistent customer notes are limited to 2,000 characters.",
+        ), 400
+
+    try:
+        source = _order_source()
+    except SquareError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if source != "square":
+        return jsonify(
+            ok=False,
+            error="Persistent customer notes require the Square order source.",
+        ), 400
+
+    database_path = _database_path()
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The cached order no longer exists."), 404
+    summary = load_customer_summaries_for_orders(
+        database_path, (order.square_order_id or order.order_id,)
+    ).get(order.square_order_id or order.order_id)
+    customer_id = (
+        str(summary.customer_id)
+        if summary is not None and getattr(summary, "customer_id", None)
+        else ""
+    )
+    if not customer_id:
+        return jsonify(
+            ok=False,
+            error="This order is not linked to a reliable Square customer profile.",
+        ), 400
+
+    try:
+        client = SquareClient(SquareSettings.from_mapping(current_app.config))
+        current_customer = client.retrieve_customer(customer_id)
+        canonical_customer_id = str(
+            current_customer.get("id", customer_id)
+        ).strip() or customer_id
+        raw_version = current_customer.get("version")
+        try:
+            version = int(raw_version) if raw_version is not None else None
+        except (TypeError, ValueError):
+            version = None
+        updated_customer = client.update_customer_note(
+            canonical_customer_id,
+            normalized_note,
+            version=version,
+        )
+    except SquareError as exc:
+        return jsonify(
+            ok=False,
+            error=f"Square customer note could not be saved: {exc}",
+        ), 502
+
+    cached_customer = dict(updated_customer)
+    cached_customer["_requested_customer_id"] = customer_id
+    save_square_customer_profiles(database_path, (cached_customer,))
+    revision = touch_board_content_revision(database_path, selected_date)
+    return jsonify(
+        ok=True,
+        note=normalized_note,
+        storage="square",
+        board_content_revision=revision,
     )
 
 

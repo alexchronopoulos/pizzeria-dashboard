@@ -631,6 +631,15 @@ h2 {
     color: var(--brand-red);
 }
 
+.order-note--customer {
+    border-left-color: var(--brand-blue);
+    background: #e4eef7;
+}
+
+.order-note--customer strong {
+    color: var(--brand-blue);
+}
+
 .order-note strong {
     font-size: 0.74rem;
     font-weight: 900;
@@ -2387,6 +2396,10 @@ h2 {
 /* Staff-authored order notes. */
 .internal-note-editor {
     background: var(--soft-orange);
+}
+
+.customer-note-editor {
+    background: #e4eef7;
 }
 
 .internal-note-editor-heading h3,

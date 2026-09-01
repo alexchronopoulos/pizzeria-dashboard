@@ -18,7 +18,9 @@ from pizzeria_dashboard.database import (
     load_orders_for_date,
     load_pie_production_states,
     load_service_state_payload,
+    load_square_customer_profiles,
     replace_orders_for_date,
+    save_square_customer_profiles,
 )
 from pizzeria_dashboard.sample_data import build_sample_orders, build_sample_service
 from pizzeria_dashboard.service_config import load_configuration
@@ -2592,6 +2594,234 @@ def test_customer_can_be_marked_vip_and_star_appears_on_order_card(tmp_path: Pat
     assert b'class="vip-star"' not in board.data
 
 
+def test_persistent_customer_note_is_saved_in_square_and_shown_on_future_orders(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from datetime import UTC
+
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.customer_history import CustomerHistoryOrder
+    from pizzeria_dashboard.database import replace_customer_history
+
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        AUTO_SEED_SAMPLE_DATA=False,
+        SQUARE_ACCESS_TOKEN="token",
+    )
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    source_order = build_sample_orders(selected)[0]
+    order = replace(
+        source_order,
+        square_order_id="SQUARE-ORDER-1",
+        reference_id="REFERENCE-1",
+        payment_ids=("PAYMENT-1",),
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    replace_customer_history(
+        database_path,
+        (
+            CustomerHistoryOrder(
+                customer_id="MERGED-CUSTOMER-OLD",
+                order_id="SQUARE-ORDER-1",
+                ordered_at=datetime(2026, 7, 31, 18, 0, tzinfo=UTC),
+                service_date=selected,
+                source="Square Online",
+                items=order.items,
+            ),
+        ),
+        synced_at=datetime(2026, 7, 31, 18, 1, tzinfo=UTC),
+        start_at=datetime(2025, 1, 1, tzinfo=UTC),
+        payment_count=1,
+    )
+
+    state = {"note": "Use the clean cutter.", "calls": []}
+
+    class FakeSquareClient:
+        def __init__(self, settings):
+            pass
+
+        def retrieve_customer(self, customer_id):
+            state["calls"].append(("retrieve", customer_id))
+            return {
+                "id": "CANONICAL-CUSTOMER-NEW",
+                "note": state["note"],
+                "group_ids": [],
+                "version": 7,
+                "updated_at": "2026-07-31T18:01:00Z",
+            }
+
+        def update_customer_note(self, customer_id, note, *, version):
+            state["calls"].append(("update", customer_id, note, version))
+            state["note"] = note
+            return {
+                "id": customer_id,
+                "note": note,
+                "group_ids": [],
+                "version": 8,
+                "updated_at": "2026-07-31T18:02:00Z",
+            }
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
+    client = app.test_client()
+
+    details = client.get(
+        f"/order-details?date={selected.isoformat()}&order_id={order.order_id}"
+    )
+    assert details.status_code == 200
+    assert b'data-customer-note-form' in details.data
+    assert b'Use the clean cutter.' in details.data
+
+    saved = client.post(
+        "/customer-note",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "note": "Severe nut allergy — use the clean cutter.",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.get_json()["storage"] == "square"
+    assert (
+        "update",
+        "CANONICAL-CUSTOMER-NEW",
+        "Severe nut allergy — use the clean cutter.",
+        7,
+    ) in state["calls"]
+
+    profile = load_square_customer_profiles(
+        database_path, ("MERGED-CUSTOMER-OLD",)
+    )["MERGED-CUSTOMER-OLD"]
+    assert profile.canonical_customer_id == "CANONICAL-CUSTOMER-NEW"
+    assert profile.note == "Severe nut allergy — use the clean cutter."
+
+    board = client.get(f"/?date={selected.isoformat()}")
+    assert b'Persistent Square customer note' in board.data
+    assert "Severe nut allergy — use the clean cutter.".encode() in board.data
+
+
+def test_vip_button_uses_square_customer_group_and_reuses_its_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from datetime import UTC
+
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.customer_history import CustomerHistoryOrder
+    from pizzeria_dashboard.database import (
+        delete_vip_customers,
+        replace_customer_history,
+    )
+
+    app = _test_app(
+        tmp_path,
+        ORDER_SOURCE="square",
+        AUTO_SEED_SAMPLE_DATA=False,
+        SQUARE_ACCESS_TOKEN="token",
+    )
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    source_order = build_sample_orders(selected)[0]
+    order = replace(
+        source_order,
+        square_order_id="SQUARE-ORDER-VIP",
+        reference_id="REFERENCE-VIP",
+        payment_ids=("PAYMENT-VIP",),
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    replace_customer_history(
+        database_path,
+        (
+            CustomerHistoryOrder(
+                customer_id="CUSTOMER-VIP",
+                order_id="SQUARE-ORDER-VIP",
+                ordered_at=datetime(2026, 7, 31, 18, 0, tzinfo=UTC),
+                service_date=selected,
+                source="Square Online",
+                items=order.items,
+            ),
+        ),
+        synced_at=datetime(2026, 7, 31, 18, 1, tzinfo=UTC),
+        start_at=datetime(2025, 1, 1, tzinfo=UTC),
+        payment_count=1,
+    )
+    save_square_customer_profiles(
+        database_path,
+        (
+            {
+                "id": "CUSTOMER-VIP",
+                "note": "",
+                "group_ids": [],
+                "version": 2,
+            },
+        ),
+    )
+
+    calls = []
+
+    class FakeSquareClient:
+        def __init__(self, settings):
+            pass
+
+        def list_customer_groups(self):
+            calls.append(("list-groups",))
+            return ()
+
+        def create_customer_group(self, name):
+            calls.append(("create-group", name))
+            return {"id": "GROUP-PM-VIP", "name": name}
+
+        def add_group_to_customer(self, customer_id, group_id):
+            calls.append(("add", customer_id, group_id))
+
+        def remove_group_from_customer(self, customer_id, group_id):
+            calls.append(("remove", customer_id, group_id))
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
+    client = app.test_client()
+
+    marked = client.post(
+        "/order-vip",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "vip": True,
+        },
+    )
+    assert marked.status_code == 200
+    assert marked.get_json()["storage"] == "square"
+    assert calls == [
+        ("list-groups",),
+        ("create-group", "Pizzeria Mari VIP"),
+        ("add", "CUSTOMER-VIP", "GROUP-PM-VIP"),
+    ]
+    delete_vip_customers(database_path, ("square:CUSTOMER-VIP",))
+    assert b'class="vip-star"' in client.get(
+        f"/?date={selected.isoformat()}"
+    ).data
+
+    removed = client.post(
+        "/order-vip",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "vip": False,
+        },
+    )
+    assert removed.status_code == 200
+    assert calls[-1] == ("remove", "CUSTOMER-VIP", "GROUP-PM-VIP")
+    assert calls.count(("list-groups",)) == 1
+    assert b'class="vip-star"' not in client.get(
+        f"/?date={selected.isoformat()}"
+    ).data
+
+
 def test_customer_history_tags_and_lazy_modal_history(tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
@@ -3140,7 +3370,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.44' in html
+    assert 'style.css?v=0.5.46' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -3158,7 +3388,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.34' in html
+    assert 'dashboard.js?v=0.5.36' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html

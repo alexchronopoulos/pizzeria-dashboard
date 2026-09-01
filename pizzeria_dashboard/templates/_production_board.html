@@ -3,6 +3,7 @@
 {% set customer_order_key = order.square_order_id or order.order_id %}
 {% set customer_summary = customer_summaries.get(customer_order_key) if customer_summaries else none %}
 {% set internal_note = internal_notes.get(order.order_id) if internal_notes else none %}
+{% set customer_note = customer_notes.get(order.order_id) if customer_notes else none %}
 {% set boxed_at = boxed_orders.get(order.order_id) if boxed_orders else none %}
 {% set pickup_override = pickup_overrides.get(order.order_id) if pickup_overrides and order.order_id in pickup_overrides and not order.is_walk_in else none %}
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
@@ -113,6 +114,12 @@
     <div class="order-note order-note--internal" aria-label="Staff note">
         <strong>Staff note</strong>
         <span>{{ internal_note }}</span>
+    </div>
+    {% endif %}
+    {% if customer_note %}
+    <div class="order-note order-note--customer" aria-label="Persistent Square customer note">
+        <strong>Customer note</strong>
+        <span>{{ customer_note }}</span>
     </div>
     {% endif %}
     {% if order.note %}

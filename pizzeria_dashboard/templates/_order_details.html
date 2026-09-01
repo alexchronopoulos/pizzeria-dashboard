@@ -230,7 +230,11 @@
       <div>
         <h3>VIP customer</h3>
         {% if can_toggle_vip %}
-        <p>Saved only in the dashboard. VIP customers get a star on their production cards.</p>
+        {% if vip_is_square_backed %}
+        <p>Saved in the configured Square VIP customer group and shown on future orders.</p>
+        {% else %}
+        <p>Saved only in the dashboard because this order has no linked Square customer profile.</p>
+        {% endif %}
         {% else %}
         <p>This order does not have a reliable customer identity to save as a VIP.</p>
         {% endif %}
@@ -250,6 +254,42 @@
       </div>
       {% endif %}
     </section>
+    {% if can_edit_customer_note or customer_profile_error %}
+    <section class="order-details-section internal-note-editor customer-note-editor">
+      <div class="internal-note-editor-heading">
+        <div>
+          <h3>Customer note</h3>
+          <p>Saved in Square and displayed on every future linked order. It is not added to customer receipts.</p>
+        </div>
+      </div>
+      {% if can_edit_customer_note %}
+      <form
+        class="internal-note-form"
+        data-customer-note-form
+        data-customer-note-url="{{ url_for('dashboard.update_square_customer_note') }}"
+      >
+        <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+        <input type="hidden" name="order_id" value="{{ order.order_id }}">
+        <label>
+          <span>Persistent Square note</span>
+          <textarea
+            name="note"
+            rows="4"
+            maxlength="2000"
+            placeholder="Example: Severe nut allergy — change gloves and use a clean cutter."
+          >{{ customer_note or '' }}</textarea>
+        </label>
+        <div class="internal-note-actions">
+          <button type="submit">Save customer note</button>
+          <button type="button" class="internal-note-clear" data-customer-note-clear{% if not customer_note %} hidden{% endif %}>Clear note</button>
+          <span class="internal-note-status" data-customer-note-status aria-live="polite"></span>
+        </div>
+      </form>
+      {% else %}
+      <p>{{ customer_profile_error }}</p>
+      {% endif %}
+    </section>
+    {% endif %}
     <section class="order-details-section internal-note-editor">
       <div class="internal-note-editor-heading">
         <div>
@@ -270,7 +310,7 @@
             name="note"
             rows="4"
             maxlength="2000"
-            placeholder="Example: Gluten allergy — change gloves and use a clean cutter."
+            placeholder="Example: Customer will arrive early — leave this pie uncut."
           >{{ internal_note or '' }}</textarea>
         </label>
         <div class="internal-note-actions">

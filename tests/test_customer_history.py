@@ -12,6 +12,7 @@ from pizzeria_dashboard.database import (
     load_customer_history_for_order,
     load_customer_history_sync_info,
     load_customer_summaries_for_orders,
+    load_square_customer_profiles,
     merge_customer_history,
     replace_customer_history,
 )
@@ -175,6 +176,9 @@ def test_incremental_customer_history_merge_updates_existing_order(tmp_path: Pat
 
 
 class _FakeSquareClient:
+    def __init__(self):
+        self.customer_batches = []
+
     def resolve_location(self):
         return {"id": "LOCATION-1", "name": "Pizzeria Mari"}
 
@@ -219,6 +223,19 @@ class _FakeSquareClient:
             for order_id in order_ids
         )
 
+    def batch_retrieve_customers(self, customer_ids):
+        self.customer_batches.append(tuple(customer_ids))
+        return (
+            {
+                "id": "customer-1",
+                "_requested_customer_id": "customer-1",
+                "note": "Use the clean cutter.",
+                "group_ids": ["GROUP-VIP"],
+                "version": 4,
+                "updated_at": "2026-07-10T20:00:00Z",
+            },
+        )
+
     def batch_retrieve_catalog_objects(self, object_ids, *, include_related_objects=False):
         return ()
 
@@ -226,6 +243,7 @@ class _FakeSquareClient:
 def test_full_customer_history_sync_uses_payment_customer_ids(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"
     initialize_database(database_path)
+    square_client = _FakeSquareClient()
     result = sync_customer_history(
         database_path,
         {
@@ -234,7 +252,7 @@ def test_full_customer_history_sync_uses_payment_customer_ids(tmp_path: Path) ->
             "SERVICE_TIMEZONE": "America/New_York",
             "CUSTOMER_HISTORY_START_DATE": "2025-01-01",
         },
-        square_client=_FakeSquareClient(),
+        square_client=square_client,
         full=True,
         force=True,
     )
@@ -248,3 +266,9 @@ def test_full_customer_history_sync_uses_payment_customer_ids(tmp_path: Path) ->
     assert history.summary.tag_label == "2nd Order"
     assert history.orders[0].items[0].name == "Collar City"
     assert load_customer_history_for_order(database_path, "anonymous-order") is None
+    assert square_client.customer_batches == [("customer-1",)]
+    profile = load_square_customer_profiles(
+        database_path, ("customer-1",)
+    )["customer-1"]
+    assert profile.note == "Use the clean cutter."
+    assert profile.group_ids == ("GROUP-VIP",)

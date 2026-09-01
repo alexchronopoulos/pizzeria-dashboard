@@ -1502,6 +1502,88 @@ def test_square_client_batch_retrieves_orders_in_one_request() -> None:
     ]
 
 
+def test_square_client_batch_retrieves_customer_profiles_in_one_request() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        return {
+            "responses": {
+                "MERGED-OLD": {
+                    "customer": {
+                        "id": "CANONICAL-NEW",
+                        "note": "Persistent note",
+                        "group_ids": ["GROUP-VIP"],
+                        "version": 3,
+                    }
+                },
+                "CUSTOMER-2": {"customer": {"id": "CUSTOMER-2", "version": 1}},
+            }
+        }
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    customers = client.batch_retrieve_customers(("MERGED-OLD", "CUSTOMER-2"))
+
+    assert customers[0]["id"] == "CANONICAL-NEW"
+    assert customers[0]["_requested_customer_id"] == "MERGED-OLD"
+    assert customers[1]["_requested_customer_id"] == "CUSTOMER-2"
+    assert calls == [
+        (
+            "POST",
+            "https://connect.squareup.com/v2/customers/bulk-retrieve",
+            {"customer_ids": ["MERGED-OLD", "CUSTOMER-2"]},
+        )
+    ]
+
+
+def test_square_client_updates_customer_notes_and_group_membership() -> None:
+    calls: list[tuple[str, str, Mapping[str, object] | None]] = []
+
+    def requester(method, url, headers, payload, timeout):
+        calls.append((method, url, payload))
+        if method == "GET" and url.endswith("/v2/customers/CUSTOMER-1"):
+            return {"customer": {"id": "CUSTOMER-1", "note": "Old", "version": 4}}
+        if method == "PUT" and url.endswith("/v2/customers/CUSTOMER-1"):
+            return {"customer": {"id": "CUSTOMER-1", "note": "New", "version": 5}}
+        if method == "GET" and url.endswith("/v2/customers/groups"):
+            return {"groups": [{"id": "GROUP-1", "name": "Existing"}]}
+        if method == "POST" and url.endswith("/v2/customers/groups"):
+            return {"group": {"id": "GROUP-VIP", "name": "Pizzeria Mari VIP"}}
+        return {}
+
+    client = SquareClient(
+        SquareSettings("secret-token", "LOCATION-1"), requester=requester
+    )
+    current = client.retrieve_customer("CUSTOMER-1")
+    updated = client.update_customer_note("CUSTOMER-1", "New", version=4)
+    groups = client.list_customer_groups()
+    created = client.create_customer_group("Pizzeria Mari VIP")
+    client.add_group_to_customer("CUSTOMER-1", "GROUP-VIP")
+    client.remove_group_from_customer("CUSTOMER-1", "GROUP-VIP")
+
+    assert current["note"] == "Old"
+    assert updated["note"] == "New"
+    assert groups[0]["id"] == "GROUP-1"
+    assert created["id"] == "GROUP-VIP"
+    assert calls[1] == (
+        "PUT",
+        "https://connect.squareup.com/v2/customers/CUSTOMER-1",
+        {"note": "New", "version": 4},
+    )
+    assert calls[4] == (
+        "PUT",
+        "https://connect.squareup.com/v2/customers/CUSTOMER-1/groups/GROUP-VIP",
+        None,
+    )
+    assert calls[5] == (
+        "DELETE",
+        "https://connect.squareup.com/v2/customers/CUSTOMER-1/groups/GROUP-VIP",
+        None,
+    )
+
+
 def test_full_sync_prefilters_unrelated_dates_before_walk_in_enrichment(
     tmp_path: Path,
 ) -> None:
