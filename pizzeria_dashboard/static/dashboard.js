@@ -1817,7 +1817,9 @@
             const button = event.currentTarget;
             const orderId = row.dataset.orderId;
             const boxed = !Boolean(boxedOrders[orderId]);
+            const originalText = button.textContent;
             button.disabled = true;
+            button.textContent = "Saving…";
             try {
                 const response = await fetch(orderReadyUrl, {
                     method: "POST",
@@ -1835,6 +1837,7 @@
                 }
                 renderBoxedOrders();
             } catch (error) {
+                button.textContent = originalText;
                 window.alert(String(error));
             } finally {
                 button.disabled = false;

@@ -1729,15 +1729,68 @@ def update_order_ready():
     if not order_id:
         return jsonify(ok=False, error="No cached order ID was supplied."), 400
     database_path = _database_path()
-    if load_order_for_date(database_path, selected_date, order_id) is None:
+    order = load_order_for_date(database_path, selected_date, order_id)
+    if order is None:
         return jsonify(ok=False, error="The cached order no longer exists."), 404
+    boxed = bool(payload.get("boxed"))
+    square_updated = False
+    square_already_completed = False
+
+    if boxed:
+        if order.is_paid is False or not order.requires_preparation:
+            return jsonify(
+                ok=False,
+                error="Unpaid orders cannot be marked boxed or completed in Square.",
+            ), 400
+
+        is_walk_in = order.is_walk_in or bool(
+            order.ticket_name
+            and order.source_closed_at
+            and order.fulfillment_uid is None
+        )
+        square_already_completed = bool(
+            is_walk_in
+            or order.released
+            or order.fulfillment_state == "COMPLETED"
+            or order.square_order_state == "COMPLETED"
+        )
+        if order.square_order_id and not order.is_manual and not square_already_completed:
+            if order.square_version is None:
+                return jsonify(
+                    ok=False,
+                    error=(
+                        "Square did not provide an order version, so this order cannot be "
+                        "updated through the Orders API."
+                    ),
+                ), 400
+            if not order.fulfillment_uid:
+                return jsonify(
+                    ok=False,
+                    error=(
+                        "This order does not identify a pickup fulfillment. Run a full "
+                        "refresh and try again."
+                    ),
+                ), 400
+            try:
+                _complete_square_order_and_cache(
+                    database_path, selected_date, order
+                )
+                square_updated = True
+            except SquareError as exc:
+                return jsonify(
+                    ok=False,
+                    error=f"Square could not complete the order: {exc}",
+                ), 502
+
     boxed_at = save_order_ready_state(
-        database_path, selected_date, order_id, boxed=bool(payload.get("boxed"))
+        database_path, selected_date, order_id, boxed=boxed
     )
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     return jsonify(
         ok=True,
         boxed_at=(boxed_at.astimezone(timezone).isoformat() if boxed_at else None),
+        square_updated=square_updated,
+        square_already_completed=square_already_completed,
     )
 
 
@@ -1844,6 +1897,49 @@ def _updated_fulfillment_state(
     return None
 
 
+def _complete_square_order_and_cache(
+    database_path: Path,
+    selected_date: date,
+    order: Order,
+) -> tuple[Mapping[str, object], str | None]:
+    """Complete a Square pickup and immediately persist its latest state."""
+    client = SquareClient(SquareSettings.from_mapping(current_app.config))
+    updated_raw = client.complete_order(
+        str(order.square_order_id), fulfillment_uid=order.fulfillment_uid
+    )
+
+    fulfillment_state = _updated_fulfillment_state(
+        updated_raw, order.fulfillment_uid
+    ) or order.fulfillment_state
+    order_state = str(updated_raw.get("state", "")).upper() or None
+    raw_version = updated_raw.get("version")
+    try:
+        square_version = int(raw_version)
+    except (TypeError, ValueError):
+        square_version = order.square_version
+
+    updated_order = replace(
+        order,
+        released=(
+            fulfillment_state == "COMPLETED"
+            or order_state == "COMPLETED"
+        ),
+        square_version=square_version,
+        fulfillment_state=fulfillment_state,
+        square_order_state=order_state or order.square_order_state,
+        source_updated_at=_now(),
+    )
+    merge_orders_for_date(
+        database_path,
+        selected_date,
+        (updated_order,),
+        candidate_square_order_ids=(str(order.square_order_id),),
+        source="square",
+        synced_at=datetime.now(UTC),
+    )
+    return updated_raw, fulfillment_state
+
+
 @blueprint.post("/order-complete")
 def complete_square_order():
     payload = request.get_json(silent=True)
@@ -1879,40 +1975,11 @@ def complete_square_order():
         ), 400
 
     try:
-        client = SquareClient(SquareSettings.from_mapping(current_app.config))
-        updated_raw = client.complete_order(
-            order.square_order_id, fulfillment_uid=order.fulfillment_uid
+        updated_raw, fulfillment_state = _complete_square_order_and_cache(
+            _database_path(), selected_date, order
         )
     except SquareError as exc:
         return jsonify(ok=False, error=str(exc)), 502
-
-    fulfillment_state = _updated_fulfillment_state(
-        updated_raw, order.fulfillment_uid
-    ) or order.fulfillment_state
-    raw_version = updated_raw.get("version")
-    try:
-        square_version = int(raw_version)
-    except (TypeError, ValueError):
-        square_version = order.square_version
-
-    updated_order = replace(
-        order,
-        released=(
-            fulfillment_state == "COMPLETED"
-            or str(updated_raw.get("state", "")).upper() == "COMPLETED"
-        ),
-        square_version=square_version,
-        fulfillment_state=fulfillment_state,
-        source_updated_at=_now(),
-    )
-    merge_orders_for_date(
-        _database_path(),
-        selected_date,
-        (updated_order,),
-        candidate_square_order_ids=(order.square_order_id,),
-        source="square",
-        synced_at=datetime.now(UTC),
-    )
 
     return jsonify(
         ok=True,

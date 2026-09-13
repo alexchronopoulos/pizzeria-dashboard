@@ -2301,6 +2301,224 @@ def test_open_square_order_can_be_marked_completed(tmp_path: Path, monkeypatch) 
     assert b"Capacity Released" in refreshed_details.data
 
 
+def test_mark_boxed_completes_square_pickup_before_saving_ready_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeSquareClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def complete_order(self, order_id, *, fulfillment_uid):
+            calls.append((order_id, fulfillment_uid))
+            return {
+                "id": order_id,
+                "state": "COMPLETED",
+                "version": 12,
+                "fulfillments": [
+                    {
+                        "uid": fulfillment_uid,
+                        "type": "PICKUP",
+                        "state": "COMPLETED",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FakeSquareClient)
+    app = _test_app(
+        tmp_path,
+        AUTO_SEED_SAMPLE_DATA=False,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="test-token",
+    )
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="cached-boxed-square",
+        customer_name="Boxed Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 0),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-boxed-order",
+        square_version=11,
+        fulfillment_uid="pickup-boxed",
+        fulfillment_state="RESERVED",
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+
+    response = app.test_client().post(
+        "/order-ready",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "boxed": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["boxed_at"]
+    assert payload["square_updated"] is True
+    assert payload["square_already_completed"] is False
+    assert calls == [("square-boxed-order", "pickup-boxed")]
+    assert order.order_id in load_order_ready_states(database_path, selected)
+    cached = load_orders_for_date(database_path, selected)
+    assert cached[0].released is True
+    assert cached[0].fulfillment_state == "COMPLETED"
+    assert cached[0].square_order_state == "COMPLETED"
+    assert cached[0].square_version == 12
+
+
+def test_mark_boxed_does_not_save_when_square_completion_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+    from pizzeria_dashboard.square_api import SquareAPIError
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    class FailingSquareClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def complete_order(self, order_id, *, fulfillment_uid):
+            raise SquareAPIError("Square rejected the completion.")
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", FailingSquareClient)
+    app = _test_app(
+        tmp_path,
+        AUTO_SEED_SAMPLE_DATA=False,
+        ORDER_SOURCE="square",
+        SQUARE_ACCESS_TOKEN="test-token",
+    )
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="cached-boxed-failure",
+        customer_name="Still Open",
+        pickup_at=datetime(2026, 7, 31, 17, 15),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-boxed-failure",
+        square_version=4,
+        fulfillment_uid="pickup-failure",
+        fulfillment_state="PROPOSED",
+        square_order_state="OPEN",
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+
+    response = app.test_client().post(
+        "/order-ready",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "boxed": True,
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == (
+        "Square could not complete the order: Square rejected the completion."
+    )
+    assert load_order_ready_states(database_path, selected) == {}
+    assert load_orders_for_date(database_path, selected) == (order,)
+
+
+def test_mark_boxed_rejects_unpaid_square_order(tmp_path: Path, monkeypatch) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    class UnexpectedSquareClient:
+        def __init__(self, settings):
+            raise AssertionError("Unpaid orders must not be completed in Square.")
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", UnexpectedSquareClient)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="cached-unpaid-boxed",
+        customer_name="Unpaid Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 20),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-unpaid-boxed",
+        square_version=2,
+        fulfillment_uid="pickup-unpaid",
+        fulfillment_state="PROPOSED",
+        square_order_state="OPEN",
+        is_paid=False,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+
+    response = app.test_client().post(
+        "/order-ready",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "boxed": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == (
+        "Unpaid orders cannot be marked boxed or completed in Square."
+    )
+    assert load_order_ready_states(database_path, selected) == {}
+
+
+def test_undo_boxed_never_reopens_square_order(tmp_path: Path, monkeypatch) -> None:
+    from pizzeria_dashboard.database import save_order_ready_state
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    class UnexpectedSquareClient:
+        def __init__(self, settings):
+            raise AssertionError("Undo boxed must not call Square.")
+
+    monkeypatch.setattr(dashboard_module, "SquareClient", UnexpectedSquareClient)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 7, 31)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="cached-undo-boxed",
+        customer_name="Completed Guest",
+        pickup_at=datetime(2026, 7, 31, 17, 30),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-undo-boxed",
+        square_version=8,
+        fulfillment_uid="pickup-completed",
+        fulfillment_state="COMPLETED",
+        square_order_state="COMPLETED",
+        released=True,
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    save_order_ready_state(database_path, selected, order.order_id, boxed=True)
+
+    response = app.test_client().post(
+        "/order-ready",
+        json={
+            "service_date": selected.isoformat(),
+            "order_id": order.order_id,
+            "boxed": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ok": True,
+        "boxed_at": None,
+        "square_updated": False,
+        "square_already_completed": False,
+    }
+    assert load_order_ready_states(database_path, selected) == {}
+    assert load_orders_for_date(database_path, selected) == (order,)
+
+
 
 def test_unpaid_open_square_order_can_be_removed_from_details(
     tmp_path: Path, monkeypatch
@@ -3388,7 +3606,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.36' in html
+    assert 'dashboard.js?v=0.5.37' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html
