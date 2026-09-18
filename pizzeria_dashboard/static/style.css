@@ -29,6 +29,12 @@ html {
     font-size: 17px;
 }
 
+/* A data refresh can replace rows above the current viewport. Keep the updated
+ * page unpainted until its saved order/timer anchor has been restored. */
+html.viewport-restore-pending .page-shell {
+    visibility: hidden;
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -3596,34 +3602,6 @@ h2 {
     opacity: 0.65;
 }
 
-.order-ready-status {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin: 11px 0 4px;
-    padding: 8px 11px;
-    border: 3px solid var(--black);
-    border-radius: 8px;
-    background: #62696d;
-    color: white;
-}
-
-.order-ready-status[hidden] {
-    display: none;
-}
-
-.order-ready-status strong {
-    font-size: 0.9rem;
-    font-weight: 950;
-    letter-spacing: 0.08em;
-}
-
-.order-ready-status time {
-    font-size: 0.86rem;
-    font-weight: 900;
-}
-
 .order-row--boxed,
 .order-row--boxed .order-content,
 .order-row--boxed .order-oven-panel {
@@ -3676,12 +3654,6 @@ h2 {
 @media (max-width: 600px) {
     .modifier-prep-list {
         grid-template-columns: 1fr;
-    }
-
-    .order-ready-status {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 3px;
     }
 }
 
@@ -3771,7 +3743,13 @@ h2 {
     z-index: 80;
     display: grid;
     width: min(380px, calc(100vw - 36px));
+    max-height: calc(100vh - 36px);
+    max-height: calc(100dvh - 36px);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-auto-flow: row;
     gap: 10px;
+    contain: layout style;
     pointer-events: none;
 }
 
@@ -3807,11 +3785,24 @@ h2 {
 
 .new-order-toast-list {
     display: grid;
+    min-width: 0;
+    min-height: 0;
+    max-height: calc(100vh - 92px);
+    max-height: calc(100dvh - 92px);
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
     gap: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
 }
 
 .new-order-toast {
     display: grid;
+    width: 100%;
+    min-width: 0;
     gap: 4px;
     padding: 13px 14px;
     border: 4px solid var(--black);
@@ -3831,10 +3822,12 @@ h2 {
 }
 
 .new-order-toast-heading strong {
+    min-width: 0;
     color: var(--brand-red);
     font-size: 0.86rem;
     font-weight: 950;
     letter-spacing: 0.04em;
+    overflow-wrap: anywhere;
 }
 
 .new-order-toast-heading button {
@@ -3854,11 +3847,13 @@ h2 {
 .new-order-toast > span {
     font-size: 1.05rem;
     font-weight: 950;
+    overflow-wrap: anywhere;
 }
 
 .new-order-toast > small {
     font-size: 0.82rem;
     font-weight: 800;
+    overflow-wrap: anywhere;
 }
 
 .new-order-toast > .new-order-toast-hint {
@@ -4748,8 +4743,9 @@ html {
 }
 
 .order-boxed-inline {
-    min-height: 48px;
-    padding: 5px 14px;
+    width: 142px;
+    min-height: 52px;
+    padding: 5px 10px;
     border-radius: 9px;
     white-space: nowrap;
 }
@@ -4810,8 +4806,25 @@ html {
 }
 
 .order-boxed-inline {
+    display: grid;
     align-self: stretch;
+    grid-template-rows: auto 0.8rem;
+    align-content: center;
+    justify-items: center;
     justify-content: center;
+    gap: 2px;
+}
+
+.order-boxed-meta {
+    min-height: 0.8rem;
+    visibility: hidden;
+    font-size: 0.62rem;
+    font-weight: 900;
+    line-height: 0.8rem;
+}
+
+.order-boxed-meta.is-visible {
+    visibility: visible;
 }
 
 .customer-name-wrap .badge--customer,

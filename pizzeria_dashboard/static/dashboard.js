@@ -191,7 +191,6 @@
 
     toggle.checked = savedPreference();
     applyPrepView();
-    window.PizzeriaDashboardViewport?.restoreSaved();
 
     toggle.addEventListener("change", () => {
         savePreference(toggle.checked);
@@ -1519,7 +1518,6 @@
             timeZone: serviceTimezone,
             hour: "numeric",
             minute: "2-digit",
-            second: "2-digit",
         });
     };
     const PIZZA_RAIN_DURATION_MS = 60000;
@@ -1684,21 +1682,36 @@
         rowsByOrderId.forEach((row, orderId) => {
             const boxedAt = boxedOrders[orderId] || null;
             const button = row.querySelector("[data-order-boxed-button]");
-            const status = row.querySelector("[data-order-ready-status]");
-            const time = row.querySelector("[data-order-boxed-time]");
             row.classList.toggle("order-row--boxed", Boolean(boxedAt));
             row.dataset.boxedAt = boxedAt || "";
             if (button) {
+                const label = button.querySelector("[data-order-boxed-label]");
+                const meta = button.querySelector("[data-order-boxed-meta]");
+                const time = button.querySelector("[data-order-boxed-time]");
+                const undo = button.querySelector("[data-order-boxed-undo]");
+                const formattedTime = boxedAt ? formatBoxedAt(boxedAt) : "";
                 button.classList.toggle("is-boxed", Boolean(boxedAt));
                 button.setAttribute("aria-pressed", boxedAt ? "true" : "false");
-                button.textContent = boxedAt ? "Undo boxed" : "Mark boxed";
-            }
-            if (status) {
-                status.hidden = !boxedAt;
-            }
-            if (time) {
-                time.dateTime = boxedAt || "";
-                time.textContent = boxedAt ? formatBoxedAt(boxedAt) : "";
+                button.setAttribute(
+                    "aria-label",
+                    boxedAt
+                        ? `Boxed and ready at ${formattedTime}. Click to undo boxed status.`
+                        : "Mark this order boxed and ready.",
+                );
+                if (label) {
+                    label.textContent = boxedAt ? "BOXED & READY" : "Mark boxed";
+                }
+                if (meta) {
+                    meta.classList.toggle("is-visible", Boolean(boxedAt));
+                    meta.setAttribute("aria-hidden", boxedAt ? "false" : "true");
+                }
+                if (time) {
+                    time.dateTime = boxedAt || "";
+                    time.textContent = boxedAt ? formattedTime : "";
+                }
+                if (undo) {
+                    undo.textContent = boxedAt ? " · Undo boxed" : "";
+                }
             }
         });
         renderPizzaCountdown();
@@ -1817,9 +1830,11 @@
             const button = event.currentTarget;
             const orderId = row.dataset.orderId;
             const boxed = !Boolean(boxedOrders[orderId]);
-            const originalText = button.textContent;
+            const label = button.querySelector("[data-order-boxed-label]");
             button.disabled = true;
-            button.textContent = "Saving…";
+            if (label) {
+                label.textContent = "Saving…";
+            }
             try {
                 const response = await fetch(orderReadyUrl, {
                     method: "POST",
@@ -1835,9 +1850,13 @@
                 } else {
                     delete boxedOrders[orderId];
                 }
-                renderBoxedOrders();
+                if (window.PizzeriaDashboardViewport?.preserve) {
+                    window.PizzeriaDashboardViewport.preserve(renderBoxedOrders);
+                } else {
+                    renderBoxedOrders();
+                }
             } catch (error) {
-                button.textContent = originalText;
+                renderBoxedOrders();
                 window.alert(String(error));
             } finally {
                 button.disabled = false;
@@ -2879,4 +2898,25 @@
     button.addEventListener("click", () => {
         window.scrollTo({top: 0, left: 0, behavior: "smooth"});
     });
+})();
+
+// Auto-sync reloads can add or remove rows above the current viewport. The base
+// script hides only those reloads that carry a saved viewport anchor; reveal the
+// updated board after prep-view filtering, fixed overlays, and fonts have settled.
+(() => {
+    const finishRestore = () => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+            window.PizzeriaDashboardViewport?.restoreSaved();
+            window.PizzeriaDashboardReveal?.();
+        }));
+    };
+
+    if (document.fonts?.ready) {
+        Promise.race([
+            document.fonts.ready,
+            new Promise((resolve) => window.setTimeout(resolve, 1_500)),
+        ]).then(finishRestore, finishRestore);
+    } else {
+        finishRestore();
+    }
 })();

@@ -1637,6 +1637,9 @@ def test_shared_timer_oven_and_boxed_state_routes(
     assert "order-row--boxed" in refreshed[row_tag_start:row_tag_end]
     assert "BOXED &amp; READY" in order_html
     assert "Undo boxed" in order_html
+    assert "data-order-ready-status" not in order_html
+    assert "data-order-boxed-meta" in order_html
+    assert "data-order-boxed-time" in order_html
 
 
 def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
@@ -3588,7 +3591,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.46' in html
+    assert 'style.css?v=0.5.47' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -3606,7 +3609,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.37' in html
+    assert 'dashboard.js?v=0.5.38' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html
@@ -3622,6 +3625,53 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     assert "dismissedDoneTimers.add(key);" in javascript
     assert ".new-order-toast-clear" in css
     assert ".new-order-toast-clear[hidden]" in css
+
+
+def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> None:
+    response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
+    html = response.get_data(as_text=True)
+    base_javascript = Path("pizzeria_dashboard/static/base.js").read_text()
+    dashboard_javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+    production_template = Path(
+        "pizzeria_dashboard/templates/_production_board.html"
+    ).read_text()
+
+    assert response.status_code == 200
+    assert 'base.js?v=0.5.2' in html
+    assert '<script src="/static/base.js?v=0.5.2"></script>' in html
+    assert "data-order-ready-status" not in production_template
+    assert "data-order-boxed-label" in production_template
+    assert "data-order-boxed-meta" in production_template
+    assert "data-order-boxed-undo" in production_template
+    assert ".order-boxed-inline {\n    width: 142px;" in css
+    assert ".order-boxed-meta {" in css
+    assert "visibility: hidden;" in css
+    assert ".order-boxed-meta.is-visible {\n    visibility: visible;" in css
+
+    toast_rules = css.split(".new-order-toast-region {", 1)[1].split("}", 1)[0]
+    toast_list_rules = css.split(".new-order-toast-list {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: minmax(0, 1fr);" in toast_rules
+    assert "grid-template-rows: auto minmax(0, 1fr);" in toast_rules
+    assert "grid-auto-flow: row;" in toast_rules
+    assert "max-height: calc(100dvh - 36px);" in toast_rules
+    assert "grid-template-columns: minmax(0, 1fr);" in toast_list_rules
+    assert "grid-auto-flow: row;" in toast_list_rules
+    assert "max-height: calc(100dvh - 92px);" in toast_list_rules
+    assert "overflow-y: auto;" in toast_list_rules
+    assert "scrollbar-gutter: stable;" in toast_list_rules
+    assert ":has(.active-timer-rail" not in css
+    timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
+    assert "top: 50%;" in timer_rules
+    assert "right: 14px;" in timer_rules
+    assert "max-height: calc(100vh - 220px);" in timer_rules
+    assert "transform: translateY(-50%);" in timer_rules
+
+    assert 'RESTORE_CLASS = "viewport-restore-pending"' in base_javascript
+    assert "PizzeriaDashboardReveal" in base_javascript
+    assert "window.PizzeriaDashboardViewport?.restoreSaved();" in dashboard_javascript
+    assert "document.fonts.ready" in dashboard_javascript
+    assert "PizzeriaDashboardViewport.preserve(renderBoxedOrders)" in dashboard_javascript
 
 
 def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:

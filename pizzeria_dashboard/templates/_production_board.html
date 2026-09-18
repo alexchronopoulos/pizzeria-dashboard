@@ -1,3 +1,23 @@
+{% macro render_boxed_button(order, boxed_at, selected_date) -%}
+<button
+    type="button"
+    class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
+    data-order-boxed-button
+    data-order-id="{{ order.order_id }}"
+    data-service-date="{{ selected_date.isoformat() }}"
+    aria-pressed="{{ 'true' if boxed_at else 'false' }}"
+    aria-label="{% if boxed_at %}Boxed and ready at {{ boxed_at.strftime('%-I:%M %p') }}. Click to undo boxed status.{% else %}Mark this order boxed and ready.{% endif %}"
+    draggable="false"
+>
+    <span data-order-boxed-label>{% if boxed_at %}BOXED &amp; READY{% else %}Mark boxed{% endif %}</span>
+    <span
+        class="order-boxed-meta{% if boxed_at %} is-visible{% endif %}"
+        data-order-boxed-meta
+        aria-hidden="{{ 'false' if boxed_at else 'true' }}"
+    ><time data-order-boxed-time datetime="{{ boxed_at.isoformat() if boxed_at else '' }}">{% if boxed_at %}{{ boxed_at.strftime('%-I:%M %p') }}{% endif %}</time><span data-order-boxed-undo>{% if boxed_at %} · Undo boxed{% endif %}</span></span>
+</button>
+{%- endmacro %}
+
 {% macro render_order(order, window=None, unscheduled=False) -%}
 {% set customer_label = order.display_customer_name %}
 {% set customer_order_key = order.square_order_id or order.order_id %}
@@ -100,10 +120,6 @@
             {% endif %}
         </div>
     </div>
-    <div class="order-ready-status" data-order-ready-status{% if not boxed_at %} hidden{% endif %}>
-        <strong>BOXED &amp; READY</strong>
-        <time data-order-boxed-time datetime="{{ boxed_at.isoformat() if boxed_at else '' }}">{% if boxed_at %}{{ boxed_at.strftime('%-I:%M:%S %p') }}{% endif %}</time>
-    </div>
     {% if is_unpaid %}
     <div class="order-unpaid-warning" role="alert" aria-label="Unpaid order. Do not prepare.">
         <strong>UNPAID — DO NOT PREPARE</strong>
@@ -142,15 +158,7 @@
                 {% if item.category == "pizza" and selected_date >= today and not is_unpaid %}
                 <div class="pizza-bake-controls">
                     {% if selected_date >= today and not boxed_action.rendered %}
-                    <button
-                        type="button"
-                        class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
-                        data-order-boxed-button
-                        data-order-id="{{ order.order_id }}"
-                        data-service-date="{{ selected_date.isoformat() }}"
-                        aria-pressed="{{ 'true' if boxed_at else 'false' }}"
-                        draggable="false"
-                    >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
+                    {{ render_boxed_button(order, boxed_at, selected_date) }}
                     {% set boxed_action.rendered = true %}
                     {% endif %}
                     <div class="pizza-bake-stack">
@@ -212,15 +220,7 @@
     </ul>
     {% if selected_date >= today and not boxed_action.rendered and not is_unpaid %}
     <div class="order-boxed-fallback">
-        <button
-            type="button"
-            class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
-            data-order-boxed-button
-            data-order-id="{{ order.order_id }}"
-            data-service-date="{{ selected_date.isoformat() }}"
-            aria-pressed="{{ 'true' if boxed_at else 'false' }}"
-            draggable="false"
-        >{% if boxed_at %}Undo boxed{% else %}Mark boxed{% endif %}</button>
+        {{ render_boxed_button(order, boxed_at, selected_date) }}
     </div>
     {% endif %}
     </div>
