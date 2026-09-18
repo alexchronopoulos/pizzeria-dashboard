@@ -3555,6 +3555,41 @@ def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> N
     assert "Math.max(fullCount - consumedCount, 0)" in javascript
 
 
+def test_pizza_countdown_opens_live_remaining_breakdown_without_moving_board(tmp_path: Path) -> None:
+    app = _test_app(tmp_path)
+    today = datetime.now(ZoneInfo(app.config["SERVICE_TIMEZONE"])).date()
+    response = app.test_client().get(f"/?date={today.isoformat()}")
+    html = response.get_data(as_text=True)
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+
+    assert response.status_code == 200
+    assert 'class="pizza-countdown"' in html
+    assert 'aria-haspopup="dialog"' in html
+    assert 'aria-controls="pizza-breakdown-overlay"' in html
+    assert 'data-pizza-breakdown-overlay' in html
+    assert 'role="dialog"' in html
+    assert 'data-pizza-breakdown-list' in html
+    assert 'data-pizza-breakdown-total' in html
+    assert "Tap anywhere to close" in html
+
+    assert "const renderPizzaBreakdown = (consumedCounts) =>" in javascript
+    assert ".filter(({remaining}) => remaining > 0);" in javascript
+    assert 'count.textContent = `${remaining}×`;' in javascript
+    assert 'pizzaBreakdownOverlay?.addEventListener("click", closePizzaBreakdown);' in javascript
+    assert 'event.key === "Escape"' in javascript
+    assert "focus({preventScroll: true})" in javascript
+    assert '[data-pizza-breakdown-overlay]:not([hidden])' in javascript
+    assert "document.body.style.overflow" not in javascript
+
+    countdown_rules = css.split(".pizza-countdown {", 1)[1].split("}", 1)[0]
+    overlay_rules = css.split(".pizza-breakdown-overlay {", 1)[1].split("}", 1)[0]
+    assert "pointer-events: auto;" in countdown_rules
+    assert "position: fixed;" in overlay_rules
+    assert "inset: 0;" in overlay_rules
+    assert ".pizza-breakdown-overlay[hidden] {\n    display: none;" in css
+
+
 def test_done_timer_rail_can_be_dismissed_per_device() -> None:
     javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
     assert "pizzeria-dashboard:dismissed-done-timers:" in javascript
@@ -3591,7 +3626,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.47' in html
+    assert 'style.css?v=0.5.48' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -3609,7 +3644,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.38' in html
+    assert 'dashboard.js?v=0.5.39' in html
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html

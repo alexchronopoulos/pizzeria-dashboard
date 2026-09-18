@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.37">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.38">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -263,10 +263,43 @@
 </div>
 
 {% if selected_date == today %}
-<aside class="pizza-countdown" data-pizza-countdown aria-live="polite" aria-label="Pizzas remaining today">
+<button
+    class="pizza-countdown"
+    type="button"
+    data-pizza-countdown
+    aria-live="polite"
+    aria-label="Pizzas remaining today. Tap for the pie breakdown."
+    aria-haspopup="dialog"
+    aria-controls="pizza-breakdown-overlay"
+>
     <strong data-pizza-countdown-value>{{ service.total_pizzas }}</strong>
     <span>pizzas all day</span>
-</aside>
+    <small>tap for breakdown</small>
+</button>
+<div
+    id="pizza-breakdown-overlay"
+    class="pizza-breakdown-overlay"
+    data-pizza-breakdown-overlay
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="pizza-breakdown-title"
+    aria-describedby="pizza-breakdown-close-hint"
+    tabindex="-1"
+    hidden
+>
+    <section class="pizza-breakdown-card">
+        <header class="pizza-breakdown-header">
+            <div>
+                <span class="pizza-breakdown-eyebrow">Pizzas all day</span>
+                <h2 id="pizza-breakdown-title">Pies remaining</h2>
+            </div>
+            <strong class="pizza-breakdown-total" data-pizza-breakdown-total>{{ service.total_pizzas }} remaining</strong>
+        </header>
+        <ul class="pizza-breakdown-list" data-pizza-breakdown-list></ul>
+        <p class="pizza-breakdown-empty" data-pizza-breakdown-empty hidden>No whole pies remaining.</p>
+        <p id="pizza-breakdown-close-hint" class="pizza-breakdown-close-hint">Tap anywhere to close</p>
+    </section>
+</div>
 <aside class="active-timer-rail" data-active-timer-rail aria-label="Active timers" hidden></aside>
 {% endif %}
 
@@ -296,5 +329,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.38') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.39') }}" defer></script>
 {% endblock %}

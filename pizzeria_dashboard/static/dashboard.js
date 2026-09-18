@@ -1132,13 +1132,17 @@
     const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
     const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
     const countdown = document.querySelector("[data-pizza-countdown]");
+    const pizzaBreakdownOverlay = document.querySelector("[data-pizza-breakdown-overlay]");
+    const pizzaBreakdownList = pizzaBreakdownOverlay?.querySelector("[data-pizza-breakdown-list]");
+    const pizzaBreakdownTotal = pizzaBreakdownOverlay?.querySelector("[data-pizza-breakdown-total]");
+    const pizzaBreakdownEmpty = pizzaBreakdownOverlay?.querySelector("[data-pizza-breakdown-empty]");
     const timerRail = document.querySelector("[data-active-timer-rail]");
     const decrementAllDayCounts = board?.dataset.decrementAllDayCounts === "true";
     const pieAllDayRows = Array.from(document.querySelectorAll("[data-pie-all-day-row]"));
     const modifierAllDayRows = Array.from(document.querySelectorAll("[data-modifier-all-day-row]"));
     const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
     const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
-    if (!board || (!timers.length && !selectors.length && !orderRows.length)) {
+    if (!board || (!timers.length && !selectors.length && !orderRows.length && !countdown)) {
         return;
     }
 
@@ -1188,6 +1192,7 @@
     let pieStates = {};
     let boxedOrders = {};
     let lastPizzaCountdownRemaining = null;
+    let lastPizzaBreakdownSignature = null;
     let lastFinishedTimerPopupCount = null;
     const completionPosts = new Set();
 
@@ -1610,7 +1615,10 @@
             value.textContent = String(remaining);
         }
         countdown.classList.toggle("pizza-countdown--finished", remaining === 0 && total > 0);
-        countdown.setAttribute("aria-label", `${remaining} pizza${remaining === 1 ? "" : "s"} remaining today`);
+        countdown.setAttribute(
+            "aria-label",
+            `${remaining} pizza${remaining === 1 ? "" : "s"} remaining today. Tap for the pie breakdown.`,
+        );
         if (lastPizzaCountdownRemaining !== null && lastPizzaCountdownRemaining > 0 && remaining === 0 && total > 0) {
             triggerPizzaFinale();
         }
@@ -1658,11 +1666,56 @@
         });
     };
 
+    const renderPizzaBreakdown = (consumedCounts) => {
+        if (
+            !pizzaBreakdownOverlay
+            || pizzaBreakdownOverlay.hidden
+            || !pizzaBreakdownList
+            || !pizzaBreakdownTotal
+            || !pizzaBreakdownEmpty
+        ) {
+            return;
+        }
+        const remainingRows = pieAllDayRows
+            .map((row) => {
+                const name = row.dataset.summaryName || "Pizza";
+                const full = Math.max(0, Number.parseInt(row.dataset.fullCount || "0", 10) || 0);
+                const consumed = consumedCounts.get(name) || 0;
+                return {
+                    name,
+                    remaining: decrementAllDayCounts ? Math.max(full - consumed, 0) : full,
+                };
+            })
+            .filter(({remaining}) => remaining > 0);
+        const remainingTotal = remainingRows.reduce((total, row) => total + row.remaining, 0);
+        pizzaBreakdownTotal.textContent = `${remainingTotal} pizza${remainingTotal === 1 ? "" : "s"} remaining`;
+        pizzaBreakdownList.hidden = remainingRows.length === 0;
+        pizzaBreakdownEmpty.hidden = remainingRows.length > 0;
+
+        const signature = JSON.stringify(remainingRows);
+        if (signature === lastPizzaBreakdownSignature) {
+            return;
+        }
+        lastPizzaBreakdownSignature = signature;
+        const fragment = document.createDocumentFragment();
+        remainingRows.forEach(({name, remaining}) => {
+            const row = document.createElement("li");
+            const count = document.createElement("strong");
+            const label = document.createElement("span");
+            count.textContent = `${remaining}×`;
+            label.textContent = name;
+            row.append(count, label);
+            fragment.appendChild(row);
+        });
+        pizzaBreakdownList.replaceChildren(fragment);
+    };
+
     const renderAllDayCounts = () => {
         const consumedPies = committedPizzaCounts();
         const boxedModifiers = boxedCountsFor("orderModifierCounts");
         renderAllDaySummaryRows(pieAllDayRows, consumedPies);
         renderAllDaySummaryRows(modifierAllDayRows, boxedModifiers);
+        renderPizzaBreakdown(consumedPies);
 
         if (pieAllDayTotal) {
             const full = Math.max(0, Number.parseInt(pieAllDayTotal.dataset.fullCount || "0", 10) || 0);
@@ -1725,8 +1778,36 @@
         renderActiveTimerRail();
     };
 
+    const closePizzaBreakdown = () => {
+        if (!pizzaBreakdownOverlay || pizzaBreakdownOverlay.hidden) {
+            return;
+        }
+        pizzaBreakdownOverlay.hidden = true;
+        countdown?.focus({preventScroll: true});
+    };
+
+    const openPizzaBreakdown = () => {
+        if (!pizzaBreakdownOverlay) {
+            return;
+        }
+        pizzaBreakdownOverlay.hidden = false;
+        lastPizzaBreakdownSignature = null;
+        renderAllDayCounts();
+        pizzaBreakdownOverlay.focus({preventScroll: true});
+    };
+
+    countdown?.addEventListener("click", openPizzaBreakdown);
+    pizzaBreakdownOverlay?.addEventListener("click", closePizzaBreakdown);
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && pizzaBreakdownOverlay && !pizzaBreakdownOverlay.hidden) {
+            event.preventDefault();
+            closePizzaBreakdown();
+        }
+    });
+
     const shouldHoldBoardReload = () => (
         Boolean(document.querySelector("dialog[open]"))
+        || Boolean(pizzaBreakdownOverlay && !pizzaBreakdownOverlay.hidden)
         || document.body.classList.contains("walk-in-assignment-pending")
     );
 
@@ -1976,6 +2057,7 @@
     const shouldDefer = () => (
         document.hidden
         || Boolean(document.querySelector("dialog[open]"))
+        || Boolean(document.querySelector("[data-pizza-breakdown-overlay]:not([hidden])"))
         || document.body.classList.contains("walk-in-assignment-pending")
     );
 
