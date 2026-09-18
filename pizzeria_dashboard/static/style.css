@@ -3689,7 +3689,6 @@ h2 {
 }
 
 .pizza-countdown {
-    appearance: none;
     position: fixed;
     right: 18px;
     bottom: 18px;
@@ -3707,16 +3706,9 @@ h2 {
     box-shadow: 0 10px 28px rgba(0, 35, 56, 0.3);
     color: var(--text);
     cursor: pointer;
-    font: inherit;
     pointer-events: auto;
     text-align: center;
     touch-action: manipulation;
-    transition: transform 120ms ease, box-shadow 120ms ease;
-}
-
-.pizza-countdown:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 13px 30px rgba(0, 35, 56, 0.34);
 }
 
 .pizza-countdown:focus-visible {
@@ -3741,24 +3733,13 @@ h2 {
     white-space: nowrap;
 }
 
-.pizza-countdown small {
-    color: rgba(0, 0, 0, 0.68);
-    font-size: 0.57rem;
-    font-weight: 900;
-    letter-spacing: 0.04em;
-    line-height: 1;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-
 .pizza-countdown--finished {
     background: var(--brand-green);
     color: white;
 }
 
 .pizza-countdown--finished strong,
-.pizza-countdown--finished span,
-.pizza-countdown--finished small {
+.pizza-countdown--finished span {
     color: white;
 }
 
@@ -4042,10 +4023,6 @@ h2 {
 
     .pizza-countdown span {
         font-size: 0.68rem;
-    }
-
-    .pizza-countdown small {
-        font-size: 0.5rem;
     }
 
     .pizza-breakdown-overlay {

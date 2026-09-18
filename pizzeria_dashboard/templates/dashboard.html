@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.38">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.39">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -263,10 +263,11 @@
 </div>
 
 {% if selected_date == today %}
-<button
+<aside
     class="pizza-countdown"
-    type="button"
     data-pizza-countdown
+    role="button"
+    tabindex="0"
     aria-live="polite"
     aria-label="Pizzas remaining today. Tap for the pie breakdown."
     aria-haspopup="dialog"
@@ -274,8 +275,7 @@
 >
     <strong data-pizza-countdown-value>{{ service.total_pizzas }}</strong>
     <span>pizzas all day</span>
-    <small>tap for breakdown</small>
-</button>
+</aside>
 <div
     id="pizza-breakdown-overlay"
     class="pizza-breakdown-overlay"
@@ -329,5 +329,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.39') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.40') }}" defer></script>
 {% endblock %}

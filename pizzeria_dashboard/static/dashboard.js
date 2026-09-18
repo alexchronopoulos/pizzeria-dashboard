@@ -1797,6 +1797,12 @@
     };
 
     countdown?.addEventListener("click", openPizzaBreakdown);
+    countdown?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openPizzaBreakdown();
+        }
+    });
     pizzaBreakdownOverlay?.addEventListener("click", closePizzaBreakdown);
     window.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && pizzaBreakdownOverlay && !pizzaBreakdownOverlay.hidden) {
