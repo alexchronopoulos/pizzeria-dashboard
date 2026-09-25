@@ -3430,8 +3430,7 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
     assert 'badge--merch">1× Mari T-Shirt — Large' in html
     assert 'order-row--double-cut' in html
     assert 'order-row--dont-cut' in html
-    assert 'aria-label="Double Cut">| | | |</span>' in html
-    assert 'aria-label="Don\'t Cut">X</span>' in html
+    assert 'class="cut-pattern' not in html
     assert 'class="prep-timing-table"' in html
     assert '<th scope="col">Cucumber Salad</th>' in html
     assert '<th scope="col">Industrie Pie</th>' in html
@@ -3455,6 +3454,83 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
     )
     assert details.status_code == 200
     assert "1× Mari T-Shirt — Large" in details.get_data(as_text=True)
+
+
+def test_prep_timing_table_aligns_shared_rows_and_omits_unscheduled(
+    tmp_path: Path,
+) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 8, 13)
+    orders = (
+        Order(
+            "industrie-445",
+            "A",
+            datetime(2026, 8, 13, 16, 45),
+            (Item("Industrie Pie", 1, "pizza"),),
+            square_order_id="square-industrie-445",
+        ),
+        Order(
+            "caesar-530",
+            "B",
+            datetime(2026, 8, 13, 17, 30),
+            (Item("Caesar Salad", 1, "salad"),),
+            square_order_id="square-caesar-530",
+        ),
+        Order(
+            "salads-545",
+            "C",
+            datetime(2026, 8, 13, 17, 45),
+            (
+                Item("Caesar Salad", 1, "salad"),
+                Item("Smashed Cuke Salad", 1, "salad"),
+            ),
+            square_order_id="square-salads-545",
+        ),
+        Order(
+            "cuke-630",
+            "D",
+            datetime(2026, 8, 13, 18, 30),
+            (Item("Smashed Cuke Salad", 1, "salad"),),
+            square_order_id="square-cuke-630",
+        ),
+        Order(
+            "unscheduled-cuke",
+            "Counter order",
+            datetime(2026, 8, 13, 18, 0),
+            (Item("Smashed Cuke Salad", 1, "salad"),),
+            is_walk_in=True,
+            ticket_name="Counter order",
+        ),
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, orders, source="square"
+    )
+
+    response = app.test_client().get(f"/?date={selected.isoformat()}")
+    html = response.get_data(as_text=True)
+    table_start = html.index('<table class="prep-timing-table"')
+    table_end = html.index("</table>", table_start)
+    table = html[table_start:table_end]
+    rows = re.findall(r"<tr>(.*?)</tr>", table, re.DOTALL)
+    row_445 = next(row for row in rows if ">4:45 PM</time>" in row)
+    row_545 = next(row for row in rows if ">5:45 PM</time>" in row)
+    cells_445 = re.findall(r"<td([^>]*)>(.*?)</td>", row_445, re.DOTALL)
+    cells_545 = re.findall(r"<td([^>]*)>(.*?)</td>", row_545, re.DOTALL)
+
+    assert response.status_code == 200
+    assert ["Caesar Salad", "Smashed Cuke Salad", "Industrie Pie"] == re.findall(
+        r'<th scope="col">([^<]+)</th>', table
+    )
+    assert "prep-timing-cell--empty" in cells_445[0][0]
+    assert "prep-timing-cell--empty" in cells_445[1][0]
+    assert ">4:45 PM</time>" in cells_445[2][1]
+    assert ">5:45 PM</time>" in cells_545[0][1]
+    assert ">5:45 PM</time>" in cells_545[1][1]
+    assert "prep-timing-cell--empty" in cells_545[2][0]
+    assert "Unscheduled" not in table
+    assert 'data-order-id="unscheduled-cuke"' in html
 
 
 def test_manual_order_can_be_added_without_square_and_appears_on_board(
@@ -3830,7 +3906,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.52' in html
+    assert 'style.css?v=0.5.53' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html

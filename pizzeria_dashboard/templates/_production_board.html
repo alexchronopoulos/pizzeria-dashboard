@@ -118,12 +118,6 @@
             {% if order.drink_count %}
             <span class="badge badge--drink">{{ order.drink_count }}× Drink{% if order.drink_count != 1 %}s{% endif %}</span>
             {% endif %}
-            {% if order.has_double_cut %}
-            <span class="cut-pattern cut-pattern--double" title="Double Cut" aria-label="Double Cut">| | | |</span>
-            {% endif %}
-            {% if order.has_dont_cut %}
-            <span class="cut-pattern cut-pattern--none" title="Don't Cut" aria-label="Don't Cut">X</span>
-            {% endif %}
         </div>
     </div>
     {% if is_unpaid %}
@@ -335,30 +329,30 @@
                 <strong id="prep-timing-heading">À la minute timing</strong>
                 <span>Salads &amp; prosciutto</span>
             </div>
-            {% if prep_timing_rows %}
+            {% if prep_timing_columns and prep_timing_rows %}
             <table class="prep-timing-table" aria-label="À la minute pickup times by item">
                 <thead>
                     <tr>
-                        {% for row in prep_timing_rows %}
-                        <th scope="col">{{ row.name }}</th>
+                        {% for column in prep_timing_columns %}
+                        <th scope="col">{{ column.name }}</th>
                         {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
+                    {% for timing_row in prep_timing_rows %}
                     <tr>
-                        {% for row in prep_timing_rows %}
-                        <td>
-                            <div class="prep-timing-slots">
-                                {% for entry in row.entries %}
-                                <span class="prep-timing-slot">
-                                    {% if entry.quantity > 1 %}<b>{{ entry.quantity }}×</b>{% endif %}
-                                    {% if entry.pickup_at %}<time datetime="{{ entry.pickup_at.isoformat() }}">{{ entry.pickup_at.strftime('%-I:%M %p') }}</time>{% else %}Unscheduled{% endif %}
-                                </span>
-                                {% endfor %}
-                            </div>
+                        {% for quantity in timing_row.quantities %}
+                        <td{% if not quantity %} class="prep-timing-cell--empty"{% endif %}>
+                            {% if quantity %}
+                            <span class="prep-timing-slot">
+                                {% if quantity > 1 %}<b>{{ quantity }}×</b>{% endif %}
+                                <time datetime="{{ timing_row.pickup_at.isoformat() }}">{{ timing_row.pickup_at.strftime('%-I:%M %p') }}</time>
+                            </span>
+                            {% endif %}
                         </td>
                         {% endfor %}
                     </tr>
+                    {% endfor %}
                 </tbody>
             </table>
             {% else %}

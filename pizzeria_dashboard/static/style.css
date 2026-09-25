@@ -615,28 +615,6 @@ h2 {
     gap: 7px;
 }
 
-.cut-pattern {
-    display: inline-flex;
-    min-height: 28px;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 9px;
-    border: 2px solid var(--brand-red);
-    border-radius: 7px;
-    background: white;
-    color: var(--brand-red);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.9rem;
-    font-weight: 1000;
-    line-height: 1;
-    white-space: nowrap;
-}
-
-.cut-pattern--none {
-    min-width: 31px;
-    font-size: 1.05rem;
-}
-
 .order-note {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -1599,16 +1577,18 @@ h2 {
 }
 
 .prep-timing-table tbody td {
+    height: 43px;
     border-top: 1px solid rgba(17, 17, 17, 0.25);
+    vertical-align: middle;
 }
 
-.prep-timing-slots {
-    display: grid;
-    gap: 5px;
+.prep-timing-cell--empty {
+    background: white;
 }
 
 .prep-timing-slot {
-    display: inline-flex;
+    display: flex;
+    width: 100%;
     align-items: baseline;
     justify-content: center;
     gap: 3px;

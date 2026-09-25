@@ -425,7 +425,7 @@ def _online_order_reserve(
 
 
 def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
-    """Group salad and Industrie Pie quantities by pickup time for prep."""
+    """Group scheduled salad and Industrie Pie quantities by pickup time."""
     grouped: dict[tuple[int, str], dict[str, object]] = {}
 
     def add(name: str, pickup_at: datetime | None, quantity: int, *, rank: int) -> None:
@@ -449,8 +449,6 @@ def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
     for window in service.windows:
         for order in window.orders:
             add_order(order, window.pickup_at)
-    for order in service.unscheduled_orders:
-        add_order(order, None)
 
     rows: list[dict[str, object]] = []
     for key in sorted(grouped):
@@ -468,6 +466,41 @@ def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
         )
         rows.append({"name": row["name"], "entries": entries})
     return tuple(rows)
+
+
+def _prep_timing_matrix_rows(
+    columns: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    """Align every prep item against one shared chronological time axis."""
+    counts_by_column: list[dict[datetime, int]] = []
+    pickup_times: set[datetime] = set()
+    for column in columns:
+        counts: dict[datetime, int] = {}
+        entries = column.get("entries", ())
+        if isinstance(entries, tuple):
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                pickup_at = entry.get("pickup_at")
+                # Unscheduled orders remain in their normal dashboard lane and
+                # deliberately do not appear in the at-a-glance timing matrix.
+                if not isinstance(pickup_at, datetime):
+                    continue
+                quantity = max(int(entry.get("quantity", 0)), 0)
+                if quantity:
+                    counts[pickup_at] = quantity
+                    pickup_times.add(pickup_at)
+        counts_by_column.append(counts)
+
+    return tuple(
+        {
+            "pickup_at": pickup_at,
+            "quantities": tuple(
+                counts.get(pickup_at, 0) for counts in counts_by_column
+            ),
+        }
+        for pickup_at in sorted(pickup_times)
+    )
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
@@ -659,6 +692,7 @@ def index() -> str:
         square_refresh_controls_visible
         and selected_date >= now.date()
     )
+    prep_timing_columns = _prep_timing_rows(service)
 
     return render_template(
         "dashboard.html",
@@ -694,7 +728,8 @@ def index() -> str:
         customer_notes=customer_notes,
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
-        prep_timing_rows=_prep_timing_rows(service),
+        prep_timing_columns=prep_timing_columns,
+        prep_timing_rows=_prep_timing_matrix_rows(prep_timing_columns),
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
         service_notes=service_notes,
