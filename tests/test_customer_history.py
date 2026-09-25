@@ -78,6 +78,43 @@ def test_customer_visit_summary_counts_walk_in_pie_orders_separately() -> None:
     assert summary.walk_in_pie_orders == 1
 
 
+def test_customer_visit_summary_counts_vip_orders() -> None:
+    pickup_at = datetime(2026, 8, 9, 20, 0)
+    orders = (
+        Order(
+            "vip-preorder",
+            "A",
+            pickup_at,
+            (Item("Plain Pie", 1, "pizza"),),
+            square_order_id="square-vip-preorder",
+        ),
+        Order(
+            "regular-preorder",
+            "B",
+            pickup_at,
+            (Item("White Pie", 1, "pizza"),),
+            square_order_id="square-regular-preorder",
+        ),
+        Order(
+            "vip-walk-in",
+            "Walk-in",
+            pickup_at,
+            (Item("Tomato Pie", 1, "pizza"),),
+            is_walk_in=True,
+        ),
+    )
+
+    summary = build_customer_visit_summary(
+        orders,
+        {},
+        {"vip-preorder", "vip-walk-in"},
+    )
+
+    assert summary.total_orders == 2
+    assert summary.vip_orders == 1
+    assert summary.percent(summary.vip_orders) == 50
+
+
 def test_customer_summary_labels() -> None:
     first = datetime(2026, 1, 1, tzinfo=UTC)
     last = datetime(2026, 7, 1, tzinfo=UTC)

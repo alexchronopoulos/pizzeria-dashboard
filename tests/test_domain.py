@@ -63,6 +63,32 @@ def test_compact_production_modifiers_hide_salads_and_cookies() -> None:
     assert item.production_modifiers[-1].is_removal is True
 
 
+def test_cut_patterns_and_merch_size_are_exposed_for_production() -> None:
+    pizza = Item(
+        "Plain Pie",
+        1,
+        "pizza",
+        modifiers=(Modifier("Double Cut"), Modifier("Don't Cut")),
+    )
+    shirt = Item(
+        "Mari T-Shirt",
+        1,
+        "merch",
+        variation_name="Large",
+    )
+    order = Order(
+        "order-with-service-tags",
+        "Alex",
+        datetime(2026, 7, 31, 16, 0),
+        (pizza, shirt),
+    )
+
+    assert order.has_double_cut is True
+    assert order.has_dont_cut is True
+    assert shirt.merch_display_name == "Mari T-Shirt — Large"
+    assert order.merch_summary == (("Mari T-Shirt — Large", 1),)
+
+
 def test_side_modifiers_are_summarized_and_hidden_from_production_modifiers() -> None:
     from datetime import datetime
 

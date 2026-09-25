@@ -76,6 +76,7 @@ class CustomerVisitSummary:
     regulars: int
     unavailable: int
     walk_in_pie_orders: int = 0
+    vip_orders: int = 0
 
     @property
     def matched_orders(self) -> int:
@@ -90,6 +91,7 @@ class CustomerVisitSummary:
 def build_customer_visit_summary(
     orders: Iterable[Order],
     summaries: Mapping[str, CustomerSummary],
+    vip_order_ids: Iterable[str] = (),
 ) -> CustomerVisitSummary:
     """Classify scheduled orders using their visit count at that order.
 
@@ -105,6 +107,8 @@ def build_customer_visit_summary(
     regulars = 0
     unavailable = 0
     walk_in_pie_orders = 0
+    vip_orders = 0
+    vip_ids = set(vip_order_ids)
 
     for order in orders:
         if order.is_walk_in:
@@ -112,6 +116,8 @@ def build_customer_visit_summary(
                 walk_in_pie_orders += 1
             continue
         total_orders += 1
+        if order.order_id in vip_ids:
+            vip_orders += 1
         key = order.square_order_id or order.order_id
         summary = summaries.get(key)
         if summary is None:
@@ -130,6 +136,7 @@ def build_customer_visit_summary(
         regulars=regulars,
         unavailable=unavailable,
         walk_in_pie_orders=walk_in_pie_orders,
+        vip_orders=vip_orders,
     )
 
 

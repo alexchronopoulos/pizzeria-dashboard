@@ -372,7 +372,7 @@
       <div class="detail-item-list">
         {% for item in order.items if item.category != "slice" %}
         <div class="detail-item">
-          <div class="detail-item-heading"><strong>{{ item.quantity }}× {{ item.display_name }}</strong><span>{{ item.category }}</span></div>
+          <div class="detail-item-heading"><strong>{{ item.quantity }}× {% if item.category == "merch" %}{{ item.merch_display_name }}{% else %}{{ item.display_name }}{% endif %}</strong><span>{{ item.category }}</span></div>
           {% if item.production_modifiers %}
           <ul>{% for modifier in item.production_modifiers %}<li>{{ modifier.quantity }}× {{ modifier.display_name }}</li>{% endfor %}</ul>
           {% endif %}

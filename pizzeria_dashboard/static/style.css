@@ -615,6 +615,28 @@ h2 {
     gap: 7px;
 }
 
+.cut-pattern {
+    display: inline-flex;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 9px;
+    border: 2px solid var(--brand-red);
+    border-radius: 7px;
+    background: white;
+    color: var(--brand-red);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.9rem;
+    font-weight: 1000;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.cut-pattern--none {
+    min-width: 31px;
+    font-size: 1.05rem;
+}
+
 .order-note {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -1517,6 +1539,96 @@ h2 {
     color: var(--brand-blue);
     font-size: 0.9rem;
     font-weight: 900;
+}
+
+.prep-timing-section {
+    margin-top: 16px;
+    padding-top: 13px;
+    border-top: 2px solid rgba(17, 17, 17, 0.3);
+}
+
+.prep-timing-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.prep-timing-heading > strong {
+    color: var(--brand-blue);
+    font-size: 0.88rem;
+    font-weight: 900;
+}
+
+.prep-timing-heading > span {
+    color: var(--muted);
+    font-size: 0.69rem;
+    font-weight: 850;
+    text-transform: uppercase;
+}
+
+.prep-timing-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 2px solid var(--black);
+    background: white;
+    font-size: 0.78rem;
+}
+
+.prep-timing-table th,
+.prep-timing-table td {
+    padding: 7px 8px;
+    border-bottom: 1px solid rgba(17, 17, 17, 0.25);
+    text-align: left;
+    vertical-align: top;
+}
+
+.prep-timing-table thead th {
+    background: var(--soft-green);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+}
+
+.prep-timing-table tbody th {
+    width: 38%;
+    color: var(--brand-green);
+    font-weight: 900;
+}
+
+.prep-timing-table tbody tr:last-child > * {
+    border-bottom: 0;
+}
+
+.prep-timing-slots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.prep-timing-slot {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    padding: 3px 6px;
+    border: 1px solid var(--black);
+    border-radius: 999px;
+    background: var(--brand-cream);
+    font-weight: 850;
+    white-space: nowrap;
+}
+
+.prep-timing-slot b {
+    color: var(--brand-red);
+}
+
+.prep-timing-empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 750;
 }
 
 .receipt-number--fallback {
@@ -3521,6 +3633,7 @@ h2 {
 .customer-visit-metric--returning { background: #f4efff; }
 .customer-visit-metric--regular { background: var(--soft-green); }
 .customer-visit-metric--unknown { background: #f2f2f2; }
+.customer-visit-metric--vip { background: var(--brand-yellow); }
 
 @media (max-width: 900px) {
     .customer-visit-summary {
@@ -4065,7 +4178,7 @@ html {
 /* Service polish 0.5.13: walk-in visit mix and zero-pie finale. */
 @media (min-width: 901px) {
     .customer-visit-metrics {
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(6, minmax(0, 1fr));
     }
 }
 

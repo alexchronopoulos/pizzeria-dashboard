@@ -314,7 +314,10 @@ def _production_pie_keys(service_date: date, orders: tuple[Order, ...]) -> tuple
     keys: list[str] = []
     for order in orders:
         order_key = order.square_order_id or order.order_id
-        for index, item in enumerate(order.production_items):
+        # The template numbers only card-visible items. Using the broader
+        # production-item sequence here caused a salad/side/merch line before a
+        # pizza to make cleanup delete that pizza's active timer on refresh.
+        for index, item in enumerate(order.card_items):
             if item.category != "pizza":
                 continue
             item_key = item.catalog_object_id or item.name
@@ -359,15 +362,54 @@ def _available_pickup_windows(
 
 
 def _online_order_reserve(
-    orders: tuple[Order, ...], *, configured_reserve: int
+    orders: tuple[Order, ...],
+    *,
+    configured_reserve: int,
+    configured_pickup_times: tuple[datetime, ...] | None = None,
+    now: datetime | None = None,
+    pickup_time_overrides: Mapping[str, datetime | None] | None = None,
 ) -> int:
-    """Return the configured online pizza allocation that remains available.
+    """Return the time-aware online pizza allocation that remains available.
 
-    The allocation is independent of pickup-slot count and distribution. Active
-    online pizza quantities consume it; walk-ins and dashboard-only manual orders
-    do not. Releasing or completing a Square order returns its pizza quantity to
-    the reserve. One reserved online pizza always holds one dough ball.
+    The saved input remains one fixed daily total. When configured pickup times
+    and the current time are supplied, that total is apportioned as evenly as
+    possible across configured slots and each slot's share expires only after its
+    pickup time passes. Active online pizzas in unelapsed slots consume the live
+    allocation; walk-ins and dashboard-only manual orders never do. Custom slots
+    therefore cannot create additional online reserve.
     """
+    reserve_total = max(int(configured_reserve), 0)
+    remaining_allocation = reserve_total
+    current_wall_time: datetime | None = None
+    if configured_pickup_times is not None and now is not None:
+        current_wall_time = _local_service_time(now)
+        slots = tuple(
+            sorted(
+                dict.fromkeys(
+                    _local_service_time(pickup_at)
+                    for pickup_at in configured_pickup_times
+                )
+            )
+        )
+        if not slots:
+            remaining_allocation = 0
+        else:
+            per_slot, extra_slots = divmod(reserve_total, len(slots))
+            remaining_allocation = sum(
+                per_slot + (1 if index < extra_slots else 0)
+                for index, pickup_at in enumerate(slots)
+                if pickup_at >= current_wall_time
+            )
+
+    overrides = pickup_time_overrides or {}
+
+    def belongs_to_unelapsed_service(order: Order) -> bool:
+        if current_wall_time is None:
+            return True
+        override = overrides.get(order.order_id)
+        effective_pickup_at = override if override is not None else order.pickup_at
+        return _local_service_time(effective_pickup_at) >= current_wall_time
+
     active_online_pizzas = sum(
         order.pizza_units
         for order in orders
@@ -377,8 +419,55 @@ def _online_order_reserve(
         and not order.is_manual
         and not order.released
         and order.fulfillment_state != "COMPLETED"
+        and belongs_to_unelapsed_service(order)
     )
-    return max(max(int(configured_reserve), 0) - active_online_pizzas, 0)
+    return max(remaining_allocation - active_online_pizzas, 0)
+
+
+def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
+    """Group salad and Industrie Pie quantities by pickup time for prep."""
+    grouped: dict[tuple[int, str], dict[str, object]] = {}
+
+    def add(name: str, pickup_at: datetime | None, quantity: int, *, rank: int) -> None:
+        if quantity <= 0:
+            return
+        key = (rank, name.casefold())
+        row = grouped.setdefault(key, {"name": name, "counts": {}})
+        counts = row["counts"]
+        if isinstance(counts, dict):
+            counts[pickup_at] = int(counts.get(pickup_at, 0)) + quantity
+
+    def add_order(order: Order, pickup_at: datetime | None) -> None:
+        if not order.requires_preparation:
+            return
+        for salad_name, quantity in order.salad_summary:
+            add(salad_name, pickup_at, quantity, rank=0)
+        for item in order.production_items:
+            if item.category == "pizza" and item.display_name.casefold() == "industrie pie":
+                add(item.display_name, pickup_at, item.quantity, rank=1)
+
+    for window in service.windows:
+        for order in window.orders:
+            add_order(order, window.pickup_at)
+    for order in service.unscheduled_orders:
+        add_order(order, None)
+
+    rows: list[dict[str, object]] = []
+    for key in sorted(grouped):
+        row = grouped[key]
+        counts = row["counts"]
+        entries = tuple(
+            {
+                "pickup_at": pickup_at,
+                "quantity": quantity,
+            }
+            for pickup_at, quantity in sorted(
+                counts.items(),
+                key=lambda entry: (entry[0] is None, entry[0] or datetime.max),
+            )
+        )
+        rows.append({"name": row["name"], "entries": entries})
+    return tuple(rows)
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
@@ -507,6 +596,9 @@ def index() -> str:
         online_order_dough_reserve = _online_order_reserve(
             orders,
             configured_reserve=inventory_state.online_order_reserve,
+            configured_pickup_times=tuple(configured_pickup_times),
+            now=now,
+            pickup_time_overrides=pickup_overrides,
         )
     else:
         online_order_dough_reserve = 0
@@ -550,7 +642,9 @@ def index() -> str:
     customer_notes = _customer_notes_for_orders(
         orders, customer_summaries, customer_profiles
     )
-    customer_visit_summary = build_customer_visit_summary(orders, customer_summaries)
+    customer_visit_summary = build_customer_visit_summary(
+        orders, customer_summaries, vip_order_ids
+    )
     customer_history_info = load_customer_history_sync_info(database_path)
     auto_refresh_preference, auto_sync_seconds = _auto_refresh_preferences()
     square_refresh_controls_visible = (
@@ -600,6 +694,7 @@ def index() -> str:
         customer_notes=customer_notes,
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
+        prep_timing_rows=_prep_timing_rows(service),
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
         service_notes=service_notes,

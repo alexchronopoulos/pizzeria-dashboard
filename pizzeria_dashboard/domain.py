@@ -168,6 +168,20 @@ class Modifier:
             )
         )
 
+    @property
+    def is_double_cut(self) -> bool:
+        return bool(re.search(r"\bdouble\s+cut\b", self.name, re.IGNORECASE))
+
+    @property
+    def is_dont_cut(self) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:don['’]?t|do\s+not|no)\s+cut\b",
+                self.name,
+                re.IGNORECASE,
+            )
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Item:
@@ -182,6 +196,16 @@ class Item:
     @property
     def display_name(self) -> str:
         return production_display_name(self.name)
+
+    @property
+    def merch_display_name(self) -> str:
+        """Include a Square merchandise variation such as a shirt size."""
+        if self.category != "merch":
+            return self.display_name
+        variation = production_display_name(self.variation_name or "")
+        if not variation or variation.casefold() in self.display_name.casefold():
+            return self.display_name
+        return f"{self.display_name} — {variation}"
 
     @property
     def pizza_units(self) -> int:
@@ -465,13 +489,29 @@ class Order:
         counts: Counter[str] = Counter()
         for item in self.production_items:
             if item.category == "merch":
-                counts[item.display_name] += item.quantity
+                counts[item.merch_display_name] += item.quantity
         return counts
 
     @property
     def merch_summary(self) -> tuple[tuple[str, int], ...]:
         return tuple(
             sorted(self.merch_counts.items(), key=lambda entry: entry[0].casefold())
+        )
+
+    @property
+    def has_double_cut(self) -> bool:
+        return any(
+            modifier.is_double_cut
+            for item in self.production_items
+            for modifier in item.modifiers
+        )
+
+    @property
+    def has_dont_cut(self) -> bool:
+        return any(
+            modifier.is_dont_cut
+            for item in self.production_items
+            for modifier in item.modifiers
         )
 
     @property

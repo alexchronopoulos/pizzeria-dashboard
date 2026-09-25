@@ -2139,6 +2139,12 @@ def _normalized_pie_state(
 def prune_pie_production_states(
     path: Path, service_date: date, valid_pie_keys: Iterable[str]
 ) -> int:
+    """Remove only unused stale rows; never erase a timer with real state.
+
+    Square refreshes can briefly change or omit a rendered pie key. A running,
+    paused, or completed timer is operational history and must survive that
+    refresh. Only an untouched idle row is safe to discard automatically.
+    """
     valid = tuple(dict.fromkeys(str(key) for key in valid_pie_keys if key))
     with _connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -2147,13 +2153,18 @@ def prune_pie_production_states(
             cursor = connection.execute(
                 f"""
                 DELETE FROM pie_production_states
-                WHERE service_date = ? AND pie_key NOT IN ({placeholders})
+                WHERE service_date = ?
+                  AND pie_key NOT IN ({placeholders})
+                  AND timer_status = 'idle'
                 """,
                 (service_date.isoformat(), *valid),
             )
         else:
             cursor = connection.execute(
-                "DELETE FROM pie_production_states WHERE service_date = ?",
+                """
+                DELETE FROM pie_production_states
+                WHERE service_date = ? AND timer_status = 'idle'
+                """,
                 (service_date.isoformat(),),
             )
     return max(cursor.rowcount, 0)

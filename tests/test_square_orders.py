@@ -2068,7 +2068,7 @@ def test_square_order_with_only_salad_merch_and_drink_keeps_production_items() -
         "version": 1,
         "line_items": [
             {"uid": "salad", "catalog_object_id": "variation-salad", "name": "Cucumber Salad", "quantity": "2"},
-            {"uid": "merch", "catalog_object_id": "variation-shirt", "name": "Mari T-Shirt", "quantity": "1"},
+            {"uid": "merch", "catalog_object_id": "variation-shirt", "name": "Mari T-Shirt", "variation_name": "Large", "quantity": "1"},
             {"uid": "drink", "catalog_object_id": "variation-coke", "name": "Mexican Coke", "quantity": "2"},
         ],
         "fulfillments": [
@@ -2103,4 +2103,5 @@ def test_square_order_with_only_salad_merch_and_drink_keeps_production_items() -
     assert [item.category for item in order.items] == ["salad", "merch", "drink"]
     assert [item.category for item in order.production_items] == ["salad", "merch"]
     assert order.salad_counts == {"Cucumber Salad": 2}
+    assert order.merch_summary == (("Mari T-Shirt — Large", 1),)
     assert order.drink_summary == (("Mexican Coke", 2),)

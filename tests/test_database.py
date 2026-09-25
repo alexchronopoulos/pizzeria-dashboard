@@ -951,6 +951,34 @@ def test_stale_pie_states_are_pruned_to_current_board_keys(tmp_path: Path) -> No
     assert set(load_pie_production_states(database_path, service_date)) == {current_key}
 
 
+def test_active_timer_states_are_never_pruned_as_stale(tmp_path: Path) -> None:
+    database_path = tmp_path / "dashboard.db"
+    service_date = date(2026, 8, 6)
+    initialize_database(database_path)
+    running_key = "2026-08-06|order-1|plain|0"
+    paused_key = "2026-08-06|order-2|white|0"
+    done_key = "2026-08-06|order-3|tomato|0"
+
+    update_pie_production_state(
+        database_path, service_date, running_key, timer_action="start"
+    )
+    update_pie_production_state(
+        database_path, service_date, paused_key, timer_action="start"
+    )
+    update_pie_production_state(
+        database_path, service_date, paused_key, timer_action="pause"
+    )
+    update_pie_production_state(
+        database_path, service_date, done_key, timer_action="finish"
+    )
+
+    assert prune_pie_production_states(database_path, service_date, ()) == 0
+    states = load_pie_production_states(database_path, service_date)
+    assert states[running_key].timer_status == "running"
+    assert states[paused_key].timer_status == "paused"
+    assert states[done_key].timer_status == "done"
+
+
 def test_square_cached_order_can_be_hidden_locally_and_stays_hidden_after_refresh(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"
     service_date = date(2026, 7, 31)

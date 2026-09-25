@@ -1029,7 +1029,11 @@ def _convert_line_items(
                 category=rules.classify_item(display_name, categories),
                 modifiers=modifiers,
                 catalog_object_id=catalog_object_id,
-                variation_name=(catalog_info.variation_name if catalog_info else None),
+                variation_name=(
+                    catalog_info.variation_name
+                    if catalog_info and catalog_info.variation_name
+                    else _optional_string(line_item.get("variation_name"))
+                ),
                 catalog_categories=categories,
             )
         )

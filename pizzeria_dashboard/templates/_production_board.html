@@ -118,6 +118,12 @@
             {% if order.drink_count %}
             <span class="badge badge--drink">{{ order.drink_count }}× Drink{% if order.drink_count != 1 %}s{% endif %}</span>
             {% endif %}
+            {% if order.has_double_cut %}
+            <span class="cut-pattern cut-pattern--double" title="Double Cut" aria-label="Double Cut">| | | |</span>
+            {% endif %}
+            {% if order.has_dont_cut %}
+            <span class="cut-pattern cut-pattern--none" title="Don't Cut" aria-label="Don't Cut">X</span>
+            {% endif %}
         </div>
     </div>
     {% if is_unpaid %}
@@ -226,7 +232,7 @@
     </div>
     {% if selected_date >= today and order.pizza_units and not is_unpaid %}
     <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">
-        {% for item in order.production_items %}
+        {% for item in order.card_items %}
         {% set item_index = loop.index0 %}
         {% if item.category == "pizza" %}
         {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
@@ -324,6 +330,41 @@
         {% else %}
         <p class="empty-state">No prepared items configured or ordered.</p>
         {% endif %}
+        <section class="prep-timing-section" aria-labelledby="prep-timing-heading">
+            <div class="prep-timing-heading">
+                <strong id="prep-timing-heading">À la minute timing</strong>
+                <span>Salads &amp; prosciutto</span>
+            </div>
+            {% if prep_timing_rows %}
+            <table class="prep-timing-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Prep item</th>
+                        <th scope="col">Pickup times</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in prep_timing_rows %}
+                    <tr>
+                        <th scope="row">{{ row.name }}</th>
+                        <td>
+                            <div class="prep-timing-slots">
+                                {% for entry in row.entries %}
+                                <span class="prep-timing-slot">
+                                    {% if entry.quantity > 1 %}<b>{{ entry.quantity }}×</b>{% endif %}
+                                    {% if entry.pickup_at %}<time datetime="{{ entry.pickup_at.isoformat() }}">{{ entry.pickup_at.strftime('%-I:%M %p') }}</time>{% else %}Unscheduled{% endif %}
+                                </span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="prep-timing-empty">No salads or Industrie Pies ordered.</p>
+            {% endif %}
+        </section>
     </article>
 
     <article class="operations-card operations-card--release">
@@ -407,6 +448,11 @@
             <strong>{{ customer_visit_summary.unavailable }}</strong>
             <span>History unavailable</span>
             <small>{{ customer_visit_summary.percent(customer_visit_summary.unavailable) }}%</small>
+        </div>
+        <div class="customer-visit-metric customer-visit-metric--vip">
+            <strong>{{ customer_visit_summary.vip_orders }}</strong>
+            <span>VIPs</span>
+            <small>{{ customer_visit_summary.percent(customer_visit_summary.vip_orders) }}%</small>
         </div>
         <div class="customer-visit-metric customer-visit-metric--walk-in">
             <strong>{{ customer_visit_summary.walk_in_pie_orders }}</strong>

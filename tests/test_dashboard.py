@@ -1044,13 +1044,13 @@ def test_available_pickup_slots_use_twenty_minute_prep_buffer_and_reserve_dough(
     assert "20-minute preparation buffer" in availability
     assert 'datetime="2026-07-31T16:15:00"' not in availability
     assert 'datetime="2026-07-31T16:30:00"' in availability
-    # The prep buffer removes elapsed pickup windows, but the configured daily
-    # online allocation remains fixed and independent of the number of slots.
-    assert "<strong>32</strong> Online Order Reserve" in html
+    # The prep buffer closes near-term ordering sooner, while the first slot's
+    # apportioned reserve expires only after its actual pickup time passes.
+    assert "<strong>30</strong> Online Order Reserve" in html
     dough_start = html.index("Dough inventory")
     dough_end = html.index("Available pickup slots", dough_start)
     dough_card = html[dough_start:dough_end]
-    assert re.search(r">\s*-8\s*</strong>", dough_card)
+    assert re.search(r">\s*-6\s*</strong>", dough_card)
 
 
 def test_online_order_reserve_uses_fixed_allocation_and_released_capacity() -> None:
@@ -1160,6 +1160,76 @@ def test_online_order_reserve_is_independent_of_pickup_slot_count() -> None:
     import pizzeria_dashboard.dashboard as dashboard_module
 
     assert dashboard_module._online_order_reserve((), configured_reserve=32) == 32
+
+
+def test_online_order_reserve_expires_by_configured_slot_time() -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import Item, Order
+
+    slots = tuple(
+        datetime(2026, 7, 31, 16, minute)
+        for minute in (0, 15, 30, 45)
+    )
+    past_order = Order(
+        "past-online",
+        "A",
+        slots[0],
+        (Item("Plain Pie", 2, "pizza"),),
+        square_order_id="square-past-online",
+    )
+    future_order = Order(
+        "future-online",
+        "B",
+        slots[2],
+        (Item("White Pie", 1, "pizza"),),
+        square_order_id="square-future-online",
+    )
+    custom_walk_in = Order(
+        "custom-walk-in",
+        "Walk-in",
+        datetime(2026, 7, 31, 16, 37),
+        (Item("Tomato Pie", 2, "pizza"),),
+        is_walk_in=True,
+    )
+
+    reserve = dashboard_module._online_order_reserve(
+        (past_order, future_order, custom_walk_in),
+        configured_reserve=10,
+        configured_pickup_times=slots,
+        now=datetime(2026, 7, 31, 16, 16),
+    )
+    after_service = dashboard_module._online_order_reserve(
+        (past_order, future_order, custom_walk_in),
+        configured_reserve=10,
+        configured_pickup_times=slots,
+        now=datetime(2026, 7, 31, 17, 0),
+    )
+
+    # 10 pizzas distribute as 3, 3, 2, 2. At 4:16 only the last two
+    # shares remain, and the active 4:30 online pie consumes one of them.
+    assert reserve == 3
+    assert after_service == 0
+
+
+def test_online_order_reserve_is_zero_after_the_final_slot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026, 7, 31, 22, 0, tzinfo=ZoneInfo("America/New_York")
+        ),
+    )
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+
+    response = app.test_client().get("/?date=2026-07-31")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "<strong>0</strong> Online Order Reserve (of 32 pizzas saved" in html
 
 
 def test_service_setup_persists_hours_and_salad_lineup(tmp_path: Path) -> None:
@@ -1640,6 +1710,65 @@ def test_shared_timer_oven_and_boxed_state_routes(
     assert "data-order-ready-status" not in order_html
     assert "data-order-boxed-meta" in order_html
     assert "data-order-boxed-time" in order_html
+
+
+def test_running_timer_survives_refresh_when_salad_precedes_pizza(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pizzeria_dashboard.dashboard as dashboard_module
+    from pizzeria_dashboard.domain import Item, Order
+
+    selected = date(2026, 8, 6)
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(
+            2026, 8, 6, 16, 0, tzinfo=ZoneInfo("America/New_York")
+        ),
+    )
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="mixed-timer-order",
+        customer_name="Alex R.",
+        pickup_at=datetime(2026, 8, 6, 17, 0),
+        items=(
+            Item("Cucumber Salad", 1, "salad", catalog_object_id="salad-1"),
+            Item("Plain Pie", 1, "pizza", catalog_object_id="plain-1"),
+        ),
+        square_order_id="square-mixed-timer-order",
+        fulfillment_state="RESERVED",
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    client = app.test_client()
+
+    first_board = client.get(f"/?date={selected.isoformat()}")
+    first_html = first_board.get_data(as_text=True)
+    pie_key = re.search(r'data-bake-timer-key="([^"]+)"', first_html).group(1)
+    oven_key = re.search(r'data-oven-position-key="([^"]+)"', first_html).group(1)
+    assert pie_key == oven_key
+    assert pie_key.endswith("|plain-1|0")
+
+    started = client.post(
+        "/pie-production-state",
+        json={
+            "service_date": selected.isoformat(),
+            "pie_key": pie_key,
+            "timer_action": "start",
+        },
+    )
+    assert started.status_code == 200
+    assert started.get_json()["pies"][pie_key]["timer_status"] == "running"
+
+    refreshed = client.get(f"/?date={selected.isoformat()}")
+    refreshed_html = refreshed.get_data(as_text=True)
+    timer_start = refreshed_html.index(f'data-bake-timer-key="{pie_key}"')
+    timer_end = refreshed_html.index(">", timer_start)
+    timer_tag = refreshed_html[timer_start:timer_end]
+
+    assert 'data-timer-status="running"' in timer_tag
+    assert load_pie_production_states(database_path, selected)[pie_key].timer_status == "running"
 
 
 def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
@@ -3258,6 +3387,62 @@ def test_main_salad_side_cookie_and_merch_items_are_badges_not_pizza_lines(tmp_p
     assert 'class="item-name">Mari T-Shirt' not in html
 
 
+def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
+    tmp_path: Path,
+) -> None:
+    from pizzeria_dashboard.domain import Item, Modifier, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 8, 13)
+    order = Order(
+        order_id="service-tags-order",
+        customer_name="Alex R.",
+        pickup_at=datetime(2026, 8, 13, 17, 15),
+        items=(
+            Item("Cucumber Salad", 2, "salad"),
+            Item(
+                "Industrie Pie",
+                1,
+                "pizza",
+                modifiers=(Modifier("Double Cut"),),
+            ),
+            Item(
+                "Plain Pie",
+                1,
+                "pizza",
+                modifiers=(Modifier("Don't Cut"),),
+            ),
+            Item("Mari T-Shirt", 1, "merch", variation_name="Large"),
+        ),
+        square_order_id="square-service-tags-order",
+        fulfillment_state="RESERVED",
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (order,), source="square"
+    )
+    client = app.test_client()
+
+    board = client.get(f"/?date={selected.isoformat()}")
+    html = board.get_data(as_text=True)
+
+    assert board.status_code == 200
+    assert 'badge--merch">1× Mari T-Shirt — Large' in html
+    assert 'aria-label="Double Cut">| | | |</span>' in html
+    assert 'aria-label="Don\'t Cut">X</span>' in html
+    assert 'class="prep-timing-table"' in html
+    assert '<th scope="row">Cucumber Salad</th>' in html
+    assert '<th scope="row">Industrie Pie</th>' in html
+    assert '<b>2×</b>' in html
+    assert '>5:15 PM</time>' in html
+
+    details = client.get(
+        "/order-details",
+        query_string={"date": selected.isoformat(), "order_id": order.order_id},
+    )
+    assert details.status_code == 200
+    assert "1× Mari T-Shirt — Large" in details.get_data(as_text=True)
+
+
 def test_manual_order_can_be_added_without_square_and_appears_on_board(
     tmp_path: Path,
     monkeypatch,
@@ -3631,7 +3816,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.49' in html
+    assert 'style.css?v=0.5.50' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
