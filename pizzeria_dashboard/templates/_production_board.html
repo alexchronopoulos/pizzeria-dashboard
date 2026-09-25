@@ -32,7 +32,7 @@
 {% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
 {% set manual_payment = manual_payment_matches.get(order.order_id) if manual_payment_matches and order.is_manual else none %}
 <div
-    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
+    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.has_double_cut %} order-row--double-cut{% endif %}{% if order.has_dont_cut %} order-row--dont-cut{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
     data-order-id="{{ order.order_id }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
@@ -336,17 +336,17 @@
                 <span>Salads &amp; prosciutto</span>
             </div>
             {% if prep_timing_rows %}
-            <table class="prep-timing-table">
+            <table class="prep-timing-table" aria-label="À la minute pickup times by item">
                 <thead>
                     <tr>
-                        <th scope="col">Prep item</th>
-                        <th scope="col">Pickup times</th>
+                        {% for row in prep_timing_rows %}
+                        <th scope="col">{{ row.name }}</th>
+                        {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
-                    {% for row in prep_timing_rows %}
                     <tr>
-                        <th scope="row">{{ row.name }}</th>
+                        {% for row in prep_timing_rows %}
                         <td>
                             <div class="prep-timing-slots">
                                 {% for entry in row.entries %}
@@ -357,8 +357,8 @@
                                 {% endfor %}
                             </div>
                         </td>
+                        {% endfor %}
                     </tr>
-                    {% endfor %}
                 </tbody>
             </table>
             {% else %}

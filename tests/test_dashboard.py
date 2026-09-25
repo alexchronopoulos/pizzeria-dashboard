@@ -3424,16 +3424,30 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
 
     board = client.get(f"/?date={selected.isoformat()}")
     html = board.get_data(as_text=True)
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert board.status_code == 200
     assert 'badge--merch">1× Mari T-Shirt — Large' in html
+    assert 'order-row--double-cut' in html
+    assert 'order-row--dont-cut' in html
     assert 'aria-label="Double Cut">| | | |</span>' in html
     assert 'aria-label="Don\'t Cut">X</span>' in html
     assert 'class="prep-timing-table"' in html
-    assert '<th scope="row">Cucumber Salad</th>' in html
-    assert '<th scope="row">Industrie Pie</th>' in html
+    assert '<th scope="col">Cucumber Salad</th>' in html
+    assert '<th scope="col">Industrie Pie</th>' in html
+    assert html.index('<th scope="col">Cucumber Salad</th>') < html.index(
+        '<th scope="col">Industrie Pie</th>'
+    )
+    assert '<th scope="col">Prep item</th>' not in html
+    assert '<th scope="col">Pickup times</th>' not in html
     assert '<b>2×</b>' in html
     assert '>5:15 PM</time>' in html
+    assert ".order-row--double-cut:not(.order-row--unpaid) .order-content" in css
+    assert ".order-row--double-cut:not(.order-row--unpaid) .order-oven-panel" in css
+    assert "repeating-linear-gradient(" in css
+    assert ".order-row--dont-cut:not(.order-row--unpaid) .order-content" in css
+    assert ".order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel" in css
+    assert "background-size: 68px 68px" in css
 
     details = client.get(
         "/order-details",
@@ -3816,7 +3830,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.50' in html
+    assert 'style.css?v=0.5.52' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
