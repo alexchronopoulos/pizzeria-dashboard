@@ -3533,6 +3533,88 @@ def test_prep_timing_table_aligns_shared_rows_and_omits_unscheduled(
     assert 'data-order-id="unscheduled-cuke"' in html
 
 
+def test_prep_timing_cell_completion_persists_and_updates_live_without_reload(
+    tmp_path: Path,
+) -> None:
+    from pizzeria_dashboard.domain import Item, Order
+
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 8, 13)
+    order = Order(
+        "caesar-545",
+        "Alex",
+        datetime(2026, 8, 13, 17, 45),
+        (Item("Caesar Salad", 1, "salad"),),
+        square_order_id="square-caesar-545",
+    )
+    replace_orders_for_date(
+        Path(app.config["DATABASE_PATH"]), selected, (order,), source="square"
+    )
+    client = app.test_client()
+
+    initial = client.get(f"/?date={selected.isoformat()}")
+    initial_html = initial.get_data(as_text=True)
+    cell_key = re.search(
+        r'data-prep-timing-key="([0-9a-f]{64})"', initial_html
+    ).group(1)
+
+    assert initial.status_code == 200
+    assert 'data-prep-timing-completion-url="/prep-timing-completion"' in initial_html
+    assert 'class="prep-timing-slot"' in initial_html
+    assert 'aria-pressed="false"' in initial_html
+
+    completed = client.post(
+        "/prep-timing-completion",
+        json={
+            "service_date": selected.isoformat(),
+            "cell_key": cell_key,
+            "completed": True,
+        },
+    )
+    completed_payload = completed.get_json()
+    assert completed.status_code == 200
+    assert completed_payload["prep_timing_completions"] == [cell_key]
+
+    persisted_html = client.get(
+        f"/?date={selected.isoformat()}"
+    ).get_data(as_text=True)
+    assert 'class="prep-timing-slot is-complete"' in persisted_html
+    assert 'aria-pressed="true"' in persisted_html
+    live_payload = client.get(
+        "/live-production-state", query_string={"date": selected.isoformat()}
+    ).get_json()
+    assert live_payload["prep_timing_completions"] == [cell_key]
+
+    restored = client.post(
+        "/prep-timing-completion",
+        json={
+            "service_date": selected.isoformat(),
+            "cell_key": cell_key,
+            "completed": False,
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.get_json()["prep_timing_completions"] == []
+
+    invalid = client.post(
+        "/prep-timing-completion",
+        json={
+            "service_date": selected.isoformat(),
+            "cell_key": "not-a-cell",
+            "completed": True,
+        },
+    )
+    assert invalid.status_code == 400
+
+    javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
+    css = Path("pizzeria_dashboard/static/style.css").read_text()
+    assert "prepTimingCompletions" in javascript
+    assert "renderPrepTimingCompletions" in javascript
+    assert 'fetch(prepTimingCompletionUrl' in javascript
+    assert ".prep-timing-slot.is-complete" in css
+    assert "background: #c9c9c9;" in css
+
+
 def test_manual_order_can_be_added_without_square_and_appears_on_board(
     tmp_path: Path,
     monkeypatch,
@@ -3924,7 +4006,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.41' in html
+    assert 'dashboard.js?v=0.5.42' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html

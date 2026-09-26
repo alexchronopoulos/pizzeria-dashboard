@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,7 @@ from .database import (
     load_order_ready_states,
     load_orders_for_date,
     load_pie_production_states,
+    load_prep_timing_completions,
     load_prep_assignees,
     load_prep_recipes,
     load_prep_tasks_for_date,
@@ -56,6 +58,7 @@ from .database import (
     save_prep_assignee,
     save_prep_recipe,
     save_prep_task,
+    save_prep_timing_completion,
     save_service_note,
     save_square_customer_profiles,
     save_vip_customer,
@@ -470,6 +473,7 @@ def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
 
 def _prep_timing_matrix_rows(
     columns: tuple[dict[str, object], ...],
+    completed_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, object], ...]:
     """Align every prep item against one shared chronological time axis."""
     counts_by_column: list[dict[datetime, int]] = []
@@ -492,15 +496,28 @@ def _prep_timing_matrix_rows(
                     pickup_times.add(pickup_at)
         counts_by_column.append(counts)
 
-    return tuple(
-        {
-            "pickup_at": pickup_at,
-            "quantities": tuple(
-                counts.get(pickup_at, 0) for counts in counts_by_column
-            ),
-        }
-        for pickup_at in sorted(pickup_times)
-    )
+    rows: list[dict[str, object]] = []
+    for pickup_at in sorted(pickup_times):
+        cells: list[dict[str, object]] = []
+        for column, counts in zip(columns, counts_by_column, strict=True):
+            quantity = counts.get(pickup_at, 0)
+            name = str(column.get("name", ""))
+            cell_key = ""
+            if quantity:
+                key_source = (
+                    f"{name.casefold().strip()}\x1f{pickup_at.isoformat()}\x1f{quantity}"
+                )
+                cell_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
+            cells.append(
+                {
+                    "name": name,
+                    "quantity": quantity,
+                    "key": cell_key,
+                    "completed": bool(cell_key and cell_key in completed_keys),
+                }
+            )
+        rows.append({"pickup_at": pickup_at, "cells": tuple(cells)})
+    return tuple(rows)
 
 
 def _auto_refresh_preferences() -> tuple[bool, int]:
@@ -693,6 +710,10 @@ def index() -> str:
         and selected_date >= now.date()
     )
     prep_timing_columns = _prep_timing_rows(service)
+    prep_timing_rows = _prep_timing_matrix_rows(
+        prep_timing_columns,
+        load_prep_timing_completions(database_path, selected_date),
+    )
 
     return render_template(
         "dashboard.html",
@@ -729,7 +750,7 @@ def index() -> str:
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
         prep_timing_columns=prep_timing_columns,
-        prep_timing_rows=_prep_timing_matrix_rows(prep_timing_columns),
+        prep_timing_rows=prep_timing_rows,
         customer_history_info=customer_history_info,
         internal_notes=internal_notes,
         service_notes=service_notes,
@@ -1232,6 +1253,29 @@ def _prep_recipe_json(recipe) -> dict[str, object]:
         "body": recipe.body,
         "updated_at": recipe.updated_at.isoformat(),
     }
+
+
+@blueprint.post("/prep-timing-completion")
+def update_prep_timing_completion():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    selected_date = _parse_service_date(str(payload.get("service_date", "")))
+    cell_key = str(payload.get("cell_key", "")).strip().lower()
+    if len(cell_key) != 64 or any(
+        character not in "0123456789abcdef" for character in cell_key
+    ):
+        return jsonify(ok=False, error="The à la minute time slot is invalid."), 400
+    if not isinstance(payload.get("completed"), bool):
+        return jsonify(ok=False, error="The completed value must be true or false."), 400
+
+    save_prep_timing_completion(
+        _database_path(),
+        selected_date,
+        cell_key,
+        completed=bool(payload["completed"]),
+    )
+    return jsonify(_live_production_payload(selected_date))
 
 
 @blueprint.get("/prep-list")
@@ -1803,6 +1847,9 @@ def _live_production_payload(selected_date: date) -> dict[str, object]:
                 database_path, selected_date
             ).items()
         },
+        "prep_timing_completions": sorted(
+            load_prep_timing_completions(database_path, selected_date)
+        ),
         "board_content_revision": load_board_content_revision(
             database_path, selected_date
         ),

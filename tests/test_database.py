@@ -11,6 +11,7 @@ from pizzeria_dashboard.database import (
     initialize_database,
     link_manual_order_square_payment,
     load_board_content_revision,
+    load_prep_timing_completions,
     load_manual_payment_matches_for_date,
     load_order_ready_states,
     load_order_slot_assignment_overrides,
@@ -38,6 +39,7 @@ from pizzeria_dashboard.database import (
     record_authentication_failure,
     replace_orders_for_date,
     save_manual_order,
+    save_prep_timing_completion,
     save_order_internal_note,
     save_order_ready_state,
     save_order_slot_assignment,
@@ -442,6 +444,40 @@ def test_service_notes_are_date_scoped_and_bump_board_revision(tmp_path: Path) -
     ]
     assert load_service_notes_for_date(database_path, second_date) == ()
     assert load_board_content_revision(database_path, first_date) != before
+
+
+def test_prep_timing_completions_are_shared_date_scoped_and_reversible(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    first_date = date(2026, 8, 14)
+    second_date = date(2026, 8, 15)
+    cell_key = "a" * 64
+    initialize_database(database_path)
+
+    revision = load_board_content_revision(database_path, first_date)
+    assert load_prep_timing_completions(database_path, first_date) == frozenset()
+    assert save_prep_timing_completion(
+        database_path,
+        first_date,
+        cell_key,
+        completed=True,
+    ) is True
+    assert load_prep_timing_completions(database_path, first_date) == frozenset(
+        {cell_key}
+    )
+    assert load_prep_timing_completions(database_path, second_date) == frozenset()
+    # Live production polling distributes this state without forcing a full
+    # board reload, which keeps every display's viewport stationary.
+    assert load_board_content_revision(database_path, first_date) == revision
+
+    assert save_prep_timing_completion(
+        database_path,
+        first_date,
+        cell_key,
+        completed=False,
+    ) is False
+    assert load_prep_timing_completions(database_path, first_date) == frozenset()
 
 
 def test_prep_list_is_date_scoped_assignable_and_shared(tmp_path: Path) -> None:

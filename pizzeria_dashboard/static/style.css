@@ -1596,12 +1596,41 @@ h2 {
     border: 1px solid var(--black);
     border-radius: 999px;
     background: var(--brand-cream);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
     font-weight: 850;
     white-space: nowrap;
+    transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
 .prep-timing-slot b {
     color: var(--brand-red);
+}
+
+.prep-timing-slot:hover {
+    filter: brightness(0.97);
+}
+
+.prep-timing-slot:focus-visible {
+    outline: 3px solid var(--brand-blue);
+    outline-offset: 2px;
+}
+
+.prep-timing-slot.is-complete {
+    border-color: #6d6d6d;
+    background: #c9c9c9;
+    color: #4d4d4d;
+    text-decoration: line-through;
+}
+
+.prep-timing-slot.is-complete b {
+    color: inherit;
+}
+
+.prep-timing-slot.is-saving {
+    cursor: wait;
+    opacity: 0.62;
 }
 
 .prep-timing-empty {

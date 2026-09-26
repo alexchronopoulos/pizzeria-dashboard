@@ -1142,16 +1142,18 @@
     const modifierAllDayRows = Array.from(document.querySelectorAll("[data-modifier-all-day-row]"));
     const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
     const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
-    if (!board || (!timers.length && !selectors.length && !orderRows.length && !countdown)) {
+    const prepTimingButtons = Array.from(document.querySelectorAll("[data-prep-timing-toggle]"));
+    if (!board || (!timers.length && !selectors.length && !orderRows.length && !countdown && !prepTimingButtons.length)) {
         return;
     }
 
     const stateUrl = board.dataset.liveProductionStateUrl;
     const updateUrl = board.dataset.pieProductionStateUrl;
     const orderReadyUrl = board.dataset.orderReadyUrl;
+    const prepTimingCompletionUrl = board.dataset.prepTimingCompletionUrl;
     const serviceDate = board.dataset.serviceDate;
     const serviceTimezone = board.dataset.serviceTimezone || "America/New_York";
-    if (!stateUrl || !updateUrl || !orderReadyUrl || !serviceDate) {
+    if (!stateUrl || !updateUrl || !orderReadyUrl || !prepTimingCompletionUrl || !serviceDate) {
         return;
     }
 
@@ -1191,6 +1193,11 @@
     let polling = false;
     let pieStates = {};
     let boxedOrders = {};
+    let prepTimingCompletions = new Set(
+        prepTimingButtons
+            .filter((button) => button.classList.contains("is-complete"))
+            .map((button) => button.dataset.prepTimingKey),
+    );
     let lastPizzaCountdownRemaining = null;
     let lastPizzaBreakdownSignature = null;
     let lastFinishedTimerPopupCount = null;
@@ -1731,6 +1738,22 @@
         }
     };
 
+    const renderPrepTimingCompletions = () => {
+        prepTimingButtons.forEach((button) => {
+            const key = button.dataset.prepTimingKey;
+            const completed = prepTimingCompletions.has(key);
+            const label = button.dataset.prepTimingLabel || "À la minute time slot";
+            button.classList.toggle("is-complete", completed);
+            button.setAttribute("aria-pressed", completed ? "true" : "false");
+            button.setAttribute(
+                "aria-label",
+                completed
+                    ? `${label}. Completed; tap to restore.`
+                    : `${label}. Tap to mark completed.`,
+            );
+        });
+    };
+
     const renderBoxedOrders = () => {
         rowsByOrderId.forEach((row, orderId) => {
             const boxedAt = boxedOrders[orderId] || null;
@@ -1776,6 +1799,7 @@
         renderOven();
         renderBoxedOrders();
         renderActiveTimerRail();
+        renderPrepTimingCompletions();
     };
 
     const closePizzaBreakdown = () => {
@@ -1839,6 +1863,9 @@
             }
         });
         boxedOrders = payload.boxed_orders || {};
+        if (Array.isArray(payload.prep_timing_completions)) {
+            prepTimingCompletions = new Set(payload.prep_timing_completions.map(String));
+        }
         const viewportSnapshot = window.PizzeriaDashboardViewport?.capture();
         renderAll();
         window.PizzeriaDashboardViewport?.restore(viewportSnapshot, {defer: false});
@@ -1947,6 +1974,53 @@
                 window.alert(String(error));
             } finally {
                 button.disabled = false;
+            }
+        });
+    });
+
+    prepTimingButtons.forEach((button) => {
+        button.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const cellKey = button.dataset.prepTimingKey;
+            if (!cellKey || button.classList.contains("is-saving")) {
+                return;
+            }
+            const completed = !prepTimingCompletions.has(cellKey);
+            if (completed) {
+                prepTimingCompletions.add(cellKey);
+            } else {
+                prepTimingCompletions.delete(cellKey);
+            }
+            renderPrepTimingCompletions();
+            button.classList.add("is-saving");
+            button.disabled = true;
+            try {
+                const response = await fetch(prepTimingCompletionUrl, {
+                    method: "POST",
+                    headers: {"Accept": "application/json", "Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        service_date: serviceDate,
+                        cell_key: cellKey,
+                        completed,
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) {
+                    throw new Error(result.error || "The à la minute completion could not be saved.");
+                }
+                applyPayload(result);
+            } catch (error) {
+                if (completed) {
+                    prepTimingCompletions.delete(cellKey);
+                } else {
+                    prepTimingCompletions.add(cellKey);
+                }
+                renderPrepTimingCompletions();
+                window.alert(String(error));
+            } finally {
+                button.disabled = false;
+                button.classList.remove("is-saving");
             }
         });
     });

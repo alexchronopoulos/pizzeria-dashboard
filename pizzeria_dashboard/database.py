@@ -20,7 +20,7 @@ from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 from .manual_payments import generate_match_token
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -256,6 +256,13 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_prep_tasks_service_date
                 ON prep_tasks (service_date, task_id);
+
+            CREATE TABLE IF NOT EXISTS prep_timing_completions (
+                service_date TEXT NOT NULL,
+                cell_key TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, cell_key)
+            );
 
             CREATE TABLE IF NOT EXISTS prep_recipes (
                 recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2057,6 +2064,53 @@ def load_board_content_revision(path: Path, service_date: date) -> str:
         return _metadata_value(
             connection, f"board_content_revision:{service_date.isoformat()}"
         ) or ""
+
+
+def load_prep_timing_completions(path: Path, service_date: date) -> frozenset[str]:
+    """Return completed à la minute matrix cell keys for one service date."""
+    with _connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT cell_key
+            FROM prep_timing_completions
+            WHERE service_date = ?
+            ORDER BY cell_key
+            """,
+            (service_date.isoformat(),),
+        ).fetchall()
+    return frozenset(str(row["cell_key"]) for row in rows)
+
+
+def save_prep_timing_completion(
+    path: Path,
+    service_date: date,
+    cell_key: str,
+    *,
+    completed: bool,
+) -> bool:
+    """Persist or clear one shared à la minute matrix completion."""
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if completed:
+            connection.execute(
+                """
+                INSERT INTO prep_timing_completions (
+                    service_date, cell_key, completed_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(service_date, cell_key) DO UPDATE SET
+                    completed_at = excluded.completed_at
+                """,
+                (service_date.isoformat(), cell_key, _utc_now().isoformat()),
+            )
+        else:
+            connection.execute(
+                """
+                DELETE FROM prep_timing_completions
+                WHERE service_date = ? AND cell_key = ?
+                """,
+                (service_date.isoformat(), cell_key),
+            )
+    return completed
 
 
 def _epoch_ms(value: datetime | None = None) -> int:

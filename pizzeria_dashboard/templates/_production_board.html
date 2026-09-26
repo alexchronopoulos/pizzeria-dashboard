@@ -341,13 +341,21 @@
                 <tbody>
                     {% for timing_row in prep_timing_rows %}
                     <tr>
-                        {% for quantity in timing_row.quantities %}
-                        <td{% if not quantity %} class="prep-timing-cell--empty"{% endif %}>
-                            {% if quantity %}
-                            <span class="prep-timing-slot">
-                                {% if quantity > 1 %}<b>{{ quantity }}×</b>{% endif %}
+                        {% for cell in timing_row.cells %}
+                        <td{% if not cell.quantity %} class="prep-timing-cell--empty"{% endif %}>
+                            {% if cell.quantity %}
+                            <button
+                                class="prep-timing-slot{% if cell.completed %} is-complete{% endif %}"
+                                type="button"
+                                data-prep-timing-toggle
+                                data-prep-timing-key="{{ cell.key }}"
+                                data-prep-timing-label="{{ cell.name }} at {{ timing_row.pickup_at.strftime('%-I:%M %p') }}"
+                                aria-pressed="{{ 'true' if cell.completed else 'false' }}"
+                                aria-label="{{ cell.name }} at {{ timing_row.pickup_at.strftime('%-I:%M %p') }}. {% if cell.completed %}Completed; tap to restore.{% else %}Tap to mark completed.{% endif %}"
+                            >
+                                {% if cell.quantity > 1 %}<b>{{ cell.quantity }}×</b>{% endif %}
                                 <time datetime="{{ timing_row.pickup_at.isoformat() }}">{{ timing_row.pickup_at.strftime('%-I:%M %p') }}</time>
-                            </span>
+                            </button>
                             {% endif %}
                         </td>
                         {% endfor %}
