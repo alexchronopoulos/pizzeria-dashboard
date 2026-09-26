@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Mapping
@@ -11,6 +11,7 @@ from pizzeria_dashboard.database import (
     initialize_database,
     load_manual_payment_matches_for_date,
     load_orders_for_date,
+    replace_orders_for_date,
     save_manual_order,
 )
 from pizzeria_dashboard.domain import Item, Order, build_service_board
@@ -459,6 +460,112 @@ def test_square_client_searches_incrementally_by_updated_at() -> None:
         "sort_field": "UPDATED_AT",
         "sort_order": "ASC",
     }
+
+
+def test_incremental_sync_reconciles_old_preorder_missing_from_cache(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "dashboard.db"
+    initialize_database(database_path)
+    replace_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        (),
+        source="square",
+        synced_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    old_preorder = {
+        "id": "old-preorder-missing-from-cache",
+        "location_id": "LOCATION-1",
+        "state": "OPEN",
+        "version": 3,
+        "created_at": "2026-07-27T16:00:00Z",
+        "updated_at": "2026-07-27T16:05:00Z",
+        "tenders": [{"payment_id": "payment-old-preorder"}],
+        "line_items": [{"name": "Plain Pie", "quantity": "1"}],
+        "fulfillments": [
+            {
+                "uid": "pickup-old-preorder",
+                "type": "PICKUP",
+                "state": "RESERVED",
+                "pickup_details": {
+                    "pickup_at": "2026-07-31T22:00:00Z",
+                    "recipient": {"display_name": "Older preorder"},
+                },
+            }
+        ],
+    }
+
+    class FakeSquareClient:
+        settings = SquareSettings("token", "LOCATION-1", order_lookback_days=60)
+        full_calls = 0
+        incremental_calls = 0
+
+        def resolve_location(self):
+            return {"id": "LOCATION-1", "name": "Pizzeria Mari"}
+
+        def search_orders_for_service_date(self, **kwargs):
+            self.full_calls += 1
+            return (old_preorder,)
+
+        def search_orders_updated_since(self, **kwargs):
+            self.incremental_calls += 1
+            return ()
+
+    square_client = FakeSquareClient()
+    config = {
+        "ORDER_SOURCE": "square",
+        "SQUARE_ACCESS_TOKEN": "token",
+        "SQUARE_LOCATION_ID": "LOCATION-1",
+        "SERVICE_TIMEZONE": "America/New_York",
+        "SQUARE_ORDER_LOOKBACK_DAYS": 60,
+        "SQUARE_FULL_RECONCILIATION_SECONDS": 60,
+    }
+
+    recovered = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        config,
+        square_client=square_client,
+        incremental=True,
+    )
+
+    assert recovered.incremental is False
+    assert recovered.full_reconciliation is True
+    assert square_client.full_calls == 1
+    assert square_client.incremental_calls == 0
+    assert [
+        order.square_order_id
+        for order in load_orders_for_date(database_path, SERVICE_DATE)
+    ] == ["old-preorder-missing-from-cache"]
+
+    unchanged = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        config,
+        square_client=square_client,
+        incremental=True,
+    )
+    assert unchanged.incremental is True
+    assert unchanged.full_reconciliation is False
+    assert unchanged.changed_count == 0
+    assert square_client.full_calls == 1
+    assert square_client.incremental_calls == 1
+
+    manual_check = sync_orders_for_date(
+        database_path,
+        SERVICE_DATE,
+        config,
+        square_client=square_client,
+        incremental=True,
+        force_full_reconciliation=True,
+    )
+    assert manual_check.incremental is False
+    assert manual_check.full_reconciliation is True
+    assert manual_check.changed_count == 0
+    assert square_client.full_calls == 2
+    assert square_client.incremental_calls == 1
 
 
 def test_completed_orders_without_pickup_times_become_walk_ins() -> None:

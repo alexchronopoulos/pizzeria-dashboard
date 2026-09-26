@@ -2111,6 +2111,7 @@
                 body: JSON.stringify({
                     service_date: serviceDate,
                     board_content_revision: board.dataset.boardContentRevision || "",
+                    force_reconcile: manual,
                 }),
             });
             const result = await response.json();

@@ -3924,7 +3924,8 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.40' in html
+    assert 'dashboard.js?v=0.5.41' in html
+    assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
     assert '>Clear all</button>' in html

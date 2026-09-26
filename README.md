@@ -146,6 +146,17 @@ Square's Search Orders endpoint can filter on order lifecycle timestamps such as
 4. Separately keeps completed orders with no actual pickup timestamp when either their local `closed_at` or `created_at` date matches the selected service date. Source labels, receipts, tenders, and payment metadata are not required.
 5. Atomically replaces that date's SQLite snapshot after a successful pull while retaining valid local walk-in slot assignments.
 
+Fast refreshes search Square by `updated_at`. As a correctness backstop, the
+dashboard also performs a complete service-date reconciliation after an upgrade,
+whenever **Incremental update** is pressed, and once per minute during automatic
+refresh. This recovers any older preorder that was absent from the local cache
+without reloading or shifting the board when nothing changed. The interval can
+be adjusted if necessary:
+
+```dotenv
+SQUARE_FULL_RECONCILIATION_SECONDS=60
+```
+
 The default lookback is 60 days:
 
 ```dotenv

@@ -8,12 +8,15 @@ from typing import Mapping
 from .database import (
     SyncInfo,
     link_manual_order_square_payment,
+    load_app_metadata,
+    load_board_content_revision,
     load_linked_manual_square_order_ids,
     load_manual_payment_matches_for_date,
     load_order_for_date,
     load_sync_info,
     merge_orders_for_date,
     replace_orders_for_date,
+    save_app_metadata,
 )
 from .domain import Order
 from .manual_payments import normalized_ticket_words, ticket_name_contains_match_token
@@ -36,6 +39,66 @@ class SyncResult:
     changed_count: int = 0
     removed_count: int = 0
     reconciled_count: int = 0
+    full_reconciliation: bool = False
+
+
+_FULL_RECONCILIATION_KEY_PREFIX = "square_order_full_reconciliation_v1:"
+_DEFAULT_FULL_RECONCILIATION_SECONDS = 60
+
+
+def _full_reconciliation_key(service_date: date) -> str:
+    return f"{_FULL_RECONCILIATION_KEY_PREFIX}{service_date.isoformat()}"
+
+
+def _full_reconciliation_interval(config: Mapping[str, object]) -> timedelta:
+    try:
+        seconds = int(
+            config.get(
+                "SQUARE_FULL_RECONCILIATION_SECONDS",
+                _DEFAULT_FULL_RECONCILIATION_SECONDS,
+            )
+        )
+    except (TypeError, ValueError):
+        seconds = _DEFAULT_FULL_RECONCILIATION_SECONDS
+    return timedelta(seconds=max(30, min(seconds, 3600)))
+
+
+def _full_reconciliation_due(
+    path: Path,
+    service_date: date,
+    config: Mapping[str, object],
+    *,
+    now: datetime,
+) -> bool:
+    raw_value = load_app_metadata(path, _full_reconciliation_key(service_date))
+    if not raw_value:
+        # Existing installations intentionally enter here once after upgrading.
+        # Their incremental cursor might be newer than an order that never made
+        # it into the local cache, so the first quick refresh must rebuild the
+        # complete service-date snapshot.
+        return True
+    try:
+        completed_at = datetime.fromisoformat(raw_value)
+    except ValueError:
+        return True
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=UTC)
+    elapsed = now - completed_at.astimezone(UTC)
+    return elapsed.total_seconds() < 0 or elapsed >= _full_reconciliation_interval(
+        config
+    )
+
+
+def _record_full_reconciliation(
+    path: Path,
+    service_date: date,
+    completed_at: datetime,
+) -> None:
+    save_app_metadata(
+        path,
+        _full_reconciliation_key(service_date),
+        completed_at.astimezone(UTC).isoformat(),
+    )
 
 
 def configured_order_source(config: Mapping[str, object]) -> str:
@@ -169,6 +232,7 @@ def sync_orders_for_date(
     *,
     square_client: SquareClient | None = None,
     incremental: bool = False,
+    force_full_reconciliation: bool = False,
 ) -> SyncResult:
     source = configured_order_source(config)
     if source == "sample":
@@ -193,7 +257,16 @@ def sync_orders_for_date(
     # cannot fall into a gap between refreshes.
     sync_started_at = datetime.now(UTC)
     previous_sync = load_sync_info(path, service_date)
-    use_incremental = incremental and previous_sync is not None
+    incremental_requested = incremental and previous_sync is not None
+    full_reconciliation = not incremental_requested
+    if incremental_requested:
+        full_reconciliation = force_full_reconciliation or _full_reconciliation_due(
+            path,
+            service_date,
+            config,
+            now=sync_started_at,
+        )
+    use_incremental = incremental_requested and not full_reconciliation
 
     updated_start_at: str | None = None
     updated_end_at: str | None = None
@@ -243,6 +316,7 @@ def sync_orders_for_date(
         changed_count = merge.changed_count
         removed_count = merge.removed_count
     else:
+        revision_before = load_board_content_revision(path, service_date)
         info = replace_orders_for_date(
             path,
             service_date,
@@ -250,7 +324,11 @@ def sync_orders_for_date(
             source="square",
             synced_at=sync_started_at,
         )
-        changed_count = len(visible_orders)
+        revision_after = load_board_content_revision(path, service_date)
+        # Periodic integrity sweeps must not cause a needless browser reload or
+        # move the operator's viewport when the Square snapshot is unchanged.
+        changed_count = int(revision_after != revision_before)
+        _record_full_reconciliation(path, service_date, sync_started_at)
     changed_count += reconciled_count
 
     return SyncResult(
@@ -262,6 +340,7 @@ def sync_orders_for_date(
         changed_count=changed_count,
         removed_count=removed_count,
         reconciled_count=reconciled_count,
+        full_reconciliation=full_reconciliation,
     )
 
 

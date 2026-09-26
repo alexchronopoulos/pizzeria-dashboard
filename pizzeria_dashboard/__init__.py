@@ -162,6 +162,9 @@ def create_app(test_config: dict[str, object] | None = None) -> Flask:
         SQUARE_INCREMENTAL_OVERLAP_SECONDS=_env_int(
             "SQUARE_INCREMENTAL_OVERLAP_SECONDS", 120
         ),
+        SQUARE_FULL_RECONCILIATION_SECONDS=_env_int(
+            "SQUARE_FULL_RECONCILIATION_SECONDS", 60
+        ),
         SQUARE_VIP_GROUP_NAME=os.getenv(
             "SQUARE_VIP_GROUP_NAME", "Pizzeria Mari VIP"
         ),

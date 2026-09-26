@@ -2274,6 +2274,7 @@ def quick_sync():
             selected_date,
             current_app.config,
             incremental=True,
+            force_full_reconciliation=bool(payload.get("force_reconcile")),
         )
     except SquareError as exc:
         return jsonify(ok=False, error=str(exc)), 502
@@ -2282,6 +2283,7 @@ def quick_sync():
     return jsonify(
         ok=True,
         incremental=result.incremental,
+        full_reconciliation=result.full_reconciliation,
         changed_count=result.changed_count,
         removed_count=result.removed_count,
         reconciled_count=result.reconciled_count,
