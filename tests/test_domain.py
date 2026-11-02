@@ -52,6 +52,7 @@ def test_compact_production_modifiers_hide_salads_and_cookies() -> None:
             Modifier("Pepperoni"),
             Modifier("Cucumber Salad", "salad"),
             Modifier("Cookie", "cookie"),
+            Modifier("I will be dining in"),
             Modifier("Double Cut"),
         ),
     )
@@ -61,6 +62,26 @@ def test_compact_production_modifiers_hide_salads_and_cookies() -> None:
         "Double Cut",
     ]
     assert item.production_modifiers[-1].is_removal is True
+
+
+def test_dining_in_marker_is_an_order_service_instruction() -> None:
+    pizza = Item(
+        "Plain Pie",
+        1,
+        "pizza",
+        modifiers=(Modifier("I will be dining in"), Modifier("Pepperoni")),
+    )
+    order = Order(
+        "dine-in-order",
+        "Alex",
+        datetime(2026, 7, 31, 16, 0),
+        (pizza,),
+    )
+
+    assert pizza.modifiers[0].is_dining_in is True
+    assert order.has_dining_in is True
+    assert [modifier.name for modifier in pizza.production_modifiers] == ["Pepperoni"]
+    assert order.modifier_counts == {"Pepperoni": 1}
 
 
 def test_cut_patterns_and_merch_size_are_exposed_for_production() -> None:

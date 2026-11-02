@@ -5997,6 +5997,31 @@ html {
     background-size: 68px 68px;
 }
 
+/* Fast-scanning service and pizza modifier cues. */
+.badge--dining-in {
+    min-width: 38px;
+    justify-content: center;
+    padding: 3px 7px;
+    background: var(--brand-yellow);
+    color: var(--brand-blue);
+}
+
+.badge--dining-in svg {
+    width: 25px;
+    height: 18px;
+    fill: white;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.modifier-list .modifier--addition {
+    border-color: var(--brand-blue);
+    background: white;
+    color: var(--brand-blue);
+}
+
 /*
  * iPad 11 landscape: keep both primary toolbars to one compact row.
  * Firefox Responsive Design Mode does not consistently update the CSS

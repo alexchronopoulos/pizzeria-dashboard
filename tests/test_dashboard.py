@@ -3404,7 +3404,11 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
                 "Industrie Pie",
                 1,
                 "pizza",
-                modifiers=(Modifier("Double Cut"),),
+                modifiers=(
+                    Modifier("Double Cut"),
+                    Modifier("Extra Basil"),
+                    Modifier("I will be dining in"),
+                ),
             ),
             Item(
                 "Plain Pie",
@@ -3428,6 +3432,11 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
 
     assert board.status_code == 200
     assert 'badge--merch">1× Mari T-Shirt — Large' in html
+    assert 'class="badge badge--dining-in"' in html
+    assert 'aria-label="Dining in"' in html
+    assert 'class="modifier modifier--addition"' in html
+    assert "+ Extra Basil" in html
+    assert "I will be dining in" not in html
     assert 'order-row--double-cut' in html
     assert 'order-row--dont-cut' in html
     assert 'class="cut-pattern' not in html
@@ -3447,6 +3456,9 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
     assert ".order-row--dont-cut:not(.order-row--unpaid) .order-content" in css
     assert ".order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel" in css
     assert "background-size: 68px 68px" in css
+    assert ".badge--dining-in" in css
+    assert ".modifier-list .modifier--addition" in css
+    assert "border-color: var(--brand-blue)" in css
 
     details = client.get(
         "/order-details",
@@ -3988,7 +4000,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.53' in html
+    assert 'style.css?v=0.5.54' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html

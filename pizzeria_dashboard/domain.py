@@ -24,6 +24,10 @@ _TICKET_TIME_TOKEN = re.compile(
     rf"(?<!\d){_TICKET_TIME}(?!\d)",
     re.IGNORECASE,
 )
+_DINING_IN_MARKER = re.compile(
+    r"\b(?:i\s+will|i['’]?ll)\s+be\s+dining\s+in\b",
+    re.IGNORECASE,
+)
 
 
 def customer_display_name(name: str) -> str:
@@ -182,6 +186,11 @@ class Modifier:
             )
         )
 
+    @property
+    def is_dining_in(self) -> bool:
+        """Whether this Square modifier is the dine-in service marker."""
+        return bool(_DINING_IN_MARKER.search(self.name))
+
 
 @dataclass(frozen=True, slots=True)
 class Item:
@@ -275,13 +284,18 @@ class Item:
         """Modifiers that need to remain visible beneath the pizza item.
 
         Salad, side, and cookie modifiers are summarized as order-level badges to
-        reduce repetition in the fast-scanning production view. They remain
-        available in the cached order document and the full order-details modal.
+        reduce repetition in the fast-scanning production view. The dine-in
+        service marker is surfaced as an order-level icon instead of a pizza
+        ingredient. All remain available in the cached order document and the
+        full order-details modal.
         """
         return tuple(
             modifier
             for modifier in self.modifiers
-            if not modifier.is_salad and not modifier.is_side and not modifier.is_cookie
+            if not modifier.is_salad
+            and not modifier.is_side
+            and not modifier.is_cookie
+            and not modifier.is_dining_in
         )
 
 
@@ -511,6 +525,15 @@ class Order:
         return any(
             modifier.is_dont_cut
             for item in self.production_items
+            for modifier in item.modifiers
+        )
+
+    @property
+    def has_dining_in(self) -> bool:
+        """Whether Square marked the order for dine-in service."""
+        return bool(_DINING_IN_MARKER.search(self.note or "")) or any(
+            modifier.is_dining_in
+            for item in self.items
             for modifier in item.modifiers
         )
 

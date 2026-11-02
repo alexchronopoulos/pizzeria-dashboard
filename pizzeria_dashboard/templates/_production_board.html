@@ -83,6 +83,15 @@
             >Details</button>
         </div>
         <div class="order-badges">
+            {% if order.has_dining_in %}
+            <span class="badge badge--dining-in" title="Dining in" aria-label="Dining in">
+                <svg viewBox="0 0 28 20" aria-hidden="true" focusable="false">
+                    <rect x="8" y="5" width="12" height="10" rx="1.5"></rect>
+                    <path d="M11 2h6v3M11 15h6v3M5 7v6h3M20 7h3v6"></path>
+                </svg>
+                <span class="visually-hidden">Dining in</span>
+            </span>
+            {% endif %}
             {% if order.is_manual %}
             <span class="badge badge--manual" title="Entered directly in the dashboard; no Square order exists">Manual</span>
             {% if manual_payment and manual_payment.paid_in_square %}
@@ -209,7 +218,7 @@
             {% if item.production_modifiers %}
             <ul class="modifier-list" aria-label="Modifiers for {{ item.display_name }}">
                 {% for modifier in item.production_modifiers %}
-                <li class="modifier{% if modifier.is_salad %} modifier--salad{% endif %}{% if modifier.is_side %} modifier--side{% endif %}{% if modifier.is_cookie %} modifier--cookie{% endif %}{% if modifier.is_removal %} modifier--removal{% endif %}">
+                <li class="modifier{% if modifier.is_salad %} modifier--salad{% endif %}{% if modifier.is_side %} modifier--side{% endif %}{% if modifier.is_cookie %} modifier--cookie{% endif %}{% if modifier.is_removal %} modifier--removal{% else %} modifier--addition{% endif %}">
                     {% if not modifier.is_removal %}+ {% endif %}{% if modifier.is_salad or modifier.is_side or modifier.is_cookie or modifier.quantity > 1 %}{{ modifier.quantity }}× {% endif %}{{ modifier.display_name }}
                 </li>
                 {% endfor %}
