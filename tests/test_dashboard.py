@@ -2651,6 +2651,55 @@ def test_undo_boxed_never_reopens_square_order(tmp_path: Path, monkeypatch) -> N
     assert load_orders_for_date(database_path, selected) == (order,)
 
 
+def test_historical_order_shows_saved_boxed_timestamp_read_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from pizzeria_dashboard.database import save_order_ready_state
+    from pizzeria_dashboard.domain import Item, Order
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    timezone = ZoneInfo("America/New_York")
+    monkeypatch.setattr(
+        dashboard_module,
+        "_now",
+        lambda: datetime(2026, 8, 14, 12, 0, tzinfo=timezone),
+    )
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    selected = date(2026, 8, 13)
+    database_path = Path(app.config["DATABASE_PATH"])
+    order = Order(
+        order_id="historical-boxed-order",
+        customer_name="Past Guest",
+        pickup_at=datetime(2026, 8, 13, 17, 30),
+        items=(Item("Plain Pie", 1, "pizza"),),
+        square_order_id="square-historical-boxed",
+        fulfillment_state="COMPLETED",
+        square_order_state="COMPLETED",
+        released=True,
+        is_paid=True,
+    )
+    replace_orders_for_date(database_path, selected, (order,), source="square")
+    boxed_at = save_order_ready_state(
+        database_path, selected, order.order_id, boxed=True
+    )
+    assert boxed_at is not None
+
+    response = app.test_client().get(f"/?date={selected.isoformat()}")
+    html = response.get_data(as_text=True)
+    order_start = html.index(f'data-order-id="{order.order_id}"')
+    order_end = html.find('class="order-row', order_start + 1)
+    order_html = html[order_start : order_end if order_end != -1 else None]
+    local_boxed_at = boxed_at.astimezone(timezone)
+
+    assert response.status_code == 200
+    assert 'class="badge badge--boxed-action order-boxed-history is-boxed"' in order_html
+    assert "BOXED &amp; READY" in order_html
+    assert f'datetime="{local_boxed_at.isoformat()}"' in order_html
+    assert local_boxed_at.strftime("%-I:%M %p") in order_html
+    assert "data-order-boxed-button" not in order_html
+    assert "Undo boxed" not in order_html
+
+
 
 def test_unpaid_open_square_order_can_be_removed_from_details(
     tmp_path: Path, monkeypatch
@@ -4000,7 +4049,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.54' in html
+    assert 'style.css?v=0.5.55' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
