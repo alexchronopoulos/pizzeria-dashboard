@@ -345,15 +345,15 @@
         <div class="slice-bake-row" data-slice-name="{{ name }}">
             <strong>{{ name }}</strong>
             <div class="slice-bake-controls">
-                <span class="slice-bake-count" title="Completed bakes">
-                    <span class="visually-hidden">Completed bakes: </span>
-                    <b data-slice-bake-count="{{ key }}">{{ slice_bake_counts.get(key, 0) }}</b>
-                </span>
                 {% if bake_timers_enabled %}
                 {{ render_bake_timer(key, name, state, customer_label="Slice pie") }}
                 {% else %}
                 <span class="slice-bake-status">{{ state.timer_status | capitalize }}</span>
                 {% endif %}
+                <span class="slice-bake-count" title="Completed bakes">
+                    <span class="visually-hidden">Completed bakes: </span>
+                    <b data-slice-bake-count="{{ key }}">{{ slice_bake_counts.get(key, 0) }}</b>
+                </span>
             </div>
         </div>
         {% else %}

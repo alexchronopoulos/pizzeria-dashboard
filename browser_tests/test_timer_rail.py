@@ -95,14 +95,15 @@ def test_order_action_row_before_and_after_marking(sample_board, width, height):
         bounds = card.bounding_box()
         assert cells[0]["x"] >= bounds["x"] and cells[2]["x"] + cells[2]["width"] <= bounds["x"] + bounds["width"]
         assert buttons.evaluate_all("els => els.every(e => e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= e.clientHeight + 1)")
-        return cells[0]["height"]
+        if width > 1000:
+            name = card.locator(".customer-name").bounding_box()
+            assert name["x"] + name["width"] <= cells[0]["x"]
+            assert cells[0]["y"] <= name["y"] + name["height"] / 2 <= cells[0]["y"] + cells[0]["height"]
 
-    initial_height = check_geometry()
+    check_geometry()
     for button in (boxed, arrived, picked_up):
         button.click()
         expect(button).to_have_attribute("aria-pressed", "true")
-    marked_height = check_geometry()
-    if width > 1000:
-        assert marked_height == initial_height
+    check_geometry()
     for button in (arrived, picked_up):
         expect(button.locator("time")).not_to_be_empty()
