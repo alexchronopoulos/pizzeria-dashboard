@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.52">
+{% set bake_timers_enabled = selected_date >= today %}
+<header class="masthead masthead--compact" data-dashboard-build="0.5.53">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -301,6 +302,9 @@
         <p id="pizza-breakdown-close-hint" class="pizza-breakdown-close-hint">Tap anywhere to close</p>
     </section>
 </div>
+{% endif %}
+
+{% if bake_timers_enabled %}
 <aside class="active-timer-rail" data-active-timer-rail aria-label="Active timers" hidden></aside>
 {% endif %}
 

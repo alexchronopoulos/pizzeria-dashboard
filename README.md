@@ -174,6 +174,14 @@ uv run pytest
 uv run pizzeria-dashboard
 ```
 
+For an optional Firefox check of the off-screen timer on today's and future boards,
+run these on a development machine. It uses sample orders in a temporary database.
+
+```bash
+uv run --with playwright python -m playwright install firefox
+uv run --with playwright python -m pytest browser_tests/test_timer_rail.py
+```
+
 Alternative launch commands:
 
 ```bash

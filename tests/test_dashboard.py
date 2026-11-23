@@ -1590,6 +1590,7 @@ def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path:
     assert response.data.count(b'data-bake-duration-seconds="480"') == physical_pizzas
     assert b"data-bake-timer-toggle" in response.data
     assert b"data-bake-timer-reset" in response.data
+    assert response.data.count(b"data-active-timer-rail") == 1
     assert b"data-oven-position" not in response.data
     assert b"order-oven-panel" not in response.data
     assert b">8:00<" in response.data
@@ -1608,6 +1609,9 @@ def test_future_dates_show_bake_timers(tmp_path: Path) -> None:
     assert b"data-oven-position" not in response.data
     assert b"order-oven-panel" not in response.data
     assert b"data-bake-timer-toggle" in response.data
+    assert response.data.count(b"data-active-timer-rail") == 1
+    assert b"data-pizza-countdown" not in response.data
+    assert b"data-pizza-breakdown-overlay" not in response.data
 
 
 def test_past_dates_hide_bake_timers(tmp_path: Path) -> None:
@@ -1617,6 +1621,7 @@ def test_past_dates_hide_bake_timers(tmp_path: Path) -> None:
     assert b"data-bake-timer" not in response.data
     assert b"data-bake-timer-toggle" not in response.data
     assert b"data-bake-timer-reset" not in response.data
+    assert b"data-active-timer-rail" not in response.data
     assert b"data-oven-position" not in response.data
 
 
