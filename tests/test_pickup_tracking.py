@@ -119,7 +119,9 @@ def test_marks_survive_refresh_and_history_is_read_only(counter):
     clock.now += timedelta(days=1)
     historical = client.get(f"/?date={DAY}").get_data(as_text=True)
     assert "8 min early" in card(historical, "first") and "11 min late" in card(historical, "first")
-    assert 'data-pickup-event="' not in historical and "Arrival and pickup not recorded" in card(historical, "missed")
+    assert 'data-pickup-event="' not in historical
+    missed = card(historical, "missed")
+    assert "Mark Arrived" in missed and "Mark Picked Up" in missed and "Not recorded" in missed
     assert ">1 early</span>" in historical and ">0 late</span>" in historical
     assert tap(client, ticket, "arrived", undo_recorded_at=arrived["recorded_at"]).status_code == 409
 
@@ -280,6 +282,6 @@ def test_schema_upgrade_does_not_turn_existing_boxed_times_into_pickups(tmp_path
     initialize_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT order_id FROM order_ready_states").fetchall() == [("A",)]
-        assert db.execute("SELECT value FROM app_metadata WHERE key='schema_version'").fetchone() == ("18",)
+        assert db.execute("SELECT value FROM app_metadata WHERE key='schema_version'").fetchone() == ("19",)
     assert load_pickup_marks(path, DAY) == {}
 

@@ -23,6 +23,7 @@ from flask import (
 )
 
 from .database import (
+    load_slice_bake_counts,
     change_pickup_mark,
     delete_order_slot_assignment,
     has_orders_for_date,
@@ -774,6 +775,7 @@ def index() -> str:
             for order_id, boxed_at in ready_states.items()
         },
         board_content_revision=board_content_revision,
+        slice_bake_counts=load_slice_bake_counts(database_path, selected_date),
         slice_bakes=[
             (key, name, pie_states.get(key))
             for name in _slice_menu_cache().get("names", [])
@@ -1872,6 +1874,7 @@ def _live_production_payload(selected_date: date) -> dict[str, object]:
                 database_path, selected_date
             ).items()
         },
+        "slice_bake_counts": load_slice_bake_counts(database_path, selected_date),
         "prep_timing_completions": sorted(
             load_prep_timing_completions(database_path, selected_date)
         ),

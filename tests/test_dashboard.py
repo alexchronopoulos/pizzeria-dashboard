@@ -1089,6 +1089,19 @@ def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypa
         assert second not in states
     assert not kitchen.get("/live-production-state?date=2026-08-01").get_json()["pies"]
 
+    from pizzeria_dashboard import database
+
+    timer_clock = now.astimezone(ZoneInfo("UTC"))
+    monkeypatch.setattr(database, "_utc_now", lambda: timer_clock)
+    counter.post("/pie-production-state", json={
+        "service_date": day, "pie_key": first, "timer_action": "start",
+    })
+    timer_clock += timedelta(minutes=8)
+    assert kitchen.get(live_url).get_json()["slice_bake_counts"] == {first: 1}
+    now += timedelta(days=1)
+    historical = kitchen.get(f"/?date={day}").get_data(as_text=True)
+    assert f'data-slice-bake-count="{first}">1</b>' in historical
+
 
 def test_round_slice_catalog_excludes_other_categories_and_cleans_names():
     from pizzeria_dashboard.dashboard import _round_slice_names
@@ -4014,7 +4027,7 @@ def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza
     assert "background: #f2e5d8;" in css
 
 
-def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> None:
+def test_remaining_popup_decrements_but_top_all_day_totals_stay_fixed() -> None:
     javascript = Path("pizzeria_dashboard/static/dashboard.js").read_text()
     template = Path("pizzeria_dashboard/templates/_production_board.html").read_text()
     assert "isDoughCommittedTimerStatus" in javascript
@@ -4034,7 +4047,9 @@ def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> N
     assert "Math.max(units - timedUnits, 0)" in javascript
     assert "Math.max(orderUnits - timedUnits, 0)" in javascript
     assert "Math.max(total - committed, 0)" in javascript
-    assert "Math.max(fullCount - consumedCount, 0)" in javascript
+    assert 'pieAllDayTotal.textContent' not in javascript
+    assert 'modifierAllDayTotal.textContent' not in javascript
+    assert '{{ service.total_pizzas }} total' in template
 
 
 def test_pizza_countdown_opens_live_remaining_breakdown_without_moving_board(tmp_path: Path) -> None:
@@ -4113,7 +4128,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.64' in html
+    assert 'style.css?v=0.5.65' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4131,7 +4146,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.49' in html
+    assert 'dashboard.js?v=0.5.50' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
@@ -4183,20 +4198,22 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
 
     toast_rules = css.split(".new-order-toast-region {", 1)[1].split("}", 1)[0]
     toast_list_rules = css.split(".new-order-toast-list {", 1)[1].split("}", 1)[0]
-    assert "left: 18px;" in toast_rules
-    assert "right: auto;" in toast_rules
+    assert "right: 18px;" in toast_rules
+    assert "left: auto;" in toast_rules
     assert "width: min(380px, calc(100vw - 36px));" in toast_rules
     assert "grid-template-columns: minmax(0, 1fr);" in toast_rules
     assert "grid-template-rows: auto minmax(0, 1fr);" in toast_rules
     assert "grid-auto-flow: row;" in toast_rules
-    assert "max-height: calc(100dvh - 36px);" in toast_rules
+    assert "max-height: calc(50dvh - 18px);" in toast_rules
+    assert ".new-order-toast-list.is-stacked > .new-order-toast" in css
+    assert 'toggle.setAttribute("aria-expanded", String(expanded));' in dashboard_javascript
     assert "grid-template-columns: minmax(0, 1fr);" in toast_list_rules
     assert "grid-auto-flow: row;" in toast_list_rules
     assert "max-height: calc(100dvh - 92px);" in toast_list_rules
     assert "overflow-y: auto;" in toast_list_rules
     assert "scrollbar-gutter: stable;" in toast_list_rules
     assert ":has(.active-timer-rail" not in css
-    timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
+    timer_rules = css.split("\n.active-timer-rail {", 1)[1].split("}", 1)[0]
     assert "top: 50%;" in timer_rules
     assert "right: 14px;" in timer_rules
     assert "width: 178px;" in timer_rules

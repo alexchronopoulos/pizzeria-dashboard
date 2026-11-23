@@ -21,7 +21,7 @@ from .manual_payments import generate_match_token
 from .pickup_tracking import PICKUP_EVENTS, RECENT_ARRIVALS, PickupMark, arrival_pattern, timing_difference
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -284,6 +284,13 @@ def initialize_database(path: Path) -> None:
                 timer_end_at_ms INTEGER,
                 oven_position TEXT,
                 updated_at TEXT NOT NULL,
+                PRIMARY KEY (service_date, pie_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS slice_bake_counts (
+                service_date TEXT NOT NULL,
+                pie_key TEXT NOT NULL,
+                completed INTEGER NOT NULL,
                 PRIMARY KEY (service_date, pie_key)
             );
 
@@ -2170,6 +2177,18 @@ def _expire_completed_pie_timers(
     that was already marked done. Clear both newly expired running timers and
     any legacy done rows so those positions can never block the next pie.
     """
+    # This write and the transition to done share the same SQLite transaction.
+    # Competing polls cannot count the same running -> done transition twice.
+    connection.execute(
+        """
+        INSERT INTO slice_bake_counts (service_date, pie_key, completed)
+        SELECT service_date, pie_key, 1 FROM pie_production_states
+        WHERE service_date = ? AND pie_key LIKE ?
+          AND timer_status = 'running' AND timer_end_at_ms <= ?
+        ON CONFLICT(service_date, pie_key) DO UPDATE SET completed = completed + 1
+        """,
+        (service_date_key, f"{service_date_key}|slice-bake|%", _epoch_ms(now)),
+    )
     cursor = connection.execute(
         """
         UPDATE pie_production_states
@@ -2267,6 +2286,14 @@ def prune_pie_production_states(
                 (service_date.isoformat(), f"{service_date.isoformat()}|slice-bake|%"),
             )
     return max(cursor.rowcount, 0)
+
+
+def load_slice_bake_counts(path: Path, service_date: date) -> dict[str, int]:
+    with _connect(path) as connection:
+        return dict(connection.execute(
+            "SELECT pie_key, completed FROM slice_bake_counts WHERE service_date = ?",
+            (service_date.isoformat(),),
+        ).fetchall())
 
 
 def load_pie_production_states(
@@ -2375,6 +2402,8 @@ def update_pie_production_state(
             end_at_ms = None
             selected_position = None
         elif normalized_action == "finish":
+            if pie_key.startswith(f"{date_key}|slice-bake|") and status != "done":
+                raise ValueError("The slice timer has not elapsed.")
             status = "done"
             remaining_ms = 0
             end_at_ms = None

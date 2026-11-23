@@ -1,5 +1,5 @@
 {% from "_bake_timer.html" import render_bake_timer %}
-{% from "_pickup_tracking.html" import render_pickup_buttons, render_pickup_history %}
+{% from "_pickup_tracking.html" import render_pickup_buttons, render_pickup_history, order_action_icon %}
 {% macro render_boxed_button(order, boxed_at, selected_date) -%}
 <button
     type="button"
@@ -12,6 +12,7 @@
     draggable="false"
 >
     <span data-order-boxed-label>{% if boxed_at %}BOXED &amp; READY{% else %}Mark Boxed{% endif %}</span>
+    {{ order_action_icon('boxed') }}
     <span
         class="order-action-meta order-boxed-meta{% if boxed_at %} is-visible{% endif %}"
         data-order-boxed-meta
@@ -28,13 +29,14 @@
 {%- endmacro %}
 
 {% macro render_historical_boxed_status(boxed_at) -%}
-<span
-    class="badge badge--order-action order-boxed-history is-boxed"
-    aria-label="Boxed and ready at {{ boxed_at.strftime('%-I:%M %p') }}"
+<button type="button" disabled
+    class="badge badge--order-action order-boxed-history{% if boxed_at %} is-boxed{% endif %}"
+    {% if boxed_at %}aria-label="Boxed and ready at {{ boxed_at.strftime('%-I:%M %p') }}"{% endif %}
 >
-    <span>BOXED &amp; READY</span>
-    <time datetime="{{ boxed_at.isoformat() }}">{{ boxed_at.strftime('%-I:%M %p') }}</time>
-</span>
+    <span>{{ 'BOXED & READY' if boxed_at else 'Mark Boxed' }}</span>
+    {{ order_action_icon('boxed') }}
+    <span class="order-action-meta">{% if boxed_at %}<time datetime="{{ boxed_at.isoformat() }}">{{ boxed_at.strftime('%-I:%M %p') }}</time>{% else %}Not recorded{% endif %}</span>
+</button>
 {%- endmacro %}
 
 {% macro render_order(order, window=None, unscheduled=False) -%}
@@ -54,6 +56,7 @@
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.has_dining_in %} order-row--dining-in{% endif %}{% if order.has_double_cut %} order-row--double-cut{% endif %}{% if order.has_dont_cut %} order-row--dont-cut{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
     data-order-id="{{ order.order_id }}"
+    data-order-created-at="{{ (order.source_created_at or order.source_closed_at or order.pickup_at).timestamp() }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
     data-order-pizza-units="{{ order.pizza_units }}"
     data-order-pizza-counts="{{ order.pizza_counts | tojson | forceescape }}"
@@ -106,9 +109,6 @@
             >Details</button>
         </div>
         <div class="order-badges">
-            {% if selected_date < today and boxed_at %}
-            {{ render_historical_boxed_status(boxed_at) }}
-            {% endif %}
             {% if order.has_dining_in %}
             <span class="badge badge--dining-in" title="Dine-in order">I will be dining in</span>
             {% endif %}
@@ -220,8 +220,11 @@
     {% if not actions.rendered %}
         {% if selected_date >= today and not is_unpaid %}
         <div class="order-actions-fallback">{{ render_order_actions(order, boxed_at, selected_date, marks) }}</div>
-        {% elif not is_unpaid or marks %}
-        {{ render_pickup_history(marks) }}
+        {% elif selected_date < today and (not is_unpaid or marks or boxed_at) %}
+        <div class="order-action-row" role="group" aria-label="Recorded order actions">
+            {{ render_historical_boxed_status(boxed_at) }}
+            {{ render_pickup_history(marks) }}
+        </div>
         {% endif %}
     {% endif %}
     </div>
@@ -247,7 +250,7 @@
         <div class="dough-pizza-breakdown" aria-labelledby="dough-pizza-breakdown-heading">
             <div class="dough-pizza-breakdown-heading">
                 <strong id="dough-pizza-breakdown-heading">Pies all day</strong>
-                <span data-pie-all-day-total data-full-count="{{ service.total_pizzas }}">{{ service.total_pizzas }}{% if selected_date == today %} remaining{% else %} total{% endif %}</span>
+                <span data-pie-all-day-total data-full-count="{{ service.total_pizzas }}">{{ service.total_pizzas }} total</span>
             </div>
             {% if service.pizza_summary %}
             <ul class="dough-pizza-list">
@@ -262,7 +265,7 @@
         <div class="modifier-prep-breakdown" aria-labelledby="modifier-prep-heading">
             <div class="dough-pizza-breakdown-heading">
                 <strong id="modifier-prep-heading">Modifiers all day</strong>
-                <span data-modifier-all-day-total data-full-count="{{ service.modifier_counts.values() | sum }}">{{ service.modifier_counts.values() | sum }} portions{% if selected_date == today %} remaining{% endif %}</span>
+                <span data-modifier-all-day-total data-full-count="{{ service.modifier_counts.values() | sum }}">{{ service.modifier_counts.values() | sum }} portions</span>
             </div>
             {% if service.modifier_summary %}
             <ul class="modifier-prep-list">
@@ -348,6 +351,7 @@
         {% for key, name, state in slice_bakes %}
         <div class="slice-bake-row" data-slice-name="{{ name }}">
             <strong>{{ name }}</strong>
+            <span class="slice-bake-count" title="Completed bakes"><b data-slice-bake-count="{{ key }}">{{ slice_bake_counts.get(key, 0) }}</b> baked</span>
             {% if bake_timers_enabled %}
             {{ render_bake_timer(key, name, state, customer_label="Slice pie") }}
             {% else %}
