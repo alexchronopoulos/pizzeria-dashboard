@@ -197,6 +197,13 @@ Each pizza row also includes an eight-minute bake timer. Timer state is shared t
 
 Each editable order has one action row: **Mark Boxed**, **Mark Arrived**, **Mark Picked Up**, from left to right.
 
+Within each pickup slot, takeout comes before dine-in. In each group, confirmed
+first-time customers come first, then larger orders by whole-pie count. Equal
+pie counts are sorted by prep complexity: White, Pep & Pepp, Ezzo Pepperoni,
+and Seasonal Special Pies receive a boost, and extra prep modifiers add weight.
+Plain, Industrie, and Don't Cut lower the score. Missing customer history does
+not count as a first visit, and unpaid cards stay below the prep queue.
+
 Use **Slice pies** to tell the kitchen and counter that another pie is being made
 for slices. The dashboard automatically loads Square's **Round Slices**
 category, dropping “Slice” from the names. Each listed pie has a shared

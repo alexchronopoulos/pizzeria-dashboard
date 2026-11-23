@@ -553,7 +553,7 @@
 
             <div class="window-orders">
                 {% if window.orders %}
-                {% for order in window.orders %}
+                {% for order in prep_orders_by_slot[window.pickup_at] %}
                 {{ render_order(order, window=window) }}
                 {% endfor %}
                 {% else %}
