@@ -77,7 +77,7 @@ def test_order_actions_share_one_row_per_order_with_or_without_pies(counter, day
             assert row.count(hook) == 1 and hook in button
             assert f">{label}</span>" in button and 'class="badge badge--order-action"' in button
         assert row.count("data-bake-timer-toggle") == ticket.pizza_units
-        assert ('class="order-actions-fallback"' in row) == (ticket == salad)
+        assert row.index('class="customer-name"') < row.index('class="order-action-row"') < row.index('class="item-list"')
 
 
 @pytest.mark.parametrize(("minutes", "category"), [

@@ -46,6 +46,7 @@
 {% set internal_note = internal_notes.get(order.order_id) if internal_notes else none %}
 {% set customer_note = customer_notes.get(order.order_id) if customer_notes else none %}
 {% set boxed_at = boxed_orders.get(order.order_id) if boxed_orders else none %}
+{% set marks = pickup_marks.get(order.order_id, {}) %}
 {% set pickup_override = pickup_overrides.get(order.order_id) if pickup_overrides and order.order_id in pickup_overrides and not order.is_walk_in else none %}
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
@@ -108,6 +109,14 @@
                 aria-label="View details for {{ customer_label }}"
             >Details</button>
         </div>
+        {% if selected_date >= today and not is_unpaid %}
+        {{ render_order_actions(order, boxed_at, selected_date, marks) }}
+        {% elif selected_date < today and (not is_unpaid or marks or boxed_at) %}
+        <div class="order-action-row" role="group" aria-label="Recorded order actions">
+            {{ render_historical_boxed_status(boxed_at) }}
+            {{ render_pickup_history(marks) }}
+        </div>
+        {% endif %}
         <div class="order-badges">
             {% if order.has_dining_in %}
             <span class="badge badge--dining-in" title="Dine-in order">I will be dining in</span>
@@ -173,8 +182,6 @@
         <span>{{ order.note }}</span>
     </div>
     {% endif %}
-    {% set marks = pickup_marks.get(order.order_id, {}) %}
-    {% set actions = namespace(rendered=false) %}
     <ul class="item-list">
         {% for item in order.card_items %}
         {% set item_index = loop.index0 %}
@@ -187,10 +194,6 @@
                 </div>
                 {% if item.category == "pizza" and bake_timers_enabled and not is_unpaid %}
                 <div class="pizza-bake-controls">
-                    {% if not actions.rendered %}
-                    {{ render_order_actions(order, boxed_at, selected_date, marks) }}
-                    {% set actions.rendered = true %}
-                    {% endif %}
                     <div class="pizza-bake-stack">
                     {% for unit_index in range(item.quantity) %}
                     {% set pie_key = pie_base_key if unit_index == 0 else pie_base_key ~ '|' ~ unit_index %}
@@ -217,16 +220,6 @@
         </li>
         {% endfor %}
     </ul>
-    {% if not actions.rendered %}
-        {% if selected_date >= today and not is_unpaid %}
-        <div class="order-actions-fallback">{{ render_order_actions(order, boxed_at, selected_date, marks) }}</div>
-        {% elif selected_date < today and (not is_unpaid or marks or boxed_at) %}
-        <div class="order-action-row" role="group" aria-label="Recorded order actions">
-            {{ render_historical_boxed_status(boxed_at) }}
-            {{ render_pickup_history(marks) }}
-        </div>
-        {% endif %}
-    {% endif %}
     </div>
 </div>
 {%- endmacro %}
@@ -352,15 +345,15 @@
         <div class="slice-bake-row" data-slice-name="{{ name }}">
             <strong>{{ name }}</strong>
             <div class="slice-bake-controls">
-                <span class="slice-bake-count" title="Completed bakes">
-                    <span class="visually-hidden">Completed bakes: </span>
-                    <b data-slice-bake-count="{{ key }}">{{ slice_bake_counts.get(key, 0) }}</b>
-                </span>
                 {% if bake_timers_enabled %}
                 {{ render_bake_timer(key, name, state, customer_label="Slice pie") }}
                 {% else %}
                 <span class="slice-bake-status">{{ state.timer_status | capitalize }}</span>
                 {% endif %}
+                <span class="slice-bake-count" title="Completed bakes">
+                    <span class="visually-hidden">Completed bakes: </span>
+                    <b data-slice-bake-count="{{ key }}">{{ slice_bake_counts.get(key, 0) }}</b>
+                </span>
             </div>
         </div>
         {% else %}
