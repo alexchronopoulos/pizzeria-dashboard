@@ -4056,7 +4056,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.58' in html
+    assert 'style.css?v=0.5.59' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4114,36 +4114,35 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert ".order-boxed-meta {" in css
     assert "visibility: hidden;" in css
     assert ".order-boxed-meta.is-visible {\n    visibility: visible;" in css
-    assert "--service-alert-rail-width: clamp(230px, 27vw, 320px);" in css
     assert "grid-template-columns: 132px minmax(0, 1fr);" in css
+    assert "--service-alert-rail-width" not in css
+
+    window_list_rules = css.split(".window-list {", 1)[1].split("}", 1)[0]
+    assert "margin-right:" not in window_list_rules
+    assert "window-list--alert-safe" not in production_template
+    assert "unscheduled-lane--alert-safe" not in production_template
 
     toast_rules = css.split(".new-order-toast-region {", 1)[1].split("}", 1)[0]
     toast_list_rules = css.split(".new-order-toast-list {", 1)[1].split("}", 1)[0]
-    assert "width: min(var(--service-alert-rail-width), calc(100vw - 36px));" in toast_rules
+    assert "left: 18px;" in toast_rules
+    assert "right: auto;" in toast_rules
+    assert "width: min(380px, calc(100vw - 36px));" in toast_rules
     assert "grid-template-columns: minmax(0, 1fr);" in toast_rules
     assert "grid-template-rows: auto minmax(0, 1fr);" in toast_rules
     assert "grid-auto-flow: row;" in toast_rules
-    assert "max-height: calc(50dvh - 27px);" in toast_rules
+    assert "max-height: calc(100dvh - 36px);" in toast_rules
     assert "grid-template-columns: minmax(0, 1fr);" in toast_list_rules
     assert "grid-auto-flow: row;" in toast_list_rules
-    assert "max-height: calc(50dvh - 84px);" in toast_list_rules
+    assert "max-height: calc(100dvh - 92px);" in toast_list_rules
     assert "overflow-y: auto;" in toast_list_rules
     assert "scrollbar-gutter: stable;" in toast_list_rules
     assert ":has(.active-timer-rail" not in css
     timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
-    assert "bottom: 18px;" in timer_rules
-    assert "right: 18px;" in timer_rules
-    assert "width: min(var(--service-alert-rail-width), calc(100vw - 36px));" in timer_rules
-    assert "max-height: calc(50dvh - 27px);" in timer_rules
-    assert "overflow-y: auto;" in timer_rules
-    assert "scrollbar-gutter: stable;" in timer_rules
-    assert "transform:" not in timer_rules
-
-    safe_rail_rules = css.split("@media (min-width: 721px) {", 1)[1].split("}", 1)[0]
-    assert ".window-list--alert-safe," in safe_rail_rules
-    assert ".unscheduled-lane--alert-safe" in safe_rail_rules
-    assert "margin-right: calc(var(--service-alert-rail-width) + var(--service-alert-rail-gap));" in safe_rail_rules
-    assert "window-list--alert-safe" in production_template
+    assert "top: 50%;" in timer_rules
+    assert "right: 14px;" in timer_rules
+    assert "width: 178px;" in timer_rules
+    assert "max-height: calc(100vh - 220px);" in timer_rules
+    assert "transform: translateY(-50%);" in timer_rules
     assert "Slot capacity" not in html
     assert ".capacity-block" not in css
     assert ".capacity-track" not in css
@@ -4154,6 +4153,9 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "window.PizzeriaDashboardViewport?.restoreSaved();" in dashboard_javascript
     assert "document.fonts.ready" in dashboard_javascript
     assert "PizzeriaDashboardViewport.preserve(renderBoxedOrders)" in dashboard_javascript
+    assert 'if (status === "idle" || timerIsFullyVisible(timer)) {' in dashboard_javascript
+    assert "timerRail.hidden = hiddenTimers.length === 0;" in dashboard_javascript
+    assert 'window.addEventListener("scroll", renderActiveTimerRail' in dashboard_javascript
 
 
 def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:
