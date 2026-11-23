@@ -564,23 +564,18 @@ def test_release_candidates_consider_total_slot_capacity() -> None:
     ]
 
 
-def test_open_capacity_card_lists_one_and_two_pie_slots(tmp_path: Path) -> None:
+def test_slice_pie_card_and_service_slot_drop_targets_render(tmp_path: Path) -> None:
     response = _test_app(tmp_path).test_client().get("/?date=2026-07-31")
-    assert b"Available pickup slots" in response.data
+    assert b"Slice pies" in response.data
     assert b'operations-card--sides' not in response.data
     assert b"Salads, sides &amp; cookies" in response.data
     assert b"Cucumber Salad" in response.data
     assert b"Side Ranch" in response.data
     assert b"Cookies" in response.data
-    assert b"Slots available for up to 2 pies" in response.data
-    assert b"Slots available for only 1 pie" in response.data
-    assert b'aria-label="Slots available for one-pie orders"' in response.data
-    assert b'data-capacity-drop-zone' in response.data
-    assert b'data-open-pizza-spaces="2"' in response.data
-    assert b'data-open-pizza-spaces="1"' in response.data
+    assert b"No slice pies added." in response.data
+    assert b'data-walk-in-drop-zone' in response.data
     assert b'data-pickup-at="2026-07-31T16:30:00"' in response.data
     assert b'data-pickup-at="2026-07-31T17:30:00"' in response.data
-    assert b'Drop a walk-in order here to assign' in response.data
     assert b"Slot capacity" not in response.data
     assert b'class="capacity-block"' not in response.data
     assert b'class="capacity-track"' not in response.data
@@ -1028,7 +1023,7 @@ def test_inventory_summary_subtracts_slice_pies_and_online_order_reserve() -> No
     assert inventory.dough_remaining == 4
 
 
-def test_available_pickup_slots_use_twenty_minute_prep_buffer_and_reserve_dough(
+def test_slice_panel_replaces_availability_without_changing_dough_reserve(
     tmp_path: Path, monkeypatch
 ) -> None:
     import pizzeria_dashboard.dashboard as dashboard_module
@@ -1043,20 +1038,54 @@ def test_available_pickup_slots_use_twenty_minute_prep_buffer_and_reserve_dough(
     response = client.get("/?date=2026-07-31")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    availability_start = html.index("Available pickup slots")
-    availability_end = html.index("Customer visits") if "Customer visits" in html else html.index("Service slots")
-    availability = html[availability_start:availability_end]
-
-    assert "20-minute preparation buffer" in availability
-    assert 'datetime="2026-07-31T16:15:00"' not in availability
-    assert 'datetime="2026-07-31T16:30:00"' in availability
-    # The prep buffer closes near-term ordering sooner, while the first slot's
-    # apportioned reserve expires only after its actual pickup time passes.
+    assert 'id="slice-pies"' in html
+    assert "Available pickup slots" not in html
     assert "<strong>30</strong> Online Order Reserve" in html
     dough_start = html.index("Dough inventory")
-    dough_end = html.index("Available pickup slots", dough_start)
+    dough_end = html.index('id="slice-pies"', dough_start)
     dough_card = html[dough_start:dough_end]
     assert re.search(r">\s*-6\s*</strong>", dough_card)
+
+
+def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypatch):
+    import pizzeria_dashboard.dashboard as dashboard_module
+
+    now = datetime(2026, 7, 31, 16, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr(dashboard_module, "_now", lambda: now)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    counter, kitchen = app.test_client(), app.test_client()
+    day = now.date().isoformat()
+    for _ in range(2):
+        response = counter.post("/slice-bakes", data={"service_date": day, "pie_name": "Pepperoni Slice"})
+        assert response.status_code == 303
+    live_url = f"/live-production-state?date={day}"
+    data = kitchen.get(live_url).get_json()
+    first, second = data["pies"]
+    assert first != second and first.endswith("|Pepperoni") and second.endswith("|Pepperoni")
+    assert data["board_content_revision"]
+    assert kitchen.get(f"/?date={day}").data.count(b'data-bake-timer-reset') == 2
+    for action, expected in (("start", "running"), ("reset", "idle")):
+        assert counter.post("/pie-production-state", json={
+            "service_date": day, "pie_key": first, "timer_action": action,
+        }).status_code == 200
+        kitchen.get(f"/?date={day}")
+        states = kitchen.get(live_url).get_json()["pies"]
+        assert states[first]["timer_status"] == expected
+        assert states[second]["timer_status"] == "idle"
+    assert not kitchen.get("/live-production-state?date=2026-08-01").get_json()["pies"]
+
+
+def test_round_slice_catalog_excludes_other_categories_and_cleans_names():
+    from pizzeria_dashboard.dashboard import _round_slice_names
+
+    assert _round_slice_names([
+        {"type": "CATEGORY", "id": "round", "category_data": {"name": "Round Slices"}},
+        {"type": "ITEM", "item_data": {"name": "Plain Slice", "categories": [{"id": "round"}]}},
+        {"type": "ITEM", "item_data": {"name": "Slice - White", "category_id": "round"}},
+        {"type": "ITEM", "item_data": {"name": "Plain", "category_id": "round"}},
+        {"type": "ITEM", "item_data": {"name": "Square Slice", "category_id": "other"}},
+        {"type": "ITEM", "item_data": {"name": "Old Slice", "category_id": "round", "is_archived": True}},
+    ]) == ["Plain", "White"]
 
 
 def test_online_order_reserve_uses_fixed_allocation_and_released_capacity() -> None:
@@ -1822,7 +1851,7 @@ def test_walk_in_orders_render_unscheduled_and_can_be_dragged_into_a_slot(
     assert b'data-walk-in-order-id="walk-in-square-1"' in response.data
     assert b'data-walk-in-pizza-units="2"' in response.data
     assert b'data-walk-in-drop-zone' in response.data
-    assert b'data-capacity-drop-zone' in response.data
+    assert b'data-walk-in-drop-zone' in response.data
 
     assigned = client.post(
         "/walk-in-assignment",
@@ -3982,8 +4011,10 @@ def test_pizzas_all_day_decrements_when_timer_starts_or_boxed_as_fallback() -> N
     assert "committed += quantity" in javascript
     assert "committedPizzaCounts" in javascript
     assert "committedPizzaUnitCount" in javascript
-    assert 'data-timer-line-key="{{ pie_base_key }}"' in template
-    assert 'data-timer-line-quantity="{{ item.quantity }}"' in template
+    assert 'order.order_id, pie_base_key, item.quantity' in template
+    timer_template = Path("pizzeria_dashboard/templates/_bake_timer.html").read_text()
+    assert 'data-timer-line-key="{{ line_key }}"' in timer_template
+    assert 'data-timer-line-quantity="{{ quantity }}"' in timer_template
     assert 'parseOrderCounts(row, "orderPizzaCounts")' in javascript
     assert "Math.max(units - timedUnits, 0)" in javascript
     assert "Math.max(orderUnits - timedUnits, 0)" in javascript
@@ -4067,7 +4098,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.61' in html
+    assert 'style.css?v=0.5.62' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4085,7 +4116,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.46' in html
+    assert 'dashboard.js?v=0.5.47' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html

@@ -1161,6 +1161,30 @@ h2 {
     font-weight: 900;
 }
 
+.slice-bake-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-block: 10px;
+}
+
+.slice-bake-form :is(input, button) {
+    min-height: 44px;
+    max-width: 100%;
+    padding: 4px 8px;
+}
+
+.slice-bake-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-top: 1px solid var(--muted);
+    padding-block: 5px;
+}
+
 .availability-group {
     margin-top: 13px;
     padding-top: 12px;
