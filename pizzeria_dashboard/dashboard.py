@@ -86,6 +86,7 @@ from .domain import (
     ServiceBoard,
     build_service_board,
     parse_ticket_pickup_time,
+    sort_pickup_orders,
 )
 from .customer_history import build_customer_visit_summary
 from .customer_history_sync import sync_customer_history
@@ -664,6 +665,10 @@ def index() -> str:
     customer_summaries = load_customer_summaries_for_orders(
         database_path, set(history_keys.values()) | {key for key in trend_keys.values() if key},
     )
+    first_timer_ids = {
+        order_id for order_id, key in trend_keys.items()
+        if key and (summary := customer_summaries.get(key)) and summary.order_count == 1
+    }
     customer_ids = tuple(
         dict.fromkeys(
             str(summary.customer_id)
@@ -753,6 +758,10 @@ def index() -> str:
         auto_sync_enabled=auto_sync_available and auto_refresh_preference,
         auto_sync_seconds=auto_sync_seconds,
         customer_summaries=customer_summaries,
+        prep_orders_by_slot={
+            window.pickup_at: sort_pickup_orders(window.orders, first_timer_ids)
+            for window in service.windows
+        },
         customer_notes=customer_notes,
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,

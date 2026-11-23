@@ -4006,6 +4006,49 @@ def test_primary_salad_gets_same_green_card_behavior_as_salad_modifier_and_drink
     assert "1× Sparkling Water" in detail_html
 
 
+def test_pickup_cards_render_in_prep_priority_within_their_slot(tmp_path, monkeypatch):
+    from pizzeria_dashboard import dashboard
+    from pizzeria_dashboard.customer_history import CustomerSummary
+    from pizzeria_dashboard.domain import Item, Modifier, Order
+
+    at = datetime(2026, 7, 31, 17, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr(dashboard, "_now", lambda: at)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    def ticket(key, name="Plain Pie", quantity=1, *, note=None, offset=0, paid=True):
+        return Order(key, key, at + timedelta(minutes=offset), (Item(name, quantity, "pizza"),),
+                     note=note, is_paid=paid)
+    orders = (
+        ticket("a-dine", quantity=9, note="I will be dining in"),
+        ticket("b-plain"),
+        ticket("c-white", "White Pie"),
+        ticket("d-large", quantity=3),
+        ticket("e-first"),
+        ticket("f-unpaid", quantity=10, paid=False),
+        ticket("g-other-slot", quantity=15, offset=15),
+    )
+    replace_orders_for_date(Path(app.config["DATABASE_PATH"]), at.date(), orders, source="square")
+    monkeypatch.setattr(dashboard, "load_customer_summaries_for_orders", lambda *_: {
+        key: CustomerSummary(key, 1, at, at) for key in ("e-first", "a-dine", "f-unpaid")
+    })
+    html = app.test_client().get(f"/?date={at.date()}").get_data(as_text=True)
+    assert re.findall(r'<div\s+class="order-row[^"]*"[^>]*?data-order-id="([^"]+)"', html) == [
+        "e-first", "d-large", "c-white", "b-plain", "a-dine", "f-unpaid", "g-other-slot",
+    ]
+
+    from pizzeria_dashboard.domain import prep_complexity
+    def score(name="Neutral", modifiers=(), categories=()):
+        return prep_complexity(Order("score", "Guest", at, (
+            Item(name, 1, "pizza", modifiers=tuple(Modifier(mod) for mod in modifiers),
+                 catalog_categories=categories),
+        )))
+    assert score(modifiers=("Ezzo Pepperoni",)) > score()
+    assert score("Pep & Pepp") > score() and score("White Pie") > score()
+    assert score("Plain Pie") < score() and score("Industrie Pie") < score()
+    assert score(modifiers=("Basil", "Garlic")) > score(modifiers=("Basil",))
+    assert score(modifiers=("Don’t Cut",)) < score()
+    assert score(categories=("Seasonal Special Pies",)) > score()
+
+
 def test_order_actions_in_customer_heading_and_customer_visit_medal_is_pizza_themed(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     today = datetime.now(ZoneInfo(app.config["SERVICE_TIMEZONE"])).date()

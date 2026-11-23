@@ -566,6 +566,36 @@ class Order:
         return self.pizza_units == 1 and not self.released
 
 
+def prep_complexity(order: Order) -> int:
+    """Relative kitchen effort, used only to break equal pie-count ties."""
+    score = 0
+    for item in order.production_items:
+        name = " ".join(item.display_name.casefold().split())
+        if item.category == "pizza":
+            if name in {"pep & pepp", "pep & pepp pie", "white pie"}:
+                score += 4 * item.quantity
+            elif name in {"plain pie", "industrie pie"}:
+                score -= item.quantity
+        if any(category.strip().casefold() == "seasonal special pies" for category in item.catalog_categories):
+            score += 4 * item.quantity
+        for modifier in item.production_modifiers:
+            modifier_name = " ".join(modifier.display_name.casefold().split())
+            weight = -1 if modifier.is_dont_cut else 4 if modifier_name == "ezzo pepperoni" else 1
+            score += weight * modifier.quantity * item.quantity
+    return score
+
+
+def sort_pickup_orders(orders: Iterable[Order], first_timer_ids: set[str]) -> tuple[Order, ...]:
+    return tuple(sorted(orders, key=lambda order: (
+        not order.requires_preparation or order.is_paid is False,
+        order.has_dining_in,
+        order.order_id not in first_timer_ids,
+        -order.pizza_units,
+        -prep_complexity(order),
+        order.order_id,
+    )))
+
+
 @dataclass(frozen=True, slots=True)
 class PickupWindow:
     pickup_at: datetime
