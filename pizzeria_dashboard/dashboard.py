@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -20,9 +21,11 @@ from flask import (
 )
 
 from .database import (
+    change_pickup_mark,
     delete_order_slot_assignment,
     has_orders_for_date,
     load_app_metadata,
+    load_arrival_patterns,
     load_board_content_revision,
     load_customer_history_for_order,
     load_customer_history_sync_info,
@@ -35,6 +38,7 @@ from .database import (
     load_order_internal_note,
     load_order_internal_notes_for_date,
     load_order_ready_states,
+    load_pickup_marks,
     load_orders_for_date,
     load_pie_production_states,
     load_prep_timing_completions,
@@ -82,6 +86,7 @@ from .domain import (
 )
 from .customer_history import build_customer_visit_summary
 from .customer_history_sync import sync_customer_history
+from .pickup_tracking import ON_TIME_MINUTES, PICKUP_EVENTS
 from .service_config import (
     configuration_from_form,
     load_configuration,
@@ -664,9 +669,14 @@ def index() -> str:
     # Customer visit reporting covers every cached online order for the selected
     # date, including orders that contain only non-production items. The kitchen
     # board still filters those orders out of ``service.all_orders``.
+    history_keys = {order.order_id: order.square_order_id or order.order_id for order in orders}
+    trend_keys: dict[str, str | None] = dict(history_keys)
+    for order in orders:
+        if order.is_manual:
+            match = manual_payment_matches.get(order.order_id)
+            trend_keys[order.order_id] = match.square_order_id if match else None
     customer_summaries = load_customer_summaries_for_orders(
-        database_path,
-        (order.square_order_id or order.order_id for order in orders),
+        database_path, set(history_keys.values()) | {key for key in trend_keys.values() if key},
     )
     customer_ids = tuple(
         dict.fromkeys(
@@ -677,6 +687,17 @@ def index() -> str:
     )
     customer_profiles = load_square_customer_profiles(
         database_path, customer_ids
+    )
+    trend_customers = {}
+    for order_id, key in trend_keys.items():
+        if key and (summary := customer_summaries.get(key)):
+            profile = customer_profiles.get(summary.customer_id)
+            trend_customers[order_id] = profile.canonical_customer_id if profile else summary.customer_id
+    patterns = load_arrival_patterns(database_path, selected_date, trend_customers.values())
+    pickup_marks = _pickup_mark_views(database_path, selected_date)
+    arrival_counts = Counter(
+        marks["arrived"]["status"] for order in service.all_orders
+        if (marks := pickup_marks.get(order.order_id)) and "arrived" in marks
     )
     square_vip_group_id = load_app_metadata(
         database_path, SQUARE_VIP_GROUP_ID_KEY
@@ -749,6 +770,10 @@ def index() -> str:
         customer_notes=customer_notes,
         vip_order_ids=vip_order_ids,
         customer_visit_summary=customer_visit_summary,
+        pickup_marks=pickup_marks,
+        arrival_counts=arrival_counts,
+        on_time_minutes=ON_TIME_MINUTES,
+        arrival_patterns={oid: patterns[cid] for oid, cid in trend_customers.items() if cid in patterns},
         prep_timing_columns=prep_timing_columns,
         prep_timing_rows=prep_timing_rows,
         customer_history_info=customer_history_info,
@@ -1829,12 +1854,21 @@ def _pie_state_payload(state) -> dict[str, object]:
     }
 
 
+def _pickup_mark_views(database_path: Path, selected_date: date) -> dict[str, dict[str, dict[str, str]]]:
+    zone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    return {
+        order_id: {kind: mark.view(selected_date, zone) for kind, mark in marks.items()}
+        for order_id, marks in load_pickup_marks(database_path, selected_date).items()
+    }
+
+
 def _live_production_payload(selected_date: date) -> dict[str, object]:
     database_path = _database_path()
     timezone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
     return {
         "ok": True,
         "server_now_ms": int(datetime.now(UTC).timestamp() * 1000),
+        "pickup_marks": _pickup_mark_views(database_path, selected_date),
         "pies": {
             pie_key: _pie_state_payload(state)
             for pie_key, state in load_pie_production_states(
@@ -1894,6 +1928,53 @@ def update_shared_pie_state():
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 400
     return jsonify(_live_production_payload(selected_date))
+
+
+@blueprint.post("/order-pickup-event")
+def update_order_pickup_event():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    try:
+        selected = date.fromisoformat(payload.get("service_date", ""))
+    except (ValueError, TypeError):
+        return jsonify(ok=False, error="A valid service date is required."), 400
+    now = _now()
+    if selected < now.date():
+        return jsonify(ok=False, error="Past service dates are read-only."), 409
+    order_id, event = payload.get("order_id"), payload.get("event")
+    undo = payload.get("undo_recorded_at")
+    if not isinstance(order_id, str) or not order_id.strip() or event not in PICKUP_EVENTS:
+        return jsonify(ok=False, error="Choose an order and a valid pickup event."), 400
+    if "undo_recorded_at" in payload and (not isinstance(undo, str) or not undo or len(undo) > 64):
+        return jsonify(ok=False, error="Undo requires the recorded timestamp."), 400
+    path = _database_path()
+    revision = load_board_content_revision(path, selected)
+    order = load_order_for_date(path, selected, order_id)
+    if order is None:
+        return jsonify(ok=False, error="The order is no longer on this board."), 404
+    if order.is_paid is False or not order.requires_preparation:
+        return jsonify(ok=False, error="Unpaid orders cannot be marked arrived or picked up."), 400
+
+    # Resolve precisely the slot shown on the board, including custom overrides,
+    # Ticket Name assignments, and walk-ins deliberately left unscheduled.
+    board = build_service_board(
+        selected, (order,), pickup_times=load_configuration(path).pickup_times(selected),
+        pickup_time_overrides=load_order_slot_assignment_overrides(path, selected),
+    )
+    if not board.all_orders:
+        return jsonify(ok=False, error="The order is not on the production board."), 404
+    zone = ZoneInfo(current_app.config["SERVICE_TIMEZONE"])
+    promised = next((w.pickup_at.replace(tzinfo=zone) for w in board.windows if w.orders), None)
+    try:
+        marks = change_pickup_mark(
+            path, selected, order_id, event, now=now, scheduled_at=promised,
+            square_order_id=None if order.is_manual else (order.square_order_id or order_id),
+            board_revision=revision, undo_recorded_at=undo,
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    return jsonify(ok=True, marks={kind: mark.view(selected, zone) for kind, mark in marks.items()})
 
 
 @blueprint.post("/order-ready")

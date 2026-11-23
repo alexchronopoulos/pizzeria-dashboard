@@ -18,9 +18,10 @@ from .customer_history import (
 )
 from .domain import Item, Modifier, Order, order_from_payload, order_to_payload
 from .manual_payments import generate_match_token
+from .pickup_tracking import PICKUP_EVENTS, RECENT_ARRIVALS, PickupMark, arrival_pattern, timing_difference
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -299,6 +300,20 @@ def initialize_database(path: Path) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_order_ready_states_service_date
                 ON order_ready_states (service_date);
+
+            CREATE TABLE IF NOT EXISTS order_pickup_events (
+                service_date TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                event TEXT NOT NULL CHECK (event IN ('arrived', 'picked_up')),
+                recorded_at TEXT NOT NULL,
+                scheduled_at TEXT,
+                square_order_id TEXT,
+                customer_id TEXT,
+                PRIMARY KEY (service_date, order_id, event)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pickup_arrival_customer ON order_pickup_events(customer_id, service_date)
+                WHERE event = 'arrived' AND scheduled_at IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS app_metadata (
                 key TEXT PRIMARY KEY,
@@ -1065,6 +1080,25 @@ def reschedule_cached_order(
                     (source_key, order.order_id),
                 )
 
+            # Physical visits follow the order, retaining the original promised
+            # time for each observation. They are not reset like oven state.
+            connection.execute(
+                """
+                INSERT INTO order_pickup_events (service_date, order_id, event, recorded_at, scheduled_at, square_order_id, customer_id)
+                SELECT ?, order_id, event, recorded_at, scheduled_at, square_order_id, customer_id FROM order_pickup_events
+                WHERE service_date = ? AND order_id = ?
+                ON CONFLICT(service_date, order_id, event) DO UPDATE SET
+                    recorded_at = excluded.recorded_at, scheduled_at = excluded.scheduled_at,
+                    square_order_id = excluded.square_order_id, customer_id = excluded.customer_id
+                WHERE excluded.recorded_at < order_pickup_events.recorded_at
+                """,
+                (target_key, source_key, order.order_id),
+            )
+            connection.execute(
+                "DELETE FROM order_pickup_events WHERE service_date = ? AND order_id = ?",
+                (source_key, order.order_id),
+            )
+
             # A cross-date reschedule represents a new production day. Do not
             # carry boxed or running/done oven state into that day.
             connection.execute(
@@ -1375,6 +1409,15 @@ def link_manual_order_square_payment(
                 manual_order_id,
             ),
         )
+        # The customer may not have paid when staff recorded their arrival.
+        connection.execute(
+            """
+            UPDATE order_pickup_events SET square_order_id = ?,
+                customer_id = COALESCE((SELECT customer_id FROM customer_history_orders WHERE order_id = ?), customer_id)
+            WHERE service_date = ? AND order_id = ?
+            """,
+            (square_order_id, square_order_id, date_key, manual_order_id),
+        )
         _touch_board_content_revision(connection, date_key)
     return True
 
@@ -1577,6 +1620,7 @@ def remove_order_from_dashboard(
             "order_slot_assignments",
             "order_internal_notes",
             "order_ready_states",
+            "order_pickup_events",
         ):
             connection.execute(
                 f"DELETE FROM {table} WHERE service_date = ? AND order_id = ?",
@@ -2379,6 +2423,119 @@ def update_pie_production_state(
     )
 
 
+def _pickup_marks(rows: Iterable[sqlite3.Row]) -> dict[str, dict[str, PickupMark]]:
+    result: dict[str, dict[str, PickupMark]] = {}
+    for row in rows:
+        result.setdefault(row["order_id"], {})[row["event"]] = PickupMark(
+            datetime.fromisoformat(row["recorded_at"]),
+            datetime.fromisoformat(row["scheduled_at"]) if row["scheduled_at"] else None,
+        )
+    return result
+
+
+def load_pickup_marks(path: Path, service_date: date) -> dict[str, dict[str, PickupMark]]:
+    with _connect(path) as connection:
+        return _pickup_marks(connection.execute(
+            "SELECT * FROM order_pickup_events WHERE service_date = ?", (service_date.isoformat(),)
+        ))
+
+
+def change_pickup_mark(
+    path: Path, service_date: date, order_id: str, event: str, *, now: datetime,
+    scheduled_at: datetime | None, square_order_id: str | None,
+    board_revision: str, undo_recorded_at: str | None,
+) -> dict[str, PickupMark]:
+    """First tap wins across devices. Undo only the exact observation staff saw."""
+    if event not in PICKUP_EVENTS:
+        raise ValueError("Unknown pickup event.")
+    day = service_date.isoformat()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if board_revision != (_metadata_value(connection, f"board_content_revision:{day}") or ""):
+            raise ValueError("The board changed. Check the order and try again.")
+        marks = _pickup_marks(connection.execute(
+            "SELECT * FROM order_pickup_events WHERE service_date = ? AND order_id = ?", (day, order_id)
+        )).get(order_id, {})
+        previous = marks.get(event)
+        if undo_recorded_at is not None:
+            if previous is not None:
+                if previous.recorded_at.isoformat() != undo_recorded_at:
+                    raise ValueError("This timestamp changed on another display. Check it before undoing.")
+                connection.execute(
+                    "DELETE FROM order_pickup_events WHERE service_date = ? AND order_id = ? AND event = ?",
+                    (day, order_id, event),
+                )
+                del marks[event]
+        elif previous is None:
+            if event == "arrived" and "picked_up" in marks:
+                raise ValueError("Pickup is already recorded. Undo pickup first if it was a mistake.")
+            now = now.astimezone(UTC)
+            if event == "picked_up" and "arrived" in marks and now < marks["arrived"].recorded_at:
+                raise ValueError("Pickup cannot be recorded before arrival.")
+            promised = scheduled_at.astimezone(UTC) if scheduled_at is not None else None
+            if square_order_id is None:
+                match = connection.execute(
+                    "SELECT square_order_id FROM manual_order_payment_matches WHERE service_date = ? AND manual_order_id = ?",
+                    (day, order_id),
+                ).fetchone()
+                square_order_id = match["square_order_id"] if match else None
+            connection.execute(
+                """
+                INSERT INTO order_pickup_events
+                    (service_date, order_id, event, recorded_at, scheduled_at, square_order_id, customer_id)
+                VALUES (?, ?, ?, ?, ?, ?, (SELECT customer_id FROM customer_history_orders WHERE order_id = ?))
+                """,
+                (day, order_id, event, now.isoformat(), promised.isoformat() if promised else None,
+                 square_order_id, square_order_id),
+            )
+            marks[event] = PickupMark(now, promised)
+    return marks
+
+
+def load_arrival_patterns(
+    path: Path, service_date: date, customer_ids: Iterable[str],
+) -> dict[str, dict[str, str]]:
+    """Use confirmed Square payment/customer links, including manual orders paid later.
+
+    No name matching. Count a receipt once even if it produced multiple cards.
+    """
+    ids = tuple(dict.fromkeys(customer_ids))
+    if not ids:
+        return {}
+    requested = ",".join("(?)" for _ in ids)
+    with _connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            WITH requested(canonical) AS (VALUES {requested}),
+            identities(raw, canonical) AS (
+                SELECT canonical, canonical FROM requested
+                UNION
+                SELECT p.customer_id, r.canonical FROM requested AS r
+                JOIN square_customer_profiles AS p ON p.canonical_customer_id = r.canonical
+            ), history AS (
+                SELECT i.canonical AS customer, e.square_order_id,
+                       e.recorded_at, e.scheduled_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY i.canonical, e.square_order_id
+                           ORDER BY e.recorded_at, e.order_id
+                       ) AS receipt_visit
+                FROM identities AS i JOIN order_pickup_events AS e ON e.customer_id = i.raw
+                WHERE e.event = 'arrived' AND e.scheduled_at IS NOT NULL AND e.service_date < ?
+            ), recent AS (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY customer ORDER BY recorded_at DESC, square_order_id) AS visit
+                FROM history WHERE receipt_visit = 1
+            )
+            SELECT customer, recorded_at, scheduled_at FROM recent WHERE visit <= ?
+            """,
+            (*ids, service_date.isoformat(), RECENT_ARRIVALS),
+        ).fetchall()
+    by_customer: dict[str, list[str]] = {}
+    for r in rows:
+        _, status = timing_difference(datetime.fromisoformat(r["recorded_at"]), datetime.fromisoformat(r["scheduled_at"]))
+        by_customer.setdefault(r["customer"], []).append(status)
+    return {customer: pattern for customer, visits in by_customer.items() if (pattern := arrival_pattern(visits))}
+
+
 def load_order_ready_states(
     path: Path, service_date: date
 ) -> dict[str, datetime]:
@@ -2783,6 +2940,18 @@ def _history_items_from_json(value: str) -> tuple[Item, ...]:
     return tuple(items)
 
 
+def _remember_pickup_customers(connection: sqlite3.Connection) -> None:
+    """Keep confirmed links with staff observations even if the history index is rebuilt."""
+    connection.execute(
+        """
+        UPDATE order_pickup_events AS e
+        SET customer_id = (SELECT h.customer_id FROM customer_history_orders AS h WHERE h.order_id = e.square_order_id)
+        WHERE EXISTS (SELECT 1 FROM customer_history_orders AS h
+                      WHERE h.order_id = e.square_order_id AND h.customer_id IS NOT e.customer_id)
+        """
+    )
+
+
 def replace_customer_history(
     path: Path,
     orders: Iterable[CustomerHistoryOrder],
@@ -2814,6 +2983,7 @@ def replace_customer_history(
                     synced_at.isoformat(),
                 ),
             )
+        _remember_pickup_customers(connection)
         connection.execute(
             """
             INSERT INTO customer_history_sync (
@@ -2903,6 +3073,8 @@ def merge_customer_history(
                     synced_at.isoformat(),
                 ),
             )
+        if changed_count:
+            _remember_pickup_customers(connection)
         total_orders = int(
             connection.execute(
                 "SELECT COUNT(*) AS total FROM customer_history_orders"

@@ -271,6 +271,7 @@
             || target.closest("[data-bake-timer]")
             || target.closest("[data-order-complete-button]")
             || target.closest("[data-order-boxed-button]")
+            || target.closest("[data-pickup-event]")
         ) {
             return;
         }
@@ -1831,7 +1832,7 @@
         || document.body.classList.contains("walk-in-assignment-pending")
     );
 
-    const applyPayload = (payload) => {
+    const applyPayload = (payload, pollStartedAt) => {
         if (Number.isFinite(Number(payload.server_now_ms))) {
             serverOffsetMs = Number(payload.server_now_ms) - Date.now();
         }
@@ -1857,6 +1858,11 @@
             prepTimingCompletions = new Set(payload.prep_timing_completions.map(String));
         }
         const viewportSnapshot = window.PizzeriaDashboardViewport?.capture();
+        if (pollStartedAt !== undefined && payload.pickup_marks) {
+            document.dispatchEvent(new CustomEvent("pizzeria-dashboard:pickup-marks", {
+                detail: {startedAt: pollStartedAt, marks: payload.pickup_marks},
+            }));
+        }
         renderAll();
         window.PizzeriaDashboardViewport?.restore(viewportSnapshot, {defer: false});
     };
@@ -2000,6 +2006,7 @@
             return;
         }
         polling = true;
+        const pollStartedAt = performance.now();
         try {
             const response = await fetch(`${stateUrl}?date=${encodeURIComponent(serviceDate)}`, {
                 headers: {"Accept": "application/json"},
@@ -2007,7 +2014,7 @@
             });
             const result = await response.json();
             if (response.ok && result.ok) {
-                applyPayload(result);
+                applyPayload(result, pollStartedAt);
             }
         } catch (_error) {
             // Keep the last known production state during a brief network interruption.
