@@ -1829,7 +1829,6 @@
 
     const shouldHoldBoardReload = () => (
         Boolean(document.querySelector("dialog[open]"))
-        || Boolean(document.activeElement?.matches("#slice-pie-name") && document.activeElement.value)
         || Boolean(pizzaBreakdownOverlay && !pizzaBreakdownOverlay.hidden)
         || document.body.classList.contains("walk-in-assignment-pending")
     );
@@ -3059,3 +3058,36 @@
         finishRestore();
     }
 })();
+(() => {
+    const form = document.querySelector("[data-round-slice-menu]");
+    if (!form) return;
+    const status = form.querySelector("[data-slice-menu-status]");
+    const options = form.querySelector("[data-slice-menu-options]");
+    let current = "";
+    const load = async () => {
+        try {
+            const response = await fetch(form.dataset.roundSliceMenu, {cache: "no-store"});
+            if (!response.ok) throw new Error("Unable to load the slice menu.");
+            const {names, error} = await response.json();
+            const key = JSON.stringify(names);
+            if (key !== current) {
+                options.replaceChildren(...names.map((name) => {
+                    const button = document.createElement("button");
+                    button.type = "submit";
+                    button.name = "pie_name";
+                    button.value = name;
+                    button.textContent = `+ ${name}`;
+                    button.setAttribute("aria-label", `Add ${name} slice pie`);
+                    return button;
+                }));
+                current = key;
+            }
+            status.textContent = error || (names.length ? "" : "No pies found in Round Slices.");
+        } catch {
+            status.textContent = "Could not load Round Slices. Retrying automatically.";
+        }
+    };
+    load();
+    window.setInterval(load, 60_000);
+})();
+

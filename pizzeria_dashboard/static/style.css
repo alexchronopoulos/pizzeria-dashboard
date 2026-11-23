@@ -1169,10 +1169,20 @@ h2 {
     margin-block: 10px;
 }
 
-.slice-bake-form :is(input, button) {
+.slice-bake-form button {
     min-height: 44px;
     max-width: 100%;
     padding: 4px 8px;
+}
+
+.slice-menu-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.slice-bake-form [data-slice-menu-status]:empty {
+    display: none;
 }
 
 .slice-bake-row {

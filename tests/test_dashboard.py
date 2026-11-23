@@ -1052,11 +1052,26 @@ def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypa
 
     now = datetime(2026, 7, 31, 16, tzinfo=ZoneInfo("America/New_York"))
     monkeypatch.setattr(dashboard_module, "_now", lambda: now)
-    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False, SQUARE_ACCESS_TOKEN="test-token")
     counter, kitchen = app.test_client(), app.test_client()
+    calls = []
+    def catalog(self):
+        calls.append(True)
+        return [
+            {"type": "CATEGORY", "id": "round", "category_data": {"name": "Round Slices"}},
+            {"type": "ITEM", "item_data": {"name": "Pepperoni Slice", "category_id": "round"}},
+        ]
+    monkeypatch.setattr(dashboard_module.SquareClient, "list_catalog_items_and_categories", catalog)
     day = now.date().isoformat()
+    html = counter.get(f"/?date={day}").get_data(as_text=True)
+    assert 'data-round-slice-menu="/round-slice-menu"' in html
+    assert 'id="slice-pie-name"' not in html
+    for screen in (counter, kitchen):
+        assert screen.get("/round-slice-menu").get_json()["names"] == ["Pepperoni"]
+    assert len(calls) == 1
+    counter.post("/slice-bakes", data={"service_date": day, "pie_name": "Not on menu"})
     for _ in range(2):
-        response = counter.post("/slice-bakes", data={"service_date": day, "pie_name": "Pepperoni Slice"})
+        response = counter.post("/slice-bakes", data={"service_date": day, "pie_name": "Pepperoni"})
         assert response.status_code == 303
     live_url = f"/live-production-state?date={day}"
     data = kitchen.get(live_url).get_json()
@@ -4098,7 +4113,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.62' in html
+    assert 'style.css?v=0.5.63' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4116,7 +4131,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.47' in html
+    assert 'dashboard.js?v=0.5.48' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
