@@ -171,9 +171,9 @@
                     <span class="item-quantity">{{ item.quantity }}×</span>
                     <span class="item-name">{{ item.display_name }}</span>
                 </div>
-                {% if item.category == "pizza" and selected_date >= today and not is_unpaid %}
+                {% if item.category == "pizza" and bake_timers_enabled and not is_unpaid %}
                 <div class="pizza-bake-controls">
-                    {% if selected_date >= today and not boxed_action.rendered %}
+                    {% if not boxed_action.rendered %}
                     {{ render_boxed_button(order, boxed_at, selected_date) }}
                     {% set boxed_action.rendered = true %}
                     {% endif %}
