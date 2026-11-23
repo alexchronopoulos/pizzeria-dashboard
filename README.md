@@ -197,6 +197,12 @@ Each pizza row also includes an eight-minute bake timer. Timer state is shared t
 
 Each editable order has one action row: **Mark Boxed**, **Mark Arrived**, **Mark Picked Up**, from left to right.
 
+Use **Slice pies** to tell the kitchen and counter that another pie is being made
+for slices. **Refresh Round Slices** loads Square's category into the pie-name
+suggestions (without “Slice”); a name can also be entered manually. **Add pie**
+creates a separate shared eight-minute timer, even for the same flavor. These
+timers do not create Square orders or change the dashboard's dough or order counts.
+
 Use **Mark Boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 
 Tap **Mark Arrived** when the customer gets to the counter and **Mark Picked Up** when they leave with the order. These are independent dashboard timestamps: they do not complete an order in Square or affect boxed status, timers, or dough. If you miss the arrival, record just the pickup. On an editable board, tap a recorded time and confirm to undo a mistake.

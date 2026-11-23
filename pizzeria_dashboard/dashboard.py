@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -21,6 +23,7 @@ from flask import (
 )
 
 from .database import (
+    add_slice_bake,
     change_pickup_mark,
     delete_order_slot_assignment,
     has_orders_for_date,
@@ -629,24 +632,6 @@ def index() -> str:
         if selected_date == now.date():
             save_state(database_path, selected_date, inventory_state)
     current_service_time = now.replace(tzinfo=None)
-    buffer_eligible_windows = _pickup_windows_after_prep_buffer(
-        service, selected_date, now
-    )
-    available_pickup_windows = tuple(
-        window
-        for window in buffer_eligible_windows
-        if service.open_capacity(window) > 0
-    )
-    future_one_pie_windows = tuple(
-        window
-        for window in available_pickup_windows
-        if service.open_capacity(window) == 1
-    )
-    future_two_pie_windows = tuple(
-        window
-        for window in available_pickup_windows
-        if service.open_capacity(window) >= 2
-    )
     if selected_date >= now.date():
         online_order_dough_reserve = _online_order_reserve(
             orders,
@@ -790,8 +775,12 @@ def index() -> str:
             for order_id, boxed_at in ready_states.items()
         },
         board_content_revision=board_content_revision,
-        future_one_pie_windows=future_one_pie_windows,
-        future_two_pie_windows=future_two_pie_windows,
+        slice_menu=json.loads(load_app_metadata(database_path, "slice_bake_menu") or "[]"),
+        slice_bakes=[
+            (key, key.split("|", 3)[3], state)
+            for key, state in sorted(pie_states.items())
+            if key.startswith(f"{selected_date.isoformat()}|slice-bake|") and key.count("|") >= 3
+        ],
         online_order_reserve=inventory_state.online_order_reserve,
         pickup_overrides=pickup_overrides,
         original_pickup_times={
@@ -1890,6 +1879,60 @@ def _live_production_payload(selected_date: date) -> dict[str, object]:
     }
 
 
+def _slice_pie_name(name: str) -> str:
+    return " ".join(re.sub(r"\bslices?\b", "", name, flags=re.IGNORECASE).split()).strip(" -–—")
+
+
+def _round_slice_names(objects) -> list[str]:
+    category_ids = {
+        obj["id"] for obj in objects
+        if obj.get("type") == "CATEGORY" and obj.get("id")
+        and str((obj.get("category_data") or {}).get("name", "")).strip().casefold() == "round slices"
+    }
+    names = {}
+    for obj in objects:
+        if obj.get("type") != "ITEM" or obj.get("is_deleted"):
+            continue
+        item = obj.get("item_data") or {}
+        categories = {entry.get("id") for entry in item.get("categories") or []}
+        categories.add(item.get("category_id"))
+        if not item.get("is_archived") and category_ids & categories:
+            name = _slice_pie_name(str(item.get("name") or ""))
+            if 0 < len(name) <= 100:
+                names.setdefault(name.casefold(), name)
+    return [names[key] for key in sorted(names)]
+
+
+@blueprint.post("/slice-bakes")
+def update_slice_bakes():
+    try:
+        selected = date.fromisoformat(request.form.get("service_date", ""))
+    except ValueError:
+        return "A valid service date is required.", 400
+    target = url_for("dashboard.index", date=selected.isoformat(), _anchor="slice-pies")
+    if selected < _now().date():
+        flash("Past slice pie boards are read-only.", "error")
+        return redirect(target, code=303)
+    path = _database_path()
+    if request.form.get("action") == "refresh-menu":
+        try:
+            client = SquareClient(SquareSettings.from_mapping(current_app.config))
+            names = _round_slice_names(client.list_catalog_items_and_categories())
+        except SquareError:
+            flash("Could not refresh Round Slices from Square. You can still enter a pie name.", "error")
+        else:
+            save_app_metadata(path, "slice_bake_menu", json.dumps(names))
+            flash(f"Loaded {len(names)} pie names from Round Slices.", "success")
+    else:
+        name = _slice_pie_name(request.form.get("pie_name", ""))
+        if not name or len(name) > 100:
+            flash("Enter a pie name of up to 100 characters.", "error")
+        else:
+            key = f"{selected.isoformat()}|slice-bake|{_now().astimezone(UTC):%Y%m%d%H%M%S%f}-{uuid4().hex}|{name}"
+            add_slice_bake(path, selected, key)
+    return redirect(target, code=303)
+
+
 @blueprint.get("/live-production-state")
 def live_production_state():
     selected_date = _parse_service_date(request.args.get("date"))
@@ -1907,6 +1950,8 @@ def update_shared_pie_state():
         return jsonify(ok=False, error="A valid pie key is required."), 400
     if not pie_key.startswith(f"{selected_date.isoformat()}|"):
         return jsonify(ok=False, error="The pie key is for another service date."), 400
+    if pie_key.startswith(f"{selected_date.isoformat()}|slice-bake|") and selected_date < _now().date():
+        return jsonify(ok=False, error="Past slice pie boards are read-only."), 409
     action = str(payload.get("timer_action", "")).strip().lower() or None
     try:
         duration_ms = int(payload.get("duration_ms", 480_000))

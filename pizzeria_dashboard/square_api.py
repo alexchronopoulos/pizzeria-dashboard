@@ -766,6 +766,17 @@ class SquareClient:
         return tuple(payments)
 
 
+    def list_catalog_items_and_categories(self) -> tuple[Mapping[str, object], ...]:
+        objects = []
+        query = {"types": "ITEM,CATEGORY"}
+        while True:
+            response = self._request("GET", f"/v2/catalog/list?{urlencode(query)}")
+            objects.extend(obj for obj in response.get("objects", []) if isinstance(obj, Mapping))
+            cursor = response.get("cursor")
+            if not cursor:
+                return tuple(objects)
+            query["cursor"] = str(cursor)
+
     def batch_retrieve_catalog_objects(
         self,
         object_ids: Sequence[str],

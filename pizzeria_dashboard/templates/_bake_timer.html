@@ -1,0 +1,35 @@
+{% macro render_bake_timer(pie_key, name, pie_state, order_id="", line_key="", quantity=1, customer_label="", pickup_label="", unit_index=0) -%}
+<div
+    class="bake-timer"
+    data-bake-timer
+    data-bake-duration-seconds="480"
+    data-bake-timer-key="{{ pie_key }}"
+    data-timer-order-id="{{ order_id }}"
+    data-timer-pizza-name="{{ name }}"
+    data-timer-line-key="{{ line_key }}"
+    data-timer-line-quantity="{{ quantity }}"
+    data-timer-customer-label="{{ customer_label }}"
+    data-timer-pickup-label="{{ pickup_label }}"
+    data-timer-unit-label="{% if quantity > 1 %}{{ unit_index + 1 }}/{{ quantity }}{% endif %}"
+    data-timer-status="{{ pie_state.timer_status if pie_state else 'idle' }}"
+    data-timer-remaining-ms="{{ pie_state.timer_remaining_ms if pie_state else 480000 }}"
+    data-timer-end-at-ms="{{ pie_state.timer_end_at_ms if pie_state and pie_state.timer_end_at_ms else '' }}"
+>
+    <button
+        class="bake-timer-button"
+        type="button"
+        data-bake-timer-toggle
+        aria-label="Start an eight-minute bake timer for {{ name }}{% if quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ quantity }}{% endif %}"
+    >
+        <span data-bake-timer-action>Start</span>
+        <strong data-bake-timer-display aria-live="polite">8:00</strong>
+    </button>
+    <button
+        class="bake-timer-reset"
+        type="button"
+        data-bake-timer-reset
+        aria-label="Reset bake timer for {{ name }}{% if quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ quantity }}{% endif %}"
+        title="Reset timer"
+    >↺</button>
+</div>
+{%- endmacro %}

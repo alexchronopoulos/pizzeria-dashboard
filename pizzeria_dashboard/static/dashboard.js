@@ -1142,7 +1142,8 @@
     const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
     const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
     const prepTimingButtons = Array.from(document.querySelectorAll("[data-prep-timing-toggle]"));
-    if (!board || (!timers.length && !orderRows.length && !countdown && !prepTimingButtons.length)) {
+    if (!board || (!timers.length && !orderRows.length && !countdown && !prepTimingButtons.length
+        && !document.querySelector(".slice-bake-form"))) {
         return;
     }
 
@@ -1828,6 +1829,7 @@
 
     const shouldHoldBoardReload = () => (
         Boolean(document.querySelector("dialog[open]"))
+        || Boolean(document.activeElement?.matches("#slice-pie-name") && document.activeElement.value)
         || Boolean(pizzaBreakdownOverlay && !pizzaBreakdownOverlay.hidden)
         || document.body.classList.contains("walk-in-assignment-pending")
     );
@@ -1838,14 +1840,12 @@
         }
         const remoteRevision = String(payload.board_content_revision || "");
         const localRevision = String(board.dataset.boardContentRevision || "");
-        if (remoteRevision && localRevision && remoteRevision !== localRevision) {
+        if (remoteRevision && remoteRevision !== localRevision) {
             if (!shouldHoldBoardReload()) {
                 window.PizzeriaDashboardViewport?.remember();
                 window.location.reload();
                 return;
             }
-        } else if (remoteRevision && !localRevision) {
-            board.dataset.boardContentRevision = remoteRevision;
         }
         pieStates = {...pieStates, ...(payload.pies || {})};
         Object.entries(payload.pies || {}).forEach(([key, state]) => {

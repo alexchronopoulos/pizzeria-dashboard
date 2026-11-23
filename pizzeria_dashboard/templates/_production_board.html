@@ -1,3 +1,4 @@
+{% from "_bake_timer.html" import render_bake_timer %}
 {% from "_pickup_tracking.html" import render_pickup_buttons, render_pickup_history %}
 {% macro render_boxed_button(order, boxed_at, selected_date) -%}
 <button
@@ -196,39 +197,8 @@
                     {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
                     <div class="pizza-bake-unit">
                         {% if item.quantity > 1 %}<span class="pizza-unit-label">{{ unit_index + 1 }}/{{ item.quantity }}</span>{% endif %}
-                        <div
-                            class="bake-timer"
-                            data-bake-timer
-                            data-bake-duration-seconds="480"
-                            data-bake-timer-key="{{ pie_key }}"
-                            data-timer-order-id="{{ order.order_id }}"
-                            data-timer-pizza-name="{{ item.display_name }}"
-                            data-timer-line-key="{{ pie_base_key }}"
-                            data-timer-line-quantity="{{ item.quantity }}"
-                            data-timer-customer-label="{{ customer_label }}"
-                            data-timer-pickup-label="{% if unscheduled %}Unscheduled{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}"
-                            data-timer-unit-label="{% if item.quantity > 1 %}{{ unit_index + 1 }}/{{ item.quantity }}{% endif %}"
-                            data-timer-status="{{ pie_state.timer_status if pie_state else 'idle' }}"
-                            data-timer-remaining-ms="{{ pie_state.timer_remaining_ms if pie_state else 480000 }}"
-                            data-timer-end-at-ms="{{ pie_state.timer_end_at_ms if pie_state and pie_state.timer_end_at_ms else '' }}"
-                        >
-                            <button
-                                class="bake-timer-button"
-                                type="button"
-                                data-bake-timer-toggle
-                                aria-label="Start an eight-minute bake timer for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
-                            >
-                                <span data-bake-timer-action>Start</span>
-                                <strong data-bake-timer-display aria-live="polite">8:00</strong>
-                            </button>
-                            <button
-                                class="bake-timer-reset"
-                                type="button"
-                                data-bake-timer-reset
-                                aria-label="Reset bake timer for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
-                                title="Reset timer"
-                            >↺</button>
-                        </div>
+                        {% set pickup_label %}{% if unscheduled %}Unscheduled{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}{% endset %}
+                        {{ render_bake_timer(pie_key, item.display_name, pie_state, order.order_id, pie_base_key, item.quantity, customer_label, pickup_label, unit_index) }}
                     </div>
                     {% endfor %}
                     </div>
@@ -369,55 +339,34 @@
         </section>
     </article>
 
-    <article class="operations-card operations-card--release">
-        <span class="summary-label">Available pickup slots</span>
-        {% if selected_date == today %}<span class="operations-caption">{{ order_prep_buffer_minutes }}-minute preparation buffer</span>{% endif %}
-        <div class="availability-group">
-            <div class="availability-heading">
-                <strong>Slots available for up to 2 pies</strong>
-                <span>{{ future_two_pie_windows | length }} slots</span>
-            </div>
-            {% if future_two_pie_windows %}
-            <div class="availability-times" aria-label="Slots available for two-pie orders">
-                {% for window in future_two_pie_windows %}
-                <time
-                    class="availability-slot-drop"
-                    datetime="{{ window.pickup_at.isoformat() }}"
-                    data-walk-in-drop-zone
-                    data-capacity-drop-zone
-                    data-open-pizza-spaces="2"
-                    data-capacity-pickup-at="{{ window.pickup_at.isoformat() }}"
-                    title="Drop a walk-in order here to assign {{ window.pickup_at.strftime('%-I:%M %p') }}"
-                >{{ window.pickup_at.strftime('%-I:%M') }}</time>
-                {% endfor %}
-            </div>
+    <article class="operations-card operations-card--release" id="slice-pies">
+        <span class="summary-label">Slice pies</span>
+        {% if bake_timers_enabled %}
+        <form method="post" action="{{ url_for('dashboard.update_slice_bakes') }}" class="slice-bake-form">
+            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
+            <label for="slice-pie-name">Pie name</label>
+            <input id="slice-pie-name" name="pie_name" list="round-slice-menu" maxlength="100" required>
+            <datalist id="round-slice-menu">
+                {% for name in slice_menu %}<option value="{{ name }}"></option>{% endfor %}
+            </datalist>
+            <button type="submit" name="action" value="add">Add pie</button>
+            {% if square_configured %}
+            <button type="submit" name="action" value="refresh-menu" formnovalidate>Refresh Round Slices</button>
+            {% endif %}
+        </form>
+        {% endif %}
+        {% for key, name, state in slice_bakes %}
+        <div class="slice-bake-row">
+            <strong>{{ name }}</strong>
+            {% if bake_timers_enabled %}
+            {{ render_bake_timer(key, name, state, customer_label="Slice pie") }}
             {% else %}
-            <p class="availability-empty">None</p>
+            <span>{{ state.timer_status | capitalize }}</span>
             {% endif %}
         </div>
-        <div class="availability-group availability-group--one">
-            <div class="availability-heading">
-                <strong>Slots available for only 1 pie</strong>
-                <span>{{ future_one_pie_windows | length }} slots</span>
-            </div>
-            {% if future_one_pie_windows %}
-            <div class="availability-times" aria-label="Slots available for one-pie orders">
-                {% for window in future_one_pie_windows %}
-                <time
-                    class="availability-slot-drop"
-                    datetime="{{ window.pickup_at.isoformat() }}"
-                    data-walk-in-drop-zone
-                    data-capacity-drop-zone
-                    data-open-pizza-spaces="1"
-                    data-capacity-pickup-at="{{ window.pickup_at.isoformat() }}"
-                    title="Drop a walk-in order here to assign {{ window.pickup_at.strftime('%-I:%M %p') }}"
-                >{{ window.pickup_at.strftime('%-I:%M') }}</time>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="availability-empty">None</p>
-            {% endif %}
-        </div>
+        {% else %}
+        <p class="availability-empty">No slice pies added.</p>
+        {% endfor %}
     </article>
 </div>
 

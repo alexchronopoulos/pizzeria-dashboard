@@ -2254,16 +2254,17 @@ def prune_pie_production_states(
                 WHERE service_date = ?
                   AND pie_key NOT IN ({placeholders})
                   AND timer_status = 'idle'
+                  AND pie_key NOT LIKE ?
                 """,
-                (service_date.isoformat(), *valid),
+                (service_date.isoformat(), *valid, f"{service_date.isoformat()}|slice-bake|%"),
             )
         else:
             cursor = connection.execute(
                 """
                 DELETE FROM pie_production_states
-                WHERE service_date = ? AND timer_status = 'idle'
+                WHERE service_date = ? AND timer_status = 'idle' AND pie_key NOT LIKE ?
                 """,
-                (service_date.isoformat(),),
+                (service_date.isoformat(), f"{service_date.isoformat()}|slice-bake|%"),
             )
     return max(cursor.rowcount, 0)
 
@@ -2292,6 +2293,17 @@ def load_pie_production_states(
         )
         for row in rows
     }
+
+
+def add_slice_bake(path: Path, service_date: date, pie_key: str) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """INSERT INTO pie_production_states
+               (service_date, pie_key, timer_status, timer_remaining_ms, updated_at)
+               VALUES (?, ?, 'idle', 480000, ?)""",
+            (service_date.isoformat(), pie_key, _utc_now().isoformat()),
+        )
+        _touch_board_content_revision(connection, service_date.isoformat())
 
 
 def update_pie_production_state(
@@ -2331,6 +2343,8 @@ def update_pie_production_state(
             """,
             (date_key, pie_key),
         ).fetchone()
+        if row is None and pie_key.startswith(f"{date_key}|slice-bake|"):
+            raise ValueError("That slice pie is not on the board.")
         state = _normalized_pie_state(
             row, pie_key, now_ms=now_ms, default_duration_ms=normalized_duration
         )
