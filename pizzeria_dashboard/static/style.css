@@ -1161,27 +1161,7 @@ h2 {
     font-weight: 900;
 }
 
-.slice-bake-form {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin-block: 10px;
-}
-
-.slice-bake-form button {
-    min-height: 44px;
-    max-width: 100%;
-    padding: 4px 8px;
-}
-
-.slice-menu-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.slice-bake-form [data-slice-menu-status]:empty {
+#slice-pies [data-slice-menu-status]:empty {
     display: none;
 }
 

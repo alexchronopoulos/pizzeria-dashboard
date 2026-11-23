@@ -339,18 +339,14 @@
         </section>
     </article>
 
-    <article class="operations-card operations-card--release" id="slice-pies">
+    <article class="operations-card operations-card--release" id="slice-pies"
+             {% if bake_timers_enabled %}data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}"{% endif %}>
         <span class="summary-label">Slice pies</span>
         {% if bake_timers_enabled %}
-        <form method="post" action="{{ url_for('dashboard.update_slice_bakes') }}" class="slice-bake-form"
-              data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}">
-            <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-            <span role="status" data-slice-menu-status>Loading Round Slices…</span>
-            <div class="slice-menu-options" data-slice-menu-options></div>
-        </form>
+        <span role="status" data-slice-menu-status>{% if not slice_bakes %}Loading Round Slices…{% endif %}</span>
         {% endif %}
         {% for key, name, state in slice_bakes %}
-        <div class="slice-bake-row">
+        <div class="slice-bake-row" data-slice-name="{{ name }}">
             <strong>{{ name }}</strong>
             {% if bake_timers_enabled %}
             {{ render_bake_timer(key, name, state, customer_label="Slice pie") }}
@@ -359,7 +355,7 @@
             {% endif %}
         </div>
         {% else %}
-        <p class="availability-empty">No slice pies added.</p>
+        {% if not bake_timers_enabled %}<p class="availability-empty">No slice pies recorded.</p>{% endif %}
         {% endfor %}
     </article>
 </div>
