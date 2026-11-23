@@ -37,7 +37,7 @@
     {% for kind, action, done, missing in pickup_events %}
     {% set mark = marks.get(kind) %}
     <button type="button" class="badge badge--order-action historical-order-action{% if mark %} is-boxed{% endif %}" disabled
-            {% if kind == 'picked_up' and mark %}data-picked-up{% endif %}
+            {% if kind == 'picked_up' %}data-picked-up{% endif %}
             title="{{ mark.schedule if mark else missing }}">
         <span>{{ done if mark else action }}</span>
         {{ order_action_icon(kind) }}

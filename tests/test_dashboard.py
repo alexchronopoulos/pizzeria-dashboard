@@ -4134,7 +4134,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.68' in html
+    assert 'style.css?v=0.5.69' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4189,7 +4189,7 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "data-order-boxed-meta" in production_template
     assert "data-order-boxed-undo" in production_template
     group_rules = css.split(".order-action-row {", 1)[1].split("}", 1)[0]
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in group_rules
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.24fr);" in group_rules
     assert "max-width: 100%;" in group_rules
     assert ".order-boxed-meta {" in css
     assert "visibility: hidden;" in css

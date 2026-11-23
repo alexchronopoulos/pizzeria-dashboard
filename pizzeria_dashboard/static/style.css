@@ -4943,7 +4943,7 @@ html {
 
 .order-action-row {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.24fr);
     container: order-actions / inline-size;
     width: 23rem;
     flex: 0 1 23rem;
@@ -4970,9 +4970,10 @@ html {
 }
 
 .order-action-icon { width: 16px; height: 16px; }
-.order-action-row > [data-pickup-event="picked_up"][aria-pressed="true"] > [data-pickup-label],
+.order-action-row > [data-pickup-event="picked_up"] > [data-pickup-label],
 .order-action-row > .historical-order-action[data-picked-up] > span:first-child {
     white-space: nowrap;
+    font-size: min(0.78rem, 3.45cqw);
 }
 .order-action-row > button:disabled:is(.order-boxed-history, .historical-order-action) {
     min-width: 0;

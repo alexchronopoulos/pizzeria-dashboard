@@ -89,7 +89,13 @@ def test_order_action_row_before_and_after_marking(sample_board, width, height):
         cells = [button.bounding_box() for button in (boxed, arrived, picked_up)]
         assert all(cell and cell["height"] >= 44 for cell in cells)
         assert max(c["y"] for c in cells) - min(c["y"] for c in cells) < 1
-        assert max(c["width"] for c in cells) - min(c["width"] for c in cells) < 1
+        assert cells[2]["width"] >= cells[1]["width"]
+        assert picked_up.locator("[data-pickup-label]").evaluate("""label => {
+            const text = document.createRange();
+            text.selectNodeContents(label);
+            const lines = text.getClientRects();
+            return lines.length === 1 && lines[0].width <= label.parentElement.clientWidth;
+        }""")
         assert cells[0]["x"] + cells[0]["width"] <= cells[1]["x"]
         assert cells[1]["x"] + cells[1]["width"] <= cells[2]["x"]
         bounds = card.bounding_box()
