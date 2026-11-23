@@ -342,17 +342,11 @@
     <article class="operations-card operations-card--release" id="slice-pies">
         <span class="summary-label">Slice pies</span>
         {% if bake_timers_enabled %}
-        <form method="post" action="{{ url_for('dashboard.update_slice_bakes') }}" class="slice-bake-form">
+        <form method="post" action="{{ url_for('dashboard.update_slice_bakes') }}" class="slice-bake-form"
+              data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}">
             <input type="hidden" name="service_date" value="{{ selected_date.isoformat() }}">
-            <label for="slice-pie-name">Pie name</label>
-            <input id="slice-pie-name" name="pie_name" list="round-slice-menu" maxlength="100" required>
-            <datalist id="round-slice-menu">
-                {% for name in slice_menu %}<option value="{{ name }}"></option>{% endfor %}
-            </datalist>
-            <button type="submit" name="action" value="add">Add pie</button>
-            {% if square_configured %}
-            <button type="submit" name="action" value="refresh-menu" formnovalidate>Refresh Round Slices</button>
-            {% endif %}
+            <span role="status" data-slice-menu-status>Loading Round Slices…</span>
+            <div class="slice-menu-options" data-slice-menu-options></div>
         </form>
         {% endif %}
         {% for key, name, state in slice_bakes %}

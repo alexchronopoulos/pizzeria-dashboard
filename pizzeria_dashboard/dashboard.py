@@ -775,7 +775,6 @@ def index() -> str:
             for order_id, boxed_at in ready_states.items()
         },
         board_content_revision=board_content_revision,
-        slice_menu=json.loads(load_app_metadata(database_path, "slice_bake_menu") or "[]"),
         slice_bakes=[
             (key, key.split("|", 3)[3], state)
             for key, state in sorted(pie_states.items())
@@ -1914,23 +1913,37 @@ def update_slice_bakes():
         flash("Past slice pie boards are read-only.", "error")
         return redirect(target, code=303)
     path = _database_path()
-    if request.form.get("action") == "refresh-menu":
-        try:
-            client = SquareClient(SquareSettings.from_mapping(current_app.config))
-            names = _round_slice_names(client.list_catalog_items_and_categories())
-        except SquareError:
-            flash("Could not refresh Round Slices from Square. You can still enter a pie name.", "error")
-        else:
-            save_app_metadata(path, "slice_bake_menu", json.dumps(names))
-            flash(f"Loaded {len(names)} pie names from Round Slices.", "success")
+    name = request.form.get("pie_name", "")
+    if name not in _slice_menu_cache().get("names", []):
+        flash("Choose a pie from the Round Slices list.", "error")
     else:
-        name = _slice_pie_name(request.form.get("pie_name", ""))
-        if not name or len(name) > 100:
-            flash("Enter a pie name of up to 100 characters.", "error")
-        else:
-            key = f"{selected.isoformat()}|slice-bake|{_now().astimezone(UTC):%Y%m%d%H%M%S%f}-{uuid4().hex}|{name}"
-            add_slice_bake(path, selected, key)
+        key = f"{selected.isoformat()}|slice-bake|{_now().astimezone(UTC):%Y%m%d%H%M%S%f}-{uuid4().hex}|{name}"
+        add_slice_bake(path, selected, key)
     return redirect(target, code=303)
+
+
+def _slice_menu_cache() -> dict:
+    return json.loads(load_app_metadata(_database_path(), "round_slice_catalog") or "{}")
+
+
+@blueprint.get("/round-slice-menu")
+def round_slice_menu():
+    cached = _slice_menu_cache()
+    now = _now().timestamp()
+    if now < cached.get("retry_at", 0):
+        return jsonify(names=cached["names"], error=cached.get("error"))
+    if not str(current_app.config.get("SQUARE_ACCESS_TOKEN") or "").strip():
+        return jsonify(names=[], error="Connect Square to load Round Slices.")
+    try:
+        client = SquareClient(SquareSettings.from_mapping(current_app.config))
+        names = _round_slice_names(client.list_catalog_items_and_categories())
+    except SquareError:
+        result = dict(names=cached.get("names", []), retry_at=now + 60,
+                      error="Square is unavailable. Showing the last loaded list, if available.")
+    else:
+        result = dict(names=names, retry_at=now + 300)
+    save_app_metadata(_database_path(), "round_slice_catalog", json.dumps(result))
+    return jsonify(names=result["names"], error=result.get("error"))
 
 
 @blueprint.get("/live-production-state")
