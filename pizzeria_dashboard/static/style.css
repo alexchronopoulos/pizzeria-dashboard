@@ -4970,6 +4970,10 @@ html {
 }
 
 .order-action-icon { width: 16px; height: 16px; }
+.order-action-row > [data-pickup-event="picked_up"][aria-pressed="true"] > [data-pickup-label],
+.order-action-row > .historical-order-action[data-picked-up] > span:first-child {
+    white-space: nowrap;
+}
 .order-action-row > button:disabled:is(.order-boxed-history, .historical-order-action) {
     min-width: 0;
     opacity: 1;
