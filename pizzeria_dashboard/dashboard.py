@@ -557,6 +557,7 @@ def index() -> str:
     _ensure_cached_orders(selected_date, source)
 
     database_path = _database_path()
+    boxed_inventory_revision = load_app_metadata(database_path, f"boxed_inventory_revision:{selected_date}") or ""
     orders = load_orders_for_date(database_path, selected_date)
     manual_payment_matches = load_manual_payment_matches_for_date(
         database_path, selected_date
@@ -775,6 +776,7 @@ def index() -> str:
             for order_id, boxed_at in ready_states.items()
         },
         board_content_revision=board_content_revision,
+        boxed_inventory_revision=boxed_inventory_revision,
         slice_bake_counts=load_slice_bake_counts(database_path, selected_date),
         slice_bakes=[
             (key, name, pie_states.get(key))
@@ -1881,6 +1883,7 @@ def _live_production_payload(selected_date: date) -> dict[str, object]:
         "board_content_revision": load_board_content_revision(
             database_path, selected_date
         ),
+        "boxed_inventory_revision": load_app_metadata(database_path, f"boxed_inventory_revision:{selected_date}") or "",
     }
 
 
@@ -2082,7 +2085,7 @@ def update_order_ready():
                 ), 400
             try:
                 _complete_square_order_and_cache(
-                    database_path, selected_date, order
+                    database_path, selected_date, order, boxed_completion=True
                 )
                 square_updated = True
             except SquareError as exc:
@@ -2210,6 +2213,8 @@ def _complete_square_order_and_cache(
     database_path: Path,
     selected_date: date,
     order: Order,
+    *,
+    boxed_completion: bool = False,
 ) -> tuple[Mapping[str, object], str | None]:
     """Complete a Square pickup and immediately persist its latest state."""
     client = SquareClient(SquareSettings.from_mapping(current_app.config))
@@ -2245,6 +2250,7 @@ def _complete_square_order_and_cache(
         candidate_square_order_ids=(str(order.square_order_id),),
         source="square",
         synced_at=datetime.now(UTC),
+        boxed_completion=boxed_completion,
     )
     return updated_raw, fulfillment_state
 
