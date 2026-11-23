@@ -843,6 +843,33 @@ def test_shared_pie_timer_auto_assigns_oven_positions_and_can_reset(tmp_path: Pa
     assert reset.oven_position is None
 
 
+def test_slice_bakes_count_expiry_once_and_keep_totals_after_reset(tmp_path, monkeypatch):
+    from pizzeria_dashboard import database
+
+    path = tmp_path / "service.db"
+    database.initialize_database(path)
+    day = date(2026, 8, 8)
+    now = datetime(2026, 8, 8, 16, tzinfo=UTC)
+    monkeypatch.setattr(database, "_utc_now", lambda: now)
+    key = f"{day}|slice-bake|catalog|Plain"
+    other = f"{day}|customer-order|pizza|0"
+    for expected in (1, 2):
+        for timer in (key, other):
+            database.update_pie_production_state(path, day, timer, timer_action="start")
+        assert database.load_slice_bake_counts(path, day).get(key, 0) == expected - 1
+        now += timedelta(minutes=8)
+        for _ in range(2):
+            assert database.load_pie_production_states(path, day)[key].timer_status == "done"
+        database.update_pie_production_state(path, day, key, timer_action="reset")
+        assert database.load_slice_bake_counts(path, day) == {key: expected}
+    database.update_pie_production_state(path, day, key, timer_action="start")
+    database.update_pie_production_state(path, day, key, timer_action="reset")
+    now += timedelta(minutes=8)
+    database.load_pie_production_states(path, day)
+    assert database.load_slice_bake_counts(path, day) == {key: 2}
+    assert database.load_slice_bake_counts(path, day + timedelta(days=1)) == {}
+
+
 def test_completed_timer_frees_oven_position_for_next_pie(tmp_path: Path) -> None:
     database_path = tmp_path / "dashboard.db"
     service_date = date(2026, 8, 6)

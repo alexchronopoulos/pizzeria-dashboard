@@ -1028,6 +1028,7 @@
     const pendingIds = loadStringSet(window.localStorage, pendingStorageKey);
     const dismissedIds = loadStringSet(window.localStorage, dismissedStorageKey);
     let finishedTimerPopupCount = 0;
+    let expanded = false;
 
     // The first load establishes a device-local baseline. After that, newly seen
     // orders become persistent alerts on this browser until this browser dismisses
@@ -1069,12 +1070,14 @@
         document.dispatchEvent(new CustomEvent("pizzeria-dashboard:clear-finished-timer-alerts"));
     };
 
-    const createToast = (row) => {
+    const createToast = (row, index, count) => {
         const orderId = row.dataset.orderId;
         const toast = document.createElement("div");
         toast.className = "new-order-toast";
         toast.dataset.orderId = orderId;
-        toast.setAttribute("aria-label", "New order alert. Click to dismiss.");
+        toast.setAttribute("aria-label", "New order alert");
+        toast.style.setProperty("--stack-index", index);
+        if (!expanded && index > 0) toast.inert = true;
         const name = row.querySelector(".customer-name")?.textContent.trim() || "New order";
         const pickup = row.dataset.orderPickupLabel || "Pickup time unavailable";
         const summary = summarizeItems(row) || "Production order";
@@ -1095,7 +1098,25 @@
         items.textContent = summary;
         const hint = document.createElement("small");
         hint.className = "new-order-toast-hint";
-        hint.textContent = "Click to dismiss";
+        const toggleStack = () => {
+            expanded = !expanded;
+            renderToasts();
+            toastList.querySelector("[data-toast-expand]")?.focus({preventScroll: true});
+        };
+        if (index === 0 && count > 1) {
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "new-order-toast-expand";
+            toggle.dataset.toastExpand = "";
+            toggle.textContent = expanded ? "Collapse alerts" : `Show all ${count} alerts`;
+            toggle.setAttribute("aria-expanded", String(expanded));
+            toggle.addEventListener("click", (event) => {
+                event.stopPropagation();
+                toggleStack();
+            });
+            hint.append(toggle);
+            toast.addEventListener("click", () => { if (!expanded) toggleStack(); });
+        }
         toast.append(heading, customer, items, hint);
 
         const dismiss = (event) => {
@@ -1104,7 +1125,6 @@
             dismissOrder(orderId);
         };
         close.addEventListener("click", dismiss);
-        toast.addEventListener("click", dismiss);
         return toast;
     };
 
@@ -1113,8 +1133,15 @@
             .filter((orderId) => !dismissedIds.has(orderId))
             .map((orderId) => rowsById.get(orderId))
             .filter(Boolean)
-            .slice(-4);
-        toastList.replaceChildren(...visibleRows.map(createToast));
+            .reverse()
+            .sort((a, b) => Number(b.dataset.orderCreatedAt || 0) - Number(a.dataset.orderCreatedAt || 0));
+        if (visibleRows.length <= 1) expanded = false;
+        const shown = expanded ? visibleRows : visibleRows.slice(0, 3);
+        const stacked = !expanded && shown.length > 1;
+        region.classList.toggle("is-expanded", expanded);
+        toastList.classList.toggle("is-stacked", stacked);
+        toastList.style.setProperty("--stack-depth", Math.max(0, shown.length - 1));
+        toastList.replaceChildren(...shown.map((row, index) => createToast(row, index, visibleRows.length)));
         clearAllButton.hidden = visibleRows.length === 0 && finishedTimerPopupCount === 0;
     }
 
@@ -1138,9 +1165,6 @@
     const timerRail = document.querySelector("[data-active-timer-rail]");
     const decrementAllDayCounts = board?.dataset.decrementAllDayCounts === "true";
     const pieAllDayRows = Array.from(document.querySelectorAll("[data-pie-all-day-row]"));
-    const modifierAllDayRows = Array.from(document.querySelectorAll("[data-modifier-all-day-row]"));
-    const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
-    const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
     const prepTimingButtons = Array.from(document.querySelectorAll("[data-prep-timing-toggle]"));
     if (!board || (!timers.length && !orderRows.length && !countdown && !prepTimingButtons.length
         && !document.querySelector("[data-round-slice-menu]"))) {
@@ -1250,7 +1274,8 @@
         timersByKey.forEach((timer, key) => {
             const raw = pieStates[key] || initialPieState(key);
             if (
-                raw.timer_status !== "running"
+                key.startsWith(`${serviceDate}|slice-bake|`)
+                || raw.timer_status !== "running"
                 || !raw.timer_end_at_ms
                 || Number(raw.timer_end_at_ms) > adjustedNow()
                 || completionPosts.has(key)
@@ -1634,38 +1659,6 @@
         }
     };
 
-    const boxedCountsFor = (datasetKey) => {
-        const counts = new Map();
-        if (!decrementAllDayCounts) {
-            return counts;
-        }
-        rowsByOrderId.forEach((row, orderId) => {
-            if (!boxedOrders[orderId]) {
-                return;
-            }
-            Object.entries(parseOrderCounts(row, datasetKey)).forEach(([name, quantity]) => {
-                const units = Math.max(0, Number.parseInt(quantity, 10) || 0);
-                counts.set(name, (counts.get(name) || 0) + units);
-            });
-        });
-        return counts;
-    };
-
-    const renderAllDaySummaryRows = (rows, consumedCounts) => {
-        rows.forEach((row) => {
-            const fullCount = Math.max(0, Number.parseInt(row.dataset.fullCount || "0", 10) || 0);
-            const summaryName = row.dataset.summaryName || "";
-            const consumedCount = consumedCounts.get(summaryName) || 0;
-            const remaining = decrementAllDayCounts
-                ? Math.max(fullCount - consumedCount, 0)
-                : fullCount;
-            const count = row.querySelector("[data-summary-count]");
-            if (count) {
-                count.textContent = `${remaining}× ${summaryName}`;
-            }
-        });
-    };
-
     const renderPizzaBreakdown = (consumedCounts) => {
         if (
             !pizzaBreakdownOverlay
@@ -1710,26 +1703,7 @@
         pizzaBreakdownList.replaceChildren(fragment);
     };
 
-    const renderAllDayCounts = () => {
-        const consumedPies = committedPizzaCounts();
-        const boxedModifiers = boxedCountsFor("orderModifierCounts");
-        renderAllDaySummaryRows(pieAllDayRows, consumedPies);
-        renderAllDaySummaryRows(modifierAllDayRows, boxedModifiers);
-        renderPizzaBreakdown(consumedPies);
-
-        if (pieAllDayTotal) {
-            const full = Math.max(0, Number.parseInt(pieAllDayTotal.dataset.fullCount || "0", 10) || 0);
-            const consumed = Array.from(consumedPies.values()).reduce((total, value) => total + value, 0);
-            const remaining = decrementAllDayCounts ? Math.max(full - consumed, 0) : full;
-            pieAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} remaining` : `${remaining} total`;
-        }
-        if (modifierAllDayTotal) {
-            const full = Math.max(0, Number.parseInt(modifierAllDayTotal.dataset.fullCount || "0", 10) || 0);
-            const boxed = Array.from(boxedModifiers.values()).reduce((total, value) => total + value, 0);
-            const remaining = decrementAllDayCounts ? Math.max(full - boxed, 0) : full;
-            modifierAllDayTotal.textContent = decrementAllDayCounts ? `${remaining} portions remaining` : `${remaining} portions`;
-        }
-    };
+    const renderAllDayCounts = () => renderPizzaBreakdown(committedPizzaCounts());
 
     const renderPrepTimingCompletions = () => {
         prepTimingButtons.forEach((button) => {
@@ -1853,6 +1827,12 @@
             }
         });
         boxedOrders = payload.boxed_orders || {};
+        if (payload.slice_bake_counts) {
+            document.querySelectorAll("[data-slice-bake-count]").forEach((counter) => {
+                const count = Number(payload.slice_bake_counts[counter.dataset.sliceBakeCount] || 0);
+                if (count > Number(counter.textContent)) counter.textContent = count;
+            });
+        }
         if (Array.isArray(payload.prep_timing_completions)) {
             prepTimingCompletions = new Set(payload.prep_timing_completions.map(String));
         }

@@ -3,6 +3,18 @@
     ('picked_up', 'Mark Picked Up', 'Picked up', 'Pickup not recorded')
 ) %}
 
+{% macro order_action_icon(kind) -%}
+<svg class="order-action-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+{% if kind == 'boxed' %}
+    <path d="M3 7h18v13H3zM3 7l3-4h12l3 4M8 12h8"/>
+{% elif kind == 'arrived' %}
+    <path d="M13 3h7v18h-7M3 12h12m-4-4 4 4-4 4"/>
+{% else %}
+    <path d="M4 8h16l1 13H3L4 8Zm4 0V7a4 4 0 0 1 8 0v1"/>
+{% endif %}
+</svg>
+{%- endmacro %}
+
 {% macro render_pickup_buttons(marks) -%}
     {% for kind, action, done, missing in pickup_events %}
     {% set mark = marks.get(kind) %}
@@ -13,6 +25,7 @@
         title="{{ (mark.schedule ~ '. ' if mark and mark.schedule else '') ~ ('Tap to undo this timestamp.' if mark else '') }}"
     >
         <span data-pickup-label>{{ done if mark else (missing if blocked else action) }}</span>
+        {{ order_action_icon(kind) }}
         <span class="order-action-meta"><time data-pickup-clock{% if mark %} datetime="{{ mark.recorded_at }}"{% endif %}>{{ mark.clock if mark else '' }}</time>
             <span data-pickup-offset>{{ mark.offset if mark else '' }}</span></span>
     </button>
@@ -20,17 +33,13 @@
 {%- endmacro %}
 
 {% macro render_pickup_history(marks) -%}
-{% if marks %}
-<div class="pickup-tracking" role="group" aria-label="Customer arrival and pickup">
-    {% for kind, _, done, missing in pickup_events %}
+    {% for kind, action, done, missing in pickup_events %}
     {% set mark = marks.get(kind) %}
-    <span class="pickup-mark" data-timing="{{ mark.status if mark else 'unmarked' }}" title="{{ mark.schedule if mark else '' }}">
-        <span><b>{{ done if mark else missing }}</b>{% if mark %} <time datetime="{{ mark.recorded_at }}">{{ mark.clock }}</time>{% endif %}</span>
-        <small>{{ mark.offset if mark else '' }}</small>
-    </span>
+    <button type="button" class="badge badge--order-action historical-order-action{% if mark %} is-boxed{% endif %}" disabled
+            title="{{ mark.schedule if mark else missing }}">
+        <span>{{ done if mark else action }}</span>
+        {{ order_action_icon(kind) }}
+        <span class="order-action-meta">{% if mark %}<time datetime="{{ mark.recorded_at }}">{{ mark.clock }}</time> · {{ mark.offset }}{% else %}Not recorded{% endif %}</span>
+    </button>
     {% endfor %}
-</div>
-{% else %}
-<p class="pickup-history-empty">Arrival and pickup not recorded</p>
-{% endif %}
 {%- endmacro %}

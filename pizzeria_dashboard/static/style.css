@@ -1175,6 +1175,9 @@ h2 {
     padding-block: 5px;
 }
 
+.slice-bake-row > strong { flex: 1; }
+.slice-bake-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
 .availability-group {
     margin-top: 13px;
     padding-top: 12px;
@@ -3827,13 +3830,13 @@ button.badge--order-action:focus-visible {
 .new-order-toast-region {
     position: fixed;
     top: 18px;
-    right: auto;
-    left: 18px;
+    right: 18px;
+    left: auto;
     z-index: 80;
     display: grid;
     width: min(380px, calc(100vw - 36px));
-    max-height: calc(100vh - 36px);
-    max-height: calc(100dvh - 36px);
+    max-height: calc(50vh - 18px);
+    max-height: calc(50dvh - 18px);
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     grid-auto-flow: row;
@@ -3886,6 +3889,37 @@ button.badge--order-action:focus-visible {
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
+}
+
+.new-order-toast-list.is-stacked {
+    isolation: isolate;
+    padding-bottom: calc(var(--stack-depth) * 10px);
+}
+
+.new-order-toast-list.is-stacked > .new-order-toast {
+    grid-area: 1 / 1;
+    z-index: calc(3 - var(--stack-index));
+    transform: translateY(calc(var(--stack-index) * 10px)) scaleX(calc(1 - var(--stack-index) * 0.045));
+}
+
+.new-order-toast-list.is-stacked > .new-order-toast[inert] {
+    pointer-events: none;
+}
+
+.new-order-toast-expand {
+    border: 0;
+    padding: 5px 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+body:has(.new-order-toast) .active-timer-rail {
+    top: 50%;
+    max-height: calc(50dvh - 14px);
+    overflow-y: auto;
+    transform: none;
 }
 
 .new-order-toast {
@@ -4904,13 +4938,21 @@ html {
     align-content: center;
     justify-items: center;
     min-width: 0;
-    min-height: 3.25rem;
+    min-height: 5.1rem;
     padding: 3px 4px;
     border-radius: 9px;
     gap: 2px;
     line-height: 1.1;
     text-align: center;
     overflow-wrap: anywhere;
+}
+
+.order-action-icon { width: 21px; height: 21px; }
+.order-action-row:has(.order-boxed-history) { margin-top: 12px; }
+.order-action-row > button:disabled:is(.order-boxed-history, .historical-order-action) {
+    min-width: 0;
+    opacity: 1;
+    white-space: normal;
 }
 
 .order-action-meta {
@@ -4960,7 +5002,7 @@ html {
     .order-action-row > button {
         padding-inline: 3px;
         font-size: 0.78rem;
-        min-height: 4rem;
+        min-height: 5.3rem;
     }
 }
 
