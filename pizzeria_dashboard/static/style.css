@@ -2103,87 +2103,16 @@ h2 {
     margin-left: auto;
 }
 
-/* Sprint 8.3: move the oven map into its own column between the order and slot capacity. */
+/* Keep order contents in one full-width production card. */
 .order-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     padding: 0;
 }
 
 .order-content {
     min-width: 0;
     padding: 17px 20px 18px;
-}
-
-.order-oven-panel {
-    display: flex;
-    min-width: 116px;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 12px;
-    padding: 13px 11px;
-    border-left: 2px solid var(--black);
-    background: var(--brand-cream);
-}
-
-.order-oven-entry {
-    display: grid;
-    justify-items: center;
-}
-
-.oven-position-selector {
-    display: grid;
-    flex: 0 0 auto;
-    grid-template-columns: repeat(2, 42px);
-    grid-template-rows: repeat(2, 42px);
-    gap: 7px;
-    padding: 7px;
-    border: 3px solid var(--black);
-    border-radius: 11px;
-    background: white;
-}
-
-.oven-position-selector button {
-    display: grid;
-    width: 42px;
-    height: 42px;
-    place-items: center;
-    padding: 0;
-    border: 3px solid var(--black);
-    border-radius: 7px;
-    background: white;
-    color: transparent;
-    cursor: pointer;
-    touch-action: manipulation;
-}
-
-.oven-position-selector button:hover {
-    background: var(--brand-yellow);
-}
-
-.oven-position-selector button.is-occupied {
-    background: #8d989d;
-    color: white;
-    opacity: 0.7;
-}
-
-.oven-position-selector button.is-selected {
-    background: var(--brand-orange);
-    color: var(--black);
-    opacity: 1;
-    box-shadow: inset 0 0 0 2px white;
-}
-
-.oven-position-selector button:focus-visible {
-    position: relative;
-    z-index: 1;
-    outline: 4px solid var(--brand-yellow);
-    outline-offset: 2px;
-}
-
-.oven-position-selector--assigned {
-    background: var(--soft-orange);
 }
 
 .bake-timer {
@@ -2291,23 +2220,6 @@ h2 {
     .pizza-bake-controls {
         gap: 6px;
     }
-
-    .order-row {
-        grid-template-columns: 1fr;
-    }
-
-    .order-oven-panel {
-        min-width: 0;
-        align-items: center;
-        padding: 12px 16px 15px;
-        border-top: 2px solid var(--black);
-        border-left: 0;
-    }
-
-    .order-oven-entry {
-        width: 100%;
-    }
-
 
     .bake-timer-button {
         min-width: 104px;
@@ -3725,8 +3637,7 @@ h2 {
 }
 
 .order-row--boxed,
-.order-row--boxed .order-content,
-.order-row--boxed .order-oven-panel {
+.order-row--boxed .order-content {
     background: #c5c9cb;
 }
 
@@ -3743,8 +3654,7 @@ h2 {
     opacity: 1;
 }
 
-.bake-timer.is-saving,
-.oven-position-selector.is-saving {
+.bake-timer.is-saving {
     opacity: 0.7;
     pointer-events: none;
 }
@@ -3791,23 +3701,12 @@ h2 {
     gap: 5px;
 }
 
-.pizza-unit-label,
-.oven-unit-label {
+.pizza-unit-label {
     color: var(--muted);
     font-size: 0.68rem;
     font-weight: 950;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-}
-
-.oven-unit-label {
-    display: block;
-    max-width: 108px;
-    margin-bottom: 4px;
-    overflow: hidden;
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .pizza-countdown {
@@ -4344,10 +4243,6 @@ html {
 
 .order-row--unpaid .order-content {
     background: #fff1eb;
-}
-
-.order-row--unpaid .order-oven-panel {
-    background: #f6d6c9;
 }
 
 .order-unpaid-warning {
@@ -5960,8 +5855,7 @@ html {
 }
 
 .order-row--double-cut:not(.order-row--unpaid),
-.order-row--double-cut:not(.order-row--unpaid) .order-content,
-.order-row--double-cut:not(.order-row--unpaid) .order-oven-panel {
+.order-row--double-cut:not(.order-row--unpaid) .order-content {
     background-image: repeating-linear-gradient(
         90deg,
         rgba(165, 48, 31, 0.16) 0,
@@ -5977,8 +5871,7 @@ html {
 }
 
 .order-row--dont-cut:not(.order-row--unpaid),
-.order-row--dont-cut:not(.order-row--unpaid) .order-content,
-.order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel {
+.order-row--dont-cut:not(.order-row--unpaid) .order-content {
     background-image:
         linear-gradient(
             45deg,
@@ -6010,15 +5903,13 @@ html {
 }
 
 .order-row--dining-in:not(.order-row--unpaid),
-.order-row--dining-in:not(.order-row--unpaid) .order-content,
-.order-row--dining-in:not(.order-row--unpaid) .order-oven-panel {
+.order-row--dining-in:not(.order-row--unpaid) .order-content {
     background-image: var(--dining-in-chair-pattern);
     background-size: 64px 64px;
 }
 
 .order-row--dining-in.order-row--double-cut:not(.order-row--unpaid),
-.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid) .order-content,
-.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid) .order-oven-panel {
+.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid) .order-content {
     background-image:
         var(--dining-in-chair-pattern),
         repeating-linear-gradient(
@@ -6032,8 +5923,7 @@ html {
 }
 
 .order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid),
-.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid) .order-content,
-.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel {
+.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid) .order-content {
     background-image:
         var(--dining-in-chair-pattern),
         linear-gradient(

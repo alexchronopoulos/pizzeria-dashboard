@@ -24,8 +24,8 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Retains Square order version and fulfillment identifiers needed to complete eligible pickup orders from the Release candidate badge.
 - Opens every order in a compact modal with pickup controls and the cached kitchen view. Raw Square debug data is not exposed in the dashboard.
 - Displays customer names as first name plus last initial, and removes Ticket Name pickup times from visible customer labels.
-- Adds an independent eight-minute timer and oven position to every physical pizza, including one set of controls for each unit on multi-quantity line items. Timers can be started, paused, resumed, and reset.
-- Stores timer and oven-position state in SQLite and synchronizes it across prep and expo displays every two seconds. Starting a timer automatically claims the first open oven position from top-left to bottom-right; resetting it clears that position.
+- Adds an independent eight-minute timer to every physical pizza, including one set of controls for each unit on multi-quantity line items. Timers can be started, paused, resumed, and reset.
+- Stores timer state in SQLite and synchronizes it across prep and expo displays every two seconds.
 - Detects completed orders with no actual pickup timestamp as walk-ins when their local `created_at` or `closed_at` date matches the selected service date, including Square `IN_STORE` / For Here fulfillments as well as ordinary To Go counter orders.
 - Shows new walk-ins in an **Unscheduled** lane using Square ticket names when available.
 - Parses configured pickup times from Ticket Names such as `Sam 7:30` or `5:45 Peter` and automatically places the walk-in into the matching service slot.
@@ -40,7 +40,7 @@ Sprint 3.8 extends completed, unscheduled counter orders to the production board
 - Publishes order-cache and staff-note revisions to all open displays every two seconds; when one display finds a new Square order, the others reload automatically and show a new-order toast with pickup time and item summary.
 - Stores reliable VIP customers in a configurable Square customer group and reads that membership back during batched customer-profile sync. Orders without a payment-linked Square customer retain the dashboard-only VIP fallback.
 - Adds dashboard-only manual orders for verbal/phone orders: customer name, pickup date/time, quantity, free-form item name, and item type. Manual orders live in a separate SQLite table so Square refreshes cannot delete them, and they participate in normal timers, prep counts, boxed-ready state, and cross-device sync. Each manual order also receives a memorable two-word payment name such as `Toasty Pigeon`; entering it in Square's Ticket Name field when collecting payment lets the next refresh link the completed counter sale without creating a duplicate production order or double-counting dough.
-- Does not write timer, oven-position, boxed-ready, order-specific staff-note, pickup-time override, or manual-order state back to Square. Only the explicitly labeled persistent customer note and VIP customer-group controls modify Square Customer Directory data.
+- Does not write timer, boxed-ready, order-specific staff-note, pickup-time override, or manual-order state back to Square. Only the explicitly labeled persistent customer note and VIP customer-group controls modify Square Customer Directory data.
 
 The active database remains:
 
@@ -185,7 +185,7 @@ Open `http://localhost:5000`, select a service date, and press **Pull from
 Square**. Use **Add order** for a verbal/phone order that should exist only on the
 dashboard; enter the customer name, pickup date/time, and one or more free-form
 item rows. Click any order card to open the pickup-time and kitchen-details modal.
-Each pizza row also includes an eight-minute bake timer. Timer state and oven position are shared through SQLite, so prep and expo displays stay synchronized. Starting a timer automatically assigns the first free oven position in top-left to bottom-right order; the oven map can still be adjusted manually. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
+Each pizza row also includes an eight-minute bake timer. Timer state is shared through SQLite, so prep and expo displays stay synchronized. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
 
 Use **Mark boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 
