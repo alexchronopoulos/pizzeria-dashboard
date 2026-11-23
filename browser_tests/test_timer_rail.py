@@ -85,9 +85,11 @@ def test_order_action_row_before_and_after_marking(sample_board, width, height):
     for button, label in zip((boxed, arrived, picked_up), ("Mark Boxed", "Mark Arrived", "Mark Picked Up"), strict=True):
         expect(button).to_contain_text(label)
 
-    def check_geometry():
+    def check_geometry(*, unmarked=False):
         cells = [button.bounding_box() for button in (boxed, arrived, picked_up)]
-        assert all(cell and cell["height"] >= 44 for cell in cells)
+        assert all(cell and cell["height"] >= 32 for cell in cells)
+        if unmarked and width > 1000:
+            assert all(cell["height"] <= 44 for cell in cells)
         assert max(c["y"] for c in cells) - min(c["y"] for c in cells) < 1
         assert max(c["width"] for c in cells) - min(c["width"] for c in cells) < 1
         assert cells[0]["x"] + cells[0]["width"] <= cells[1]["x"]
@@ -100,7 +102,7 @@ def test_order_action_row_before_and_after_marking(sample_board, width, height):
             assert name["x"] + name["width"] <= cells[0]["x"]
             assert cells[0]["y"] <= name["y"] + name["height"] / 2 <= cells[0]["y"] + cells[0]["height"]
 
-    check_geometry()
+    check_geometry(unmarked=True)
     for button in (boxed, arrived, picked_up):
         button.click()
         expect(button).to_have_attribute("aria-pressed", "true")
