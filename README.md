@@ -197,6 +197,12 @@ Each pizza row also includes an eight-minute bake timer. Timer state is shared t
 
 Use **Mark boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 
+Tap **Mark Arrived** when the customer gets to the counter and **Mark Picked Up** when they leave with the order. These are independent dashboard timestamps: they do not complete an order in Square or affect boxed status, timers, or dough. If you miss the arrival, record just the pickup. On an editable board, tap a recorded time and confirm to undo a mistake.
+
+Each stamp compares the shop clock with the pickup slot in effect **when it was marked**. Within five minutes either way (by the displayed minute) counts as **on time**. Unscheduled walk-ins show the actual time without an early/late rating. Past service cards are read-only and the **Arrival timing** summary counts only recorded, scheduled arrivals. Older orders are never backfilled from payment or boxed times.
+
+Repeat customers can show **Usually early**, **Usually on time**, or **Usually late**. The dashboard uses up to ten scheduled arrivals from earlier service dates, counts each Square receipt once, and requires at least three observations with two-thirds in the same category. Only verified Square customer IDs are matched, including manual orders subsequently matched to a Square payment; names are never used. These observations and tags stay in the dashboard, not in customer-facing Square notes.
+
 For an already scheduled order, choose another configured time in Order Details.
 The production board immediately moves the order and recalculates both slots'
 pizza totals. The Square order itself keeps its original pickup time; select

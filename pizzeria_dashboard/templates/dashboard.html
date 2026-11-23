@@ -2,7 +2,7 @@
 
 {% block content %}
 {% set bake_timers_enabled = selected_date >= today %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.53">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.54">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -254,6 +254,7 @@
     data-pie-production-state-url="{{ url_for('dashboard.update_shared_pie_state') }}"
     data-prep-timing-completion-url="{{ url_for('dashboard.update_prep_timing_completion') }}"
     data-order-ready-url="{{ url_for('dashboard.update_order_ready') }}"
+    data-pickup-event-url="{{ url_for('dashboard.update_order_pickup_event') }}"
     data-board-content-revision="{{ board_content_revision }}"
     data-service-date="{{ selected_date.isoformat() }}"
     data-auto-sync-seconds="{{ auto_sync_seconds }}"
@@ -334,5 +335,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.44') }}" defer></script>
+<script src="{{ url_for('static', filename='pickup-tracking.js', v='1') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.45') }}" defer></script>
 {% endblock %}

@@ -1,0 +1,26 @@
+{% macro render_pickup_tracking(marks, editable) -%}
+{% if editable or marks %}
+<div class="pickup-tracking" role="group" aria-label="Customer arrival and pickup">
+    {% for kind, action, done, missing in (
+        ('arrived', 'Mark Arrived', 'Arrived', 'Arrival not recorded'),
+        ('picked_up', 'Mark Picked Up', 'Picked up', 'Pickup not recorded')
+    ) %}
+    {% set mark = marks.get(kind) %}
+    {% set blocked = not mark and (not editable or (kind == 'arrived' and marks.get('picked_up'))) %}
+    {% set tag = 'button' if editable else 'span' %}
+    <{{ tag }} class="pickup-mark" data-timing="{{ mark.status if mark else 'unmarked' }}"
+        {% if editable %}type="button" draggable="false" data-pickup-event="{{ kind }}"
+        data-action-label="{{ action }}" data-done-label="{{ done }}" data-missing-label="{{ missing }}"
+        data-recorded-at="{{ mark.recorded_at if mark else '' }}"{% if blocked %} disabled{% endif %}{% endif %}
+        title="{{ (mark.schedule ~ '. ' if mark and mark.schedule else '') ~ ('Tap to undo this timestamp.' if mark and editable else '') }}"
+    >
+        <span><b data-pickup-label>{{ done if mark else (missing if blocked else action) }}</b>
+        <time data-pickup-clock{% if mark %} datetime="{{ mark.recorded_at }}"{% endif %}>{{ mark.clock if mark else '' }}</time></span>
+        <small data-pickup-offset>{{ mark.offset if mark else '' }}</small>
+    </{{ tag }}>
+    {% endfor %}
+</div>
+{% else %}
+<p class="pickup-history-empty">Arrival and pickup not recorded</p>
+{% endif %}
+{%- endmacro %}

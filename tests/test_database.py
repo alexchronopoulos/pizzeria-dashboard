@@ -92,6 +92,7 @@ def test_database_initializes_expected_tables(tmp_path: Path) -> None:
         "prep_recipes",
         "pie_production_states",
         "order_ready_states",
+        "order_pickup_events",
         "vip_customers",
         "square_customer_profiles",
         "dashboard_auth_failures",

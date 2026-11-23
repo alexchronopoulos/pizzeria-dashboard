@@ -1,3 +1,4 @@
+{% from "_pickup_tracking.html" import render_pickup_tracking %}
 {% macro render_boxed_button(order, boxed_at, selected_date) -%}
 <button
     type="button"
@@ -81,6 +82,10 @@
                 </span>
                 {% endif %}
             </span>
+            {% set pattern = arrival_patterns.get(order.order_id) %}
+            {% if pattern %}
+            <span class="arrival-pattern" data-timing="{{ pattern.status }}" title="{{ pattern.basis }}">{{ pattern.label }}</span>
+            {% endif %}
             {% if order.is_walk_in %}
             <span class="walk-in-paid-time">Paid {{ event_at.strftime('%-I:%M %p %Z') }}</span>
             {% endif %}
@@ -238,6 +243,10 @@
     <div class="order-boxed-fallback">
         {{ render_boxed_button(order, boxed_at, selected_date) }}
     </div>
+    {% endif %}
+    {% set marks = pickup_marks.get(order.order_id, {}) %}
+    {% if not is_unpaid or marks %}
+    {{ render_pickup_tracking(marks, selected_date >= today and not is_unpaid) }}
     {% endif %}
     </div>
 </div>
@@ -448,6 +457,17 @@
         </div>
     </div>
 </article>
+{% endif %}
+
+{% if selected_date < today and service.total_orders %}
+<section class="arrival-summary" aria-label="Arrival timing summary">
+    <strong>Arrival timing</strong>
+    <span data-timing="early">{{ arrival_counts['early'] }} early</span>
+    <span data-timing="on-time">{{ arrival_counts['on-time'] }} on time</span>
+    <span data-timing="late">{{ arrival_counts['late'] }} late</span>
+    {% set compared = arrival_counts['early'] + arrival_counts['on-time'] + arrival_counts['late'] %}
+    <small>{% if compared %}{{ compared }} scheduled arrival{% if compared != 1 %}s{% endif %} recorded{% else %}No scheduled arrivals recorded{% endif %} · On time = within {{ on_time_minutes }} min of pickup.</small>
+</section>
 {% endif %}
 
 <section class="board-section">
