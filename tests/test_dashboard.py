@@ -2700,7 +2700,7 @@ def test_historical_order_shows_saved_boxed_timestamp_read_only(
     local_boxed_at = boxed_at.astimezone(timezone)
 
     assert response.status_code == 200
-    assert 'class="badge badge--boxed-action order-boxed-history is-boxed"' in order_html
+    assert 'class="badge badge--order-action order-boxed-history is-boxed"' in order_html
     assert "BOXED &amp; READY" in order_html
     assert f'datetime="{local_boxed_at.isoformat()}"' in order_html
     assert local_boxed_at.strftime("%-I:%M %p") in order_html
@@ -3951,11 +3951,14 @@ def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     controls_pos = html.find('class="pizza-bake-controls"')
-    boxed_pos = html.find('order-boxed-inline', controls_pos)
+    group_pos = html.find('class="order-action-row"', controls_pos)
+    boxed_pos = html.find('data-order-boxed-button', group_pos)
+    arrived_pos = html.find('data-pickup-event="arrived"', boxed_pos)
+    picked_up_pos = html.find('data-pickup-event="picked_up"', arrived_pos)
     stack_pos = html.find('class="pizza-bake-stack"', controls_pos)
     timer_pos = html.find('data-bake-timer', stack_pos)
     assert controls_pos != -1
-    assert controls_pos < boxed_pos < stack_pos < timer_pos
+    assert controls_pos < group_pos < boxed_pos < arrived_pos < picked_up_pos < stack_pos < timer_pos
     css = Path("pizzeria_dashboard/static/style.css").read_text()
     assert ".visit-medal" in css
     assert "--crust: #b86f2c;" in css
@@ -4064,7 +4067,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.60' in html
+    assert 'style.css?v=0.5.61' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4082,7 +4085,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.45' in html
+    assert 'dashboard.js?v=0.5.46' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
@@ -4118,7 +4121,9 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "data-order-boxed-label" in production_template
     assert "data-order-boxed-meta" in production_template
     assert "data-order-boxed-undo" in production_template
-    assert ".order-boxed-inline {\n    width: 142px;" in css
+    group_rules = css.split(".order-action-row {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in group_rules
+    assert "max-width: 100%;" in group_rules
     assert ".order-boxed-meta {" in css
     assert "visibility: hidden;" in css
     assert ".order-boxed-meta.is-visible {\n    visibility: visible;" in css

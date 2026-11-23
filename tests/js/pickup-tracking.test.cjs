@@ -12,6 +12,7 @@ function button(kind, action, done, missing) {
     ]));
     return Object.assign(new EventTarget(), {
         parts, disabled: false, querySelector: selector => parts[selector],
+        setAttribute(name, value) { this[name] = value; },
         dataset: {pickupEvent: kind, recordedAt: "", actionLabel: action, doneLabel: done, missingLabel: missing},
     });
 }
@@ -49,6 +50,7 @@ test("one tap posts once; late polls cannot erase it; undo uses the observed tim
     requests[0].reply({ok: true, marks: {arrived: mark}}); await flush();
     poll(15, {});
     assert.equal(arrived.dataset.recordedAt, mark.recorded_at);
+    assert.equal(arrived["aria-pressed"], "true");
     assert.equal(arrived.parts["[data-pickup-offset]"].textContent, "8 min early");
     assert.equal(arrived.parts["[data-pickup-clock]"].textContent, "4:52 PM");
     window.confirm = () => false; click(arrived); assert.equal(requests.length, 1);
@@ -59,6 +61,7 @@ test("one tap posts once; late polls cannot erase it; undo uses the observed tim
     assert.equal(arrived.dataset.recordedAt, mark.recorded_at);
     click(arrived); requests[2].reply({ok: true, marks: {}}); await flush();
     assert.equal(arrived.parts["[data-pickup-label]"].textContent, "Mark Arrived");
+    assert.equal(arrived["aria-pressed"], "false");
 });
 
 test("a pickup from another display does not create an arrival", () => {

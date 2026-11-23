@@ -3529,21 +3529,32 @@ h2 {
 }
 
 /* Service feedback: shared production state, boxed-ready orders, and modifier prep. */
-.badge--boxed-action {
+.badge--order-action {
     border: 2px solid var(--black);
-    background: var(--brand-yellow);
-    color: var(--text);
+    background: var(--black);
+    color: white;
     cursor: pointer;
     font: inherit;
+    touch-action: manipulation;
 }
 
-.badge--boxed-action.is-boxed {
+.badge--order-action:hover,
+.badge--order-action:focus-visible {
+    background: #2b2b2b;
+}
+
+button.badge--order-action:focus-visible {
+    outline: 3px solid var(--brand-blue);
+    outline-offset: 2px;
+}
+
+.badge--order-action.is-boxed,
+.badge--order-action[aria-pressed="true"] {
     background: #777f83;
-    color: white;
 }
 
-.badge--boxed-action:disabled {
-    cursor: wait;
+.badge--order-action:disabled {
+    cursor: default;
     opacity: 0.65;
 }
 
@@ -4753,23 +4764,6 @@ html {
     color: white;
 }
 
-.badge--boxed-action {
-    border-color: var(--black);
-    background: var(--black);
-    color: white;
-}
-
-.badge--boxed-action:hover,
-.badge--boxed-action:focus-visible {
-    background: #2b2b2b;
-    color: white;
-}
-
-.badge--boxed-action.is-boxed {
-    background: #777f83;
-    color: white;
-}
-
 .customer-name-wrap .badge--customer {
     min-height: 24px;
     padding: 2px 7px;
@@ -4824,15 +4818,7 @@ html {
     max-width: 100%;
 }
 
-.order-boxed-inline {
-    width: 142px;
-    min-height: 52px;
-    padding: 5px 10px;
-    border-radius: 9px;
-    white-space: nowrap;
-}
-
-.order-boxed-fallback {
+.order-actions-fallback {
     display: flex;
     justify-content: flex-end;
     margin-top: 12px;
@@ -4876,10 +4862,11 @@ html {
     }
 }
 
-/* Service card refinement 0.5.24: boxed action left of timer stack; understated customer history. */
+/* Keep the order actions together to the left of the per-pie timers. On a
+   narrow card only the timer stack wraps, never the three action buttons. */
 .pizza-bake-controls {
-    align-items: stretch;
-    flex-wrap: nowrap;
+    align-items: flex-start;
+    flex-wrap: wrap;
 }
 
 .pizza-bake-stack {
@@ -4887,22 +4874,50 @@ html {
     gap: 8px;
 }
 
-.order-boxed-inline {
+.order-action-row {
     display: grid;
-    align-self: stretch;
-    grid-template-rows: auto 0.8rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    container: order-actions / inline-size;
+    width: 30rem;
+    max-width: 100%;
+    min-width: 0;
+    gap: 6px;
+}
+
+.order-action-row > button {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-content: center;
     justify-items: center;
-    justify-content: center;
+    min-width: 0;
+    min-height: 3.25rem;
+    padding: 3px 4px;
+    border-radius: 9px;
     gap: 2px;
+    line-height: 1.1;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.order-action-meta {
+    min-height: 0.8rem;
+    font-size: 0.64rem;
+    font-weight: 900;
+    line-height: 0.78rem;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.order-action-meta [data-pickup-offset] {
+    display: block;
+}
+
+.order-action-meta [data-pickup-clock][datetime]::after {
+    content: " · Undo";
 }
 
 .order-boxed-meta {
-    min-height: 0.8rem;
     visibility: hidden;
-    font-size: 0.62rem;
-    font-weight: 900;
-    line-height: 0.8rem;
 }
 
 .order-boxed-meta.is-visible {
@@ -4925,13 +4940,13 @@ html {
     line-height: 1.15;
 }
 
-@media (max-width: 760px) {
-    .pizza-bake-controls {
-        flex-wrap: wrap;
-    }
-
-    .order-boxed-inline {
-        min-height: 48px;
+/* A walk-in in the multi-column lane can be as narrow as a phone card,
+   even on the landscape iPad. Use the row width, not the viewport here. */
+@container order-actions (max-width: 26rem) {
+    .order-action-row > button {
+        padding-inline: 3px;
+        font-size: 0.78rem;
+        min-height: 4rem;
     }
 }
 
@@ -5879,7 +5894,7 @@ html {
     line-height: 0.8rem;
 }
 
-/* Counter taps and their read-only counterparts use the same two positions. */
+/* Historical timestamps stay read-only and color-coded for scanning. */
 .pickup-tracking {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 12rem));
@@ -5902,10 +5917,7 @@ html {
     text-align: left;
 }
 
-button.pickup-mark { cursor: pointer; touch-action: manipulation; }
-button.pickup-mark:focus-visible { outline: 3px solid var(--brand-blue); outline-offset: 2px; }
-button.pickup-mark:disabled, span.pickup-mark[data-timing="unmarked"] { color: var(--muted); border-color: #b6bec1; }
-button.pickup-mark:not([data-recorded-at=""]) b::after { content: " ↶"; }
+.pickup-mark[data-timing="unmarked"] { color: var(--muted); border-color: #b6bec1; }
 .pickup-mark small { font-size: 0.71rem; font-weight: 750; }
 .pickup-mark small:empty { display: none; }
 .pickup-history-empty { font-size: 0.75rem; color: var(--muted); margin: 8px 0 0; }

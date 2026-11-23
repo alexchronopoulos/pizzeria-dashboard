@@ -18,7 +18,7 @@
             const blocked = !mark && kind === "arrived" && Boolean(marks.picked_up);
             if (button.dataset.recordedAt === token && button.disabled === blocked) continue;
             button.dataset.recordedAt = token;
-            button.dataset.timing = mark?.status || "unmarked";
+            button.setAttribute("aria-pressed", String(Boolean(mark)));
             button.disabled = blocked;
             button.title = mark ? [mark.schedule, "Tap to undo this timestamp."].filter(Boolean).join(". ") : "";
             button.querySelector("[data-pickup-label]").textContent = mark ? button.dataset.doneLabel

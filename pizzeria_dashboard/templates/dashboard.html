@@ -2,7 +2,7 @@
 
 {% block content %}
 {% set bake_timers_enabled = selected_date >= today %}
-<header class="masthead masthead--compact" data-dashboard-build="0.5.54">
+<header class="masthead masthead--compact" data-dashboard-build="0.5.55">
     <div class="masthead-tools masthead-tools--single-row">
         <img
             class="pizzeria-mari-logo"
@@ -335,6 +335,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='pickup-tracking.js', v='1') }}" defer></script>
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.45') }}" defer></script>
+<script src="{{ url_for('static', filename='pickup-tracking.js', v='2') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.46') }}" defer></script>
 {% endblock %}
