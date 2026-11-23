@@ -5999,21 +5999,58 @@ html {
 
 /* Fast-scanning service and pizza modifier cues. */
 .badge--dining-in {
-    min-width: 38px;
     justify-content: center;
-    padding: 3px 7px;
+    padding: 3px 10px;
     background: var(--brand-yellow);
     color: var(--brand-blue);
 }
 
-.badge--dining-in svg {
-    width: 25px;
-    height: 18px;
-    fill: white;
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+.order-row--dining-in {
+    --dining-in-chair-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='none' stroke='%23005586' stroke-opacity='.16' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 15v20h24V15M20 27h24M24 35v15M40 35v15'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+.order-row--dining-in:not(.order-row--unpaid),
+.order-row--dining-in:not(.order-row--unpaid) .order-content,
+.order-row--dining-in:not(.order-row--unpaid) .order-oven-panel {
+    background-image: var(--dining-in-chair-pattern);
+    background-size: 64px 64px;
+}
+
+.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid),
+.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid) .order-content,
+.order-row--dining-in.order-row--double-cut:not(.order-row--unpaid) .order-oven-panel {
+    background-image:
+        var(--dining-in-chair-pattern),
+        repeating-linear-gradient(
+            90deg,
+            rgba(165, 48, 31, 0.16) 0,
+            rgba(165, 48, 31, 0.16) 3px,
+            transparent 3px,
+            transparent 56px
+        );
+    background-size: 64px 64px, auto;
+}
+
+.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid),
+.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid) .order-content,
+.order-row--dining-in.order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel {
+    background-image:
+        var(--dining-in-chair-pattern),
+        linear-gradient(
+            45deg,
+            transparent 46%,
+            rgba(165, 48, 31, 0.16) 47%,
+            rgba(165, 48, 31, 0.16) 53%,
+            transparent 54%
+        ),
+        linear-gradient(
+            -45deg,
+            transparent 46%,
+            rgba(165, 48, 31, 0.16) 47%,
+            rgba(165, 48, 31, 0.16) 53%,
+            transparent 54%
+        );
+    background-size: 64px 64px, 68px 68px, 68px 68px;
 }
 
 .modifier-list .modifier--addition {

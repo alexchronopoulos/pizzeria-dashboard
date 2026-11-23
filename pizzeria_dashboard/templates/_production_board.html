@@ -42,7 +42,7 @@
 {% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
 {% set manual_payment = manual_payment_matches.get(order.order_id) if manual_payment_matches and order.is_manual else none %}
 <div
-    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.has_double_cut %} order-row--double-cut{% endif %}{% if order.has_dont_cut %} order-row--dont-cut{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
+    class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.has_dining_in %} order-row--dining-in{% endif %}{% if order.has_double_cut %} order-row--double-cut{% endif %}{% if order.has_dont_cut %} order-row--dont-cut{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
     role="button"
     data-order-id="{{ order.order_id }}"
     data-boxed-at="{{ boxed_at.isoformat() if boxed_at else '' }}"
@@ -97,13 +97,7 @@
             {{ render_historical_boxed_status(boxed_at) }}
             {% endif %}
             {% if order.has_dining_in %}
-            <span class="badge badge--dining-in" title="Dining in" aria-label="Dining in">
-                <svg viewBox="0 0 28 20" aria-hidden="true" focusable="false">
-                    <rect x="8" y="5" width="12" height="10" rx="1.5"></rect>
-                    <path d="M11 2h6v3M11 15h6v3M5 7v6h3M20 7h3v6"></path>
-                </svg>
-                <span class="visually-hidden">Dining in</span>
-            </span>
+            <span class="badge badge--dining-in" title="Dine-in order">I will be dining in</span>
             {% endif %}
             {% if order.is_manual %}
             <span class="badge badge--manual" title="Entered directly in the dashboard; no Square order exists">Manual</span>
