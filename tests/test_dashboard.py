@@ -4006,21 +4006,22 @@ def test_primary_salad_gets_same_green_card_behavior_as_salad_modifier_and_drink
     assert "1× Sparkling Water" in detail_html
 
 
-def test_boxed_action_sits_left_of_timer_stack_and_customer_visit_medal_is_pizza_themed(tmp_path: Path) -> None:
+def test_order_actions_in_customer_heading_and_customer_visit_medal_is_pizza_themed(tmp_path: Path) -> None:
     app = _test_app(tmp_path)
     today = datetime.now(ZoneInfo(app.config["SERVICE_TIMEZONE"])).date()
     response = app.test_client().get(f"/?date={today.isoformat()}")
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     controls_pos = html.find('class="pizza-bake-controls"')
-    group_pos = html.find('class="order-action-row"', controls_pos)
+    name_pos = html.rfind('class="customer-name"', 0, controls_pos)
+    group_pos = html.find('class="order-action-row"', name_pos)
     boxed_pos = html.find('data-order-boxed-button', group_pos)
     arrived_pos = html.find('data-pickup-event="arrived"', boxed_pos)
     picked_up_pos = html.find('data-pickup-event="picked_up"', arrived_pos)
     stack_pos = html.find('class="pizza-bake-stack"', controls_pos)
     timer_pos = html.find('data-bake-timer', stack_pos)
     assert controls_pos != -1
-    assert controls_pos < group_pos < boxed_pos < arrived_pos < picked_up_pos < stack_pos < timer_pos
+    assert 0 <= name_pos < group_pos < boxed_pos < arrived_pos < picked_up_pos < controls_pos < stack_pos < timer_pos
     css = Path("pizzeria_dashboard/static/style.css").read_text()
     assert ".visit-medal" in css
     assert "--crust: #b86f2c;" in css
@@ -4133,7 +4134,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.66' in html
+    assert 'style.css?v=0.5.67' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html

@@ -8,9 +8,10 @@
 {% if kind == 'boxed' %}
     <path d="M3 7h18v13H3zM3 7l3-4h12l3 4M8 12h8"/>
 {% elif kind == 'arrived' %}
-    <path d="M13 3h7v18h-7M3 12h12m-4-4 4 4-4 4"/>
+    <circle cx="12" cy="6" r="3"/>
+    <path d="M5 21v-3a7 7 0 0 1 14 0v3"/>
 {% else %}
-    <path d="M4 8h16l1 13H3L4 8Zm4 0V7a4 4 0 0 1 8 0v1"/>
+    <path d="M13 3h7v18h-7M3 12h12m-4-4 4 4-4 4"/>
 {% endif %}
 </svg>
 {%- endmacro %}
