@@ -1176,7 +1176,16 @@ h2 {
 }
 
 .slice-bake-row > strong { flex: 1; }
-.slice-bake-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.slice-bake-controls { display: flex; align-items: stretch; gap: 5px; }
+.slice-bake-status { align-self: center; }
+.slice-bake-count {
+    display: grid;
+    place-items: center;
+    min-width: 44px;
+    padding-inline: 4px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
 
 .availability-group {
     margin-top: 13px;
@@ -2065,12 +2074,15 @@ h2 {
 }
 
 .bake-timer-button,
-.bake-timer-reset {
+.bake-timer-reset,
+.slice-bake-count {
     border: 3px solid var(--black);
     color: var(--text);
-    cursor: pointer;
     font-weight: 900;
 }
+
+.bake-timer-button,
+.bake-timer-reset { cursor: pointer; }
 
 .bake-timer-button {
     display: grid;
@@ -2101,6 +2113,10 @@ h2 {
 
 .bake-timer-reset {
     width: 44px;
+}
+
+.bake-timer-reset,
+.slice-bake-count {
     min-height: 48px;
     border-radius: 9px;
     background: white;
