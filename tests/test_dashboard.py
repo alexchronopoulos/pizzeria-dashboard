@@ -2548,6 +2548,7 @@ def test_mark_boxed_completes_square_pickup_before_saving_ready_state(
     )
     replace_orders_for_date(database_path, selected, (order,), source="square")
 
+    baseline = app.test_client().get(f"/live-production-state?date={selected}").get_json()
     response = app.test_client().post(
         "/order-ready",
         json={
@@ -2563,6 +2564,10 @@ def test_mark_boxed_completes_square_pickup_before_saving_ready_state(
     assert payload["square_updated"] is True
     assert payload["square_already_completed"] is False
     assert calls == [("square-boxed-order", "pickup-boxed")]
+    live = app.test_client().get(f"/live-production-state?date={selected}").get_json()
+    assert live["board_content_revision"] == baseline["board_content_revision"]
+    assert live["boxed_inventory_revision"] != baseline["boxed_inventory_revision"]
+    assert order.order_id in live["boxed_orders"]
     assert order.order_id in load_order_ready_states(database_path, selected)
     cached = load_orders_for_date(database_path, selected)
     assert cached[0].released is True
@@ -4146,7 +4151,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.50' in html
+    assert 'dashboard.js?v=0.5.51' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html

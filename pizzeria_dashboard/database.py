@@ -769,6 +769,7 @@ def merge_orders_for_date(
     candidate_square_order_ids: Iterable[str],
     source: str,
     synced_at: datetime | None = None,
+    boxed_completion: bool = False,
 ) -> MergeResult:
     """Merge an incremental Square refresh into one cached service date.
 
@@ -892,7 +893,20 @@ def merge_orders_for_date(
             (date_key, source, sync_time.isoformat(), order_count),
         )
         if changed_count or removed_count:
-            _touch_board_content_revision(connection, date_key)
+            status_fields = {"released", "square_version", "fulfillment_state", "square_order_state", "source_updated_at"}
+            def without_status(payload: str) -> dict:
+                return {key: value for key, value in json.loads(payload).items() if key not in status_fields}
+
+            if (boxed_completion and not removed_count and len(serialized_orders) == 1
+                and all(key in existing_payloads and without_status(existing_payloads[key]) == without_status(payload)
+                        for key, payload in serialized_orders.items())):
+                connection.execute(
+                    """INSERT INTO app_metadata (key, value) VALUES (?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                    (f"boxed_inventory_revision:{date_key}", str(time.time_ns())),
+                )
+            else:
+                _touch_board_content_revision(connection, date_key)
 
     return MergeResult(
         info=SyncInfo(service_date, source, sync_time, order_count),

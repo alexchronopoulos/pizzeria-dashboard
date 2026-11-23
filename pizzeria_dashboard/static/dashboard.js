@@ -1807,6 +1807,33 @@
         || document.body.classList.contains("walk-in-assignment-pending")
     );
 
+    let refreshingBoxedInventory = false;
+    const refreshBoxedInventory = async (revision) => {
+        if (!revision || revision === board.dataset.boxedInventoryRevision || refreshingBoxedInventory) return;
+        refreshingBoxedInventory = true;
+        try {
+            const response = await fetch(window.location.href, {cache: "no-store"});
+            if (!response.ok) return;
+            const fresh = new DOMParser().parseFromString(await response.text(), "text/html");
+            const nextBoard = fresh.getElementById("production-board");
+            if (!nextBoard || nextBoard.dataset.serviceDate !== serviceDate
+                || nextBoard.dataset.boardContentRevision !== board.dataset.boardContentRevision) return;
+            const selectors = [".operations-card--dough .operations-total", ".operations-card--dough .inventory-equation"];
+            window.PizzeriaDashboardViewport?.preserve(() => {
+                for (const selector of selectors) {
+                    const current = document.querySelector(selector);
+                    const replacement = fresh.querySelector(selector);
+                    if (current && replacement) current.replaceWith(replacement);
+                }
+            });
+            board.dataset.boxedInventoryRevision = nextBoard.dataset.boxedInventoryRevision;
+        } catch (_error) {
+            // Retry on the next live poll, leaving the current board visible.
+        } finally {
+            refreshingBoxedInventory = false;
+        }
+    };
+
     const applyPayload = (payload, pollStartedAt) => {
         if (Number.isFinite(Number(payload.server_now_ms))) {
             serverOffsetMs = Number(payload.server_now_ms) - Date.now();
@@ -1827,6 +1854,7 @@
             }
         });
         boxedOrders = payload.boxed_orders || {};
+        void refreshBoxedInventory(payload.boxed_inventory_revision);
         if (payload.slice_bake_counts) {
             document.querySelectorAll("[data-slice-bake-count]").forEach((counter) => {
                 const count = Number(payload.slice_bake_counts[counter.dataset.sliceBakeCount] || 0);
