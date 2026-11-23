@@ -1143,7 +1143,7 @@
     const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
     const prepTimingButtons = Array.from(document.querySelectorAll("[data-prep-timing-toggle]"));
     if (!board || (!timers.length && !orderRows.length && !countdown && !prepTimingButtons.length
-        && !document.querySelector(".slice-bake-form"))) {
+        && !document.querySelector("[data-round-slice-menu]"))) {
         return;
     }
 
@@ -3059,28 +3059,21 @@
     }
 })();
 (() => {
-    const form = document.querySelector("[data-round-slice-menu]");
-    if (!form) return;
-    const status = form.querySelector("[data-slice-menu-status]");
-    const options = form.querySelector("[data-slice-menu-options]");
-    let current = "";
+    const panel = document.querySelector("[data-round-slice-menu]");
+    if (!panel) return;
+    const status = panel.querySelector("[data-slice-menu-status]");
+    const current = JSON.stringify(Array.from(panel.querySelectorAll("[data-slice-name]"), row => row.dataset.sliceName));
     const load = async () => {
         try {
-            const response = await fetch(form.dataset.roundSliceMenu, {cache: "no-store"});
+            const response = await fetch(panel.dataset.roundSliceMenu, {cache: "no-store"});
             if (!response.ok) throw new Error("Unable to load the slice menu.");
             const {names, error} = await response.json();
             const key = JSON.stringify(names);
-            if (key !== current) {
-                options.replaceChildren(...names.map((name) => {
-                    const button = document.createElement("button");
-                    button.type = "submit";
-                    button.name = "pie_name";
-                    button.value = name;
-                    button.textContent = `+ ${name}`;
-                    button.setAttribute("aria-label", `Add ${name} slice pie`);
-                    return button;
-                }));
-                current = key;
+            if (key !== current && !document.querySelector("dialog[open], [data-pizza-breakdown-overlay]:not([hidden])")
+                && !document.body.classList.contains("walk-in-assignment-pending")) {
+                window.PizzeriaDashboardViewport?.remember();
+                window.location.reload();
+                return;
             }
             status.textContent = error || (names.length ? "" : "No pies found in Round Slices.");
         } catch {

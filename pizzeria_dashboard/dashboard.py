@@ -23,7 +23,6 @@ from flask import (
 )
 
 from .database import (
-    add_slice_bake,
     change_pickup_mark,
     delete_order_slot_assignment,
     has_orders_for_date,
@@ -776,6 +775,10 @@ def index() -> str:
         },
         board_content_revision=board_content_revision,
         slice_bakes=[
+            (key, name, pie_states.get(key))
+            for name in _slice_menu_cache().get("names", [])
+            for key in (_catalog_slice_key(selected_date, name),)
+        ] if selected_date >= now.date() else [
             (key, key.split("|", 3)[3], state)
             for key, state in sorted(pie_states.items())
             if key.startswith(f"{selected_date.isoformat()}|slice-bake|") and key.count("|") >= 3
@@ -1902,24 +1905,8 @@ def _round_slice_names(objects) -> list[str]:
     return [names[key] for key in sorted(names)]
 
 
-@blueprint.post("/slice-bakes")
-def update_slice_bakes():
-    try:
-        selected = date.fromisoformat(request.form.get("service_date", ""))
-    except ValueError:
-        return "A valid service date is required.", 400
-    target = url_for("dashboard.index", date=selected.isoformat(), _anchor="slice-pies")
-    if selected < _now().date():
-        flash("Past slice pie boards are read-only.", "error")
-        return redirect(target, code=303)
-    path = _database_path()
-    name = request.form.get("pie_name", "")
-    if name not in _slice_menu_cache().get("names", []):
-        flash("Choose a pie from the Round Slices list.", "error")
-    else:
-        key = f"{selected.isoformat()}|slice-bake|{_now().astimezone(UTC):%Y%m%d%H%M%S%f}-{uuid4().hex}|{name}"
-        add_slice_bake(path, selected, key)
-    return redirect(target, code=303)
+def _catalog_slice_key(selected: date, name: str) -> str:
+    return f"{selected.isoformat()}|slice-bake|catalog|{name}"
 
 
 def _slice_menu_cache() -> dict:
@@ -1933,7 +1920,7 @@ def round_slice_menu():
     if now < cached.get("retry_at", 0):
         return jsonify(names=cached["names"], error=cached.get("error"))
     if not str(current_app.config.get("SQUARE_ACCESS_TOKEN") or "").strip():
-        return jsonify(names=[], error="Connect Square to load Round Slices.")
+        return jsonify(names=cached.get("names", []), error="Connect Square to refresh Round Slices.")
     try:
         client = SquareClient(SquareSettings.from_mapping(current_app.config))
         names = _round_slice_names(client.list_catalog_items_and_categories())
@@ -1963,8 +1950,11 @@ def update_shared_pie_state():
         return jsonify(ok=False, error="A valid pie key is required."), 400
     if not pie_key.startswith(f"{selected_date.isoformat()}|"):
         return jsonify(ok=False, error="The pie key is for another service date."), 400
-    if pie_key.startswith(f"{selected_date.isoformat()}|slice-bake|") and selected_date < _now().date():
-        return jsonify(ok=False, error="Past slice pie boards are read-only."), 409
+    if pie_key.startswith(f"{selected_date.isoformat()}|slice-bake|"):
+        if selected_date < _now().date():
+            return jsonify(ok=False, error="Past slice pie boards are read-only."), 409
+        if pie_key not in {_catalog_slice_key(selected_date, name) for name in _slice_menu_cache().get("names", [])}:
+            return jsonify(ok=False, error="That pie is not in Round Slices."), 400
     action = str(payload.get("timer_action", "")).strip().lower() or None
     try:
         duration_ms = int(payload.get("duration_ms", 480_000))

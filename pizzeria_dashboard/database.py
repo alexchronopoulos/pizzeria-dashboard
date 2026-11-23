@@ -2295,17 +2295,6 @@ def load_pie_production_states(
     }
 
 
-def add_slice_bake(path: Path, service_date: date, pie_key: str) -> None:
-    with _connect(path) as connection:
-        connection.execute(
-            """INSERT INTO pie_production_states
-               (service_date, pie_key, timer_status, timer_remaining_ms, updated_at)
-               VALUES (?, ?, 'idle', 480000, ?)""",
-            (service_date.isoformat(), pie_key, _utc_now().isoformat()),
-        )
-        _touch_board_content_revision(connection, service_date.isoformat())
-
-
 def update_pie_production_state(
     path: Path,
     service_date: date,
@@ -2343,8 +2332,6 @@ def update_pie_production_state(
             """,
             (date_key, pie_key),
         ).fetchone()
-        if row is None and pie_key.startswith(f"{date_key}|slice-bake|"):
-            raise ValueError("That slice pie is not on the board.")
         state = _normalized_pie_state(
             row, pie_key, now_ms=now_ms, default_duration_ms=normalized_duration
         )
