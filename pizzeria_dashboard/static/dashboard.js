@@ -1244,8 +1244,7 @@
         return raw.timer_status === "done" ? {...raw, oven_position: null} : raw;
     };
 
-    const renderTimers = () => {
-        const persistExpiredTimers = () => {
+    const persistExpiredTimers = () => {
         timersByKey.forEach((timer, key) => {
             const raw = pieStates[key] || initialPieState(key);
             if (
@@ -1264,7 +1263,8 @@
         });
     };
 
-    timersByKey.forEach((timer, key) => {
+    const renderTimers = () => {
+        timersByKey.forEach((timer, key) => {
             const state = effectiveTimerState(key);
             const action = timer.querySelector("[data-bake-timer-action]");
             const display = timer.querySelector("[data-bake-timer-display]");
@@ -1297,10 +1297,18 @@
     };
 
     const isActiveTimerStatus = (status) => status === "running" || status === "paused";
+    const timerVisibility = new Map();
 
-    const timerIsFullyVisible = (timer) => {
+    const timerIsFullyVisible = (timer, key) => {
+        if (timerVisibility.has(key)) {
+            return timerVisibility.get(key);
+        }
         const rect = timer.getBoundingClientRect();
-        return rect.top >= 8 && rect.bottom <= window.innerHeight - 8;
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        return rect.width > 0
+            && rect.height > 0
+            && rect.top >= 8
+            && rect.bottom <= viewportHeight - 8;
     };
 
     const renderActiveTimerRail = () => {
@@ -1318,7 +1326,7 @@
             if (status === "done" && dismissedDoneTimers.has(key)) {
                 return;
             }
-            if (status === "idle" || timerIsFullyVisible(timer)) {
+            if ((!isActiveTimerStatus(status) && status !== "done") || timerIsFullyVisible(timer, key)) {
                 return;
             }
             hiddenTimers.push({timer, key, state, status});
@@ -1375,6 +1383,29 @@
             ));
         }
     };
+
+    const timerVisibilityObserver = typeof window.IntersectionObserver === "function"
+        ? new window.IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                const key = entry.target.dataset.bakeTimerKey;
+                if (!key) {
+                    return;
+                }
+                timerVisibility.set(
+                    key,
+                    entry.isIntersecting && entry.intersectionRatio >= 0.99,
+                );
+            });
+            renderActiveTimerRail();
+        }, {
+            root: null,
+            rootMargin: "-8px 0px -8px 0px",
+            threshold: [0, 1],
+        })
+        : null;
+    timerVisibilityObserver && timersByKey.forEach((timer) => {
+        timerVisibilityObserver.observe(timer);
+    });
 
     document.addEventListener("pizzeria-dashboard:clear-finished-timer-alerts", () => {
         timersByKey.forEach((_timer, key) => {

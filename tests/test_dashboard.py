@@ -4074,7 +4074,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.43' in html
+    assert 'dashboard.js?v=0.5.44' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
@@ -4153,9 +4153,19 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "window.PizzeriaDashboardViewport?.restoreSaved();" in dashboard_javascript
     assert "document.fonts.ready" in dashboard_javascript
     assert "PizzeriaDashboardViewport.preserve(renderBoxedOrders)" in dashboard_javascript
-    assert 'if (status === "idle" || timerIsFullyVisible(timer)) {' in dashboard_javascript
+    assert 'new window.IntersectionObserver((entries) =>' in dashboard_javascript
+    assert 'rootMargin: "-8px 0px -8px 0px"' in dashboard_javascript
+    assert "threshold: [0, 1]" in dashboard_javascript
+    assert "entry.isIntersecting && entry.intersectionRatio >= 0.99" in dashboard_javascript
+    assert "timerVisibilityObserver.observe(timer);" in dashboard_javascript
+    assert "window.visualViewport?.height || window.innerHeight" in dashboard_javascript
+    assert "(!isActiveTimerStatus(status) && status !== \"done\")" in dashboard_javascript
     assert "timerRail.hidden = hiddenTimers.length === 0;" in dashboard_javascript
     assert 'window.addEventListener("scroll", renderActiveTimerRail' in dashboard_javascript
+    assert dashboard_javascript.count("const persistExpiredTimers = () =>") == 1
+    assert dashboard_javascript.index("const persistExpiredTimers = () =>") < dashboard_javascript.index(
+        "const renderTimers = () =>"
+    )
 
 
 def test_customer_visit_medal_is_next_to_customer_name_and_capacity_action_is_not_on_main_card(tmp_path: Path) -> None:
