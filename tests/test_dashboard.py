@@ -203,6 +203,9 @@ def test_prep_view_toggle_marks_empty_and_past_slots(
     empty_slot = html[empty_slot_start:empty_slot_end]
     assert 'data-slot-empty="true"' in empty_slot
     assert 'data-slot-past="false"' in empty_slot
+    empty_slot_body = html[empty_slot_end:html.index("</article>", empty_slot_end)]
+    assert "Open slot" in empty_slot_body
+    assert "Available for up to" not in empty_slot_body
 
 
 def test_today_square_dashboard_has_incremental_and_auto_refresh_controls(
