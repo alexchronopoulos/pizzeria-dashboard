@@ -4213,7 +4213,7 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "overflow-y: auto;" in toast_list_rules
     assert "scrollbar-gutter: stable;" in toast_list_rules
     assert ":has(.active-timer-rail" not in css
-    timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
+    timer_rules = css.split("\n.active-timer-rail {", 1)[1].split("}", 1)[0]
     assert "top: 50%;" in timer_rules
     assert "right: 14px;" in timer_rules
     assert "width: 178px;" in timer_rules
