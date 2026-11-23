@@ -1,8 +1,8 @@
-{% from "_pickup_tracking.html" import render_pickup_tracking %}
+{% from "_pickup_tracking.html" import render_pickup_buttons, render_pickup_history %}
 {% macro render_boxed_button(order, boxed_at, selected_date) -%}
 <button
     type="button"
-    class="badge badge--boxed-action order-boxed-inline{% if boxed_at %} is-boxed{% endif %}"
+    class="badge badge--order-action{% if boxed_at %} is-boxed{% endif %}"
     data-order-boxed-button
     data-order-id="{{ order.order_id }}"
     data-service-date="{{ selected_date.isoformat() }}"
@@ -10,18 +10,25 @@
     aria-label="{% if boxed_at %}Boxed and ready at {{ boxed_at.strftime('%-I:%M %p') }}. Click to undo boxed status.{% else %}Mark this order boxed and ready.{% endif %}"
     draggable="false"
 >
-    <span data-order-boxed-label>{% if boxed_at %}BOXED &amp; READY{% else %}Mark boxed{% endif %}</span>
+    <span data-order-boxed-label>{% if boxed_at %}BOXED &amp; READY{% else %}Mark Boxed{% endif %}</span>
     <span
-        class="order-boxed-meta{% if boxed_at %} is-visible{% endif %}"
+        class="order-action-meta order-boxed-meta{% if boxed_at %} is-visible{% endif %}"
         data-order-boxed-meta
         aria-hidden="{{ 'false' if boxed_at else 'true' }}"
     ><time data-order-boxed-time datetime="{{ boxed_at.isoformat() if boxed_at else '' }}">{% if boxed_at %}{{ boxed_at.strftime('%-I:%M %p') }}{% endif %}</time><span data-order-boxed-undo>{% if boxed_at %} · Undo boxed{% endif %}</span></span>
 </button>
 {%- endmacro %}
 
+{% macro render_order_actions(order, boxed_at, selected_date, marks) -%}
+<div class="order-action-row" role="group" aria-label="Order actions">
+    {{ render_boxed_button(order, boxed_at, selected_date) }}
+    {{ render_pickup_buttons(marks) }}
+</div>
+{%- endmacro %}
+
 {% macro render_historical_boxed_status(boxed_at) -%}
 <span
-    class="badge badge--boxed-action order-boxed-history is-boxed"
+    class="badge badge--order-action order-boxed-history is-boxed"
     aria-label="Boxed and ready at {{ boxed_at.strftime('%-I:%M %p') }}"
 >
     <span>BOXED &amp; READY</span>
@@ -165,7 +172,8 @@
         <span>{{ order.note }}</span>
     </div>
     {% endif %}
-    {% set boxed_action = namespace(rendered=false) %}
+    {% set marks = pickup_marks.get(order.order_id, {}) %}
+    {% set actions = namespace(rendered=false) %}
     <ul class="item-list">
         {% for item in order.card_items %}
         {% set item_index = loop.index0 %}
@@ -178,9 +186,9 @@
                 </div>
                 {% if item.category == "pizza" and bake_timers_enabled and not is_unpaid %}
                 <div class="pizza-bake-controls">
-                    {% if not boxed_action.rendered %}
-                    {{ render_boxed_button(order, boxed_at, selected_date) }}
-                    {% set boxed_action.rendered = true %}
+                    {% if not actions.rendered %}
+                    {{ render_order_actions(order, boxed_at, selected_date, marks) }}
+                    {% set actions.rendered = true %}
                     {% endif %}
                     <div class="pizza-bake-stack">
                     {% for unit_index in range(item.quantity) %}
@@ -239,14 +247,12 @@
         </li>
         {% endfor %}
     </ul>
-    {% if selected_date >= today and not boxed_action.rendered and not is_unpaid %}
-    <div class="order-boxed-fallback">
-        {{ render_boxed_button(order, boxed_at, selected_date) }}
-    </div>
-    {% endif %}
-    {% set marks = pickup_marks.get(order.order_id, {}) %}
-    {% if not is_unpaid or marks %}
-    {{ render_pickup_tracking(marks, selected_date >= today and not is_unpaid) }}
+    {% if not actions.rendered %}
+        {% if selected_date >= today and not is_unpaid %}
+        <div class="order-actions-fallback">{{ render_order_actions(order, boxed_at, selected_date, marks) }}</div>
+        {% elif not is_unpaid or marks %}
+        {{ render_pickup_history(marks) }}
+        {% endif %}
     {% endif %}
     </div>
 </div>

@@ -174,8 +174,8 @@ uv run pytest
 uv run pizzeria-dashboard
 ```
 
-For an optional Firefox check of the off-screen timer on today's and future boards,
-run these on a development machine. It uses sample orders in a temporary database.
+For optional Firefox checks of the off-screen timer and the three-button action
+row at iPad and phone sizes, run these on a development machine. They use sample orders in a temporary database.
 
 ```bash
 uv run --with playwright python -m playwright install firefox
@@ -195,7 +195,9 @@ dashboard; enter the customer name, pickup date/time, and one or more free-form
 item rows. Click any order card to open the pickup-time and kitchen-details modal.
 Each pizza row also includes an eight-minute bake timer. Timer state is shared through SQLite, so prep and expo displays stay synchronized. Completed orders without a pickup timestamp first appear in the Unscheduled walk-in lane unless a configured slot can be parsed from the beginning or end of the Ticket Name. Drag them onto a service slot or use the pickup selector in the order-details modal. Manual choices override Ticket Name parsing and survive normal Square refreshes.
 
-Use **Mark boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
+Each editable order has one action row: **Mark Boxed**, **Mark Arrived**, **Mark Picked Up**, from left to right.
+
+Use **Mark Boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 
 Tap **Mark Arrived** when the customer gets to the counter and **Mark Picked Up** when they leave with the order. These are independent dashboard timestamps: they do not complete an order in Square or affect boxed status, timers, or dough. If you miss the arrival, record just the pickup. On an editable board, tap a recorded time and confirm to undo a mistake.
 

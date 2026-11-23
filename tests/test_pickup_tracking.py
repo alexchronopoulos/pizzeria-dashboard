@@ -56,6 +56,30 @@ def card(html, order_id):
                 if f'data-order-id="{order_id}"' in row)
 
 
+@pytest.mark.parametrize("days_ahead", [0, 3])
+def test_order_actions_share_one_row_per_order_with_or_without_pies(counter, days_ahead):
+    client, path, _ = counter
+    at = SLOT + timedelta(days=days_ahead)
+    multi = replace(order("multi", at), items=(Item("Plain Pie", 2, "pizza"), Item("White Pie", 1, "pizza")))
+    salad = replace(order("salad", at, is_walk_in=True), items=(Item("Caesar Salad", 1, "salad"),))
+    replace_orders_for_date(path, at.date(), (multi, salad), source="square")
+    page = client.get(f"/?date={at.date()}").get_data(as_text=True)
+
+    for ticket in (multi, salad):
+        row = card(page, ticket.order_id)
+        groups = re.findall(r'<div class="order-action-row"[^>]*>(.*?)</div>', row, re.S)
+        assert len(groups) == 1
+        buttons = re.findall(r'<button\b[^>]*>.*?</button>', groups[0], re.S)
+        assert len(buttons) == 3
+        for button, hook, label in zip(buttons, ("data-order-boxed-button", 'data-pickup-event="arrived"',
+                                                 'data-pickup-event="picked_up"'),
+                                       ("Mark Boxed", "Mark Arrived", "Mark Picked Up"), strict=True):
+            assert row.count(hook) == 1 and hook in button
+            assert f">{label}</span>" in button and 'class="badge badge--order-action"' in button
+        assert row.count("data-bake-timer-toggle") == ticket.pizza_units
+        assert ('class="order-actions-fallback"' in row) == (ticket == salad)
+
+
 @pytest.mark.parametrize(("minutes", "category"), [
     (-6, "early"), (-5, "on-time"), (0, "on-time"), (5, "on-time"), (6, "late"),
 ])
@@ -79,7 +103,7 @@ def test_marks_survive_refresh_and_history_is_read_only(counter):
     revision = load_board_content_revision(path, DAY)
     page = client.get(f"/?date={DAY}").get_data(as_text=True)
     assert page.count('data-pickup-event="arrived"') == page.count('data-pickup-event="picked_up"') == 2
-    assert 'src="/static/pickup-tracking.js?v=1"' in page
+    assert 'src="/static/pickup-tracking.js?v=2"' in page
     clock.now = SLOT - timedelta(minutes=8)
     arrived = tap(client, ticket, "arrived").get_json()["marks"]["arrived"]
     assert arrived["clock"] == "4:52 PM" and arrived["offset"] == "8 min early"

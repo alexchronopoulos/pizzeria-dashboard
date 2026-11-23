@@ -1767,7 +1767,7 @@
                         : "Mark this order boxed and ready.",
                 );
                 if (label) {
-                    label.textContent = boxedAt ? "BOXED & READY" : "Mark boxed";
+                    label.textContent = boxedAt ? "BOXED & READY" : "Mark Boxed";
                 }
                 if (meta) {
                     meta.classList.toggle("is-visible", Boolean(boxedAt));
