@@ -578,6 +578,9 @@ def test_open_capacity_card_lists_one_and_two_pie_slots(tmp_path: Path) -> None:
     assert b'data-pickup-at="2026-07-31T16:30:00"' in response.data
     assert b'data-pickup-at="2026-07-31T17:30:00"' in response.data
     assert b'Drop a walk-in order here to assign' in response.data
+    assert b"Slot capacity" not in response.data
+    assert b'class="capacity-block"' not in response.data
+    assert b'class="capacity-track"' not in response.data
 
 
 def test_modifiers_and_salads_render_from_cached_documents(tmp_path: Path) -> None:
@@ -4053,7 +4056,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.57' in html
+    assert 'style.css?v=0.5.58' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4111,24 +4114,40 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert ".order-boxed-meta {" in css
     assert "visibility: hidden;" in css
     assert ".order-boxed-meta.is-visible {\n    visibility: visible;" in css
+    assert "--service-alert-rail-width: clamp(230px, 27vw, 320px);" in css
+    assert "grid-template-columns: 132px minmax(0, 1fr);" in css
 
     toast_rules = css.split(".new-order-toast-region {", 1)[1].split("}", 1)[0]
     toast_list_rules = css.split(".new-order-toast-list {", 1)[1].split("}", 1)[0]
+    assert "width: min(var(--service-alert-rail-width), calc(100vw - 36px));" in toast_rules
     assert "grid-template-columns: minmax(0, 1fr);" in toast_rules
     assert "grid-template-rows: auto minmax(0, 1fr);" in toast_rules
     assert "grid-auto-flow: row;" in toast_rules
-    assert "max-height: calc(100dvh - 36px);" in toast_rules
+    assert "max-height: calc(50dvh - 27px);" in toast_rules
     assert "grid-template-columns: minmax(0, 1fr);" in toast_list_rules
     assert "grid-auto-flow: row;" in toast_list_rules
-    assert "max-height: calc(100dvh - 92px);" in toast_list_rules
+    assert "max-height: calc(50dvh - 84px);" in toast_list_rules
     assert "overflow-y: auto;" in toast_list_rules
     assert "scrollbar-gutter: stable;" in toast_list_rules
     assert ":has(.active-timer-rail" not in css
     timer_rules = css.split(".active-timer-rail {", 1)[1].split("}", 1)[0]
-    assert "top: 50%;" in timer_rules
-    assert "right: 14px;" in timer_rules
-    assert "max-height: calc(100vh - 220px);" in timer_rules
-    assert "transform: translateY(-50%);" in timer_rules
+    assert "bottom: 18px;" in timer_rules
+    assert "right: 18px;" in timer_rules
+    assert "width: min(var(--service-alert-rail-width), calc(100vw - 36px));" in timer_rules
+    assert "max-height: calc(50dvh - 27px);" in timer_rules
+    assert "overflow-y: auto;" in timer_rules
+    assert "scrollbar-gutter: stable;" in timer_rules
+    assert "transform:" not in timer_rules
+
+    safe_rail_rules = css.split("@media (min-width: 721px) {", 1)[1].split("}", 1)[0]
+    assert ".window-list--alert-safe," in safe_rail_rules
+    assert ".unscheduled-lane--alert-safe" in safe_rail_rules
+    assert "margin-right: calc(var(--service-alert-rail-width) + var(--service-alert-rail-gap));" in safe_rail_rules
+    assert "window-list--alert-safe" in production_template
+    assert "Slot capacity" not in html
+    assert ".capacity-block" not in css
+    assert ".capacity-track" not in css
+    assert ".capacity-status" not in css
 
     assert 'RESTORE_CLASS = "viewport-restore-pending"' in base_javascript
     assert "PizzeriaDashboardReveal" in base_javascript

@@ -542,7 +542,7 @@
 
     {% if service.walk_in_orders %}
     <section
-        class="unscheduled-lane{% if not service.unscheduled_orders %} unscheduled-lane--empty{% endif %}"
+        class="unscheduled-lane{% if selected_date >= today %} unscheduled-lane--alert-safe{% endif %}{% if not service.unscheduled_orders %} unscheduled-lane--empty{% endif %}"
         data-walk-in-drop-zone
         data-pickup-at=""
         aria-label="Unscheduled walk-in orders"
@@ -567,9 +567,8 @@
     {% endif %}
 
     {% if service.windows %}
-    <div class="window-list">
+    <div class="window-list{% if selected_date >= today %} window-list--alert-safe{% endif %}">
         {% for window in service.windows %}
-        {% set capacity_percent = ((window.pizza_units / service.pizza_capacity_per_window) * 100) | int %}
         <article
             class="pickup-window{% if window.is_empty %} pickup-window--empty{% endif %}{% if window.pizza_units > service.pizza_capacity_per_window %} pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %} pickup-window--full{% endif %}"
             data-walk-in-drop-zone
@@ -595,28 +594,6 @@
                     <strong>Open slot</strong>
                     <span>Available for up to {{ [service.pizza_capacity_per_window, 2] | min }} pizzas in one order</span>
                 </div>
-                {% endif %}
-            </div>
-
-            <div class="capacity-block">
-                <div class="capacity-copy">
-                    <span>Slot capacity</span>
-                    <strong>{{ window.pizza_units }} / {{ service.pizza_capacity_per_window }}</strong>
-                </div>
-                <div class="capacity-track" role="meter" aria-valuemin="0" aria-valuemax="{{ service.pizza_capacity_per_window }}" aria-valuenow="{{ window.pizza_units }}">
-                    <span style="width: {{ [capacity_percent, 100] | min }}%"></span>
-                </div>
-                <span class="capacity-status">
-                    {% if window.pizza_units > service.pizza_capacity_per_window %}
-                    Over capacity
-                    {% elif window.pizza_units == service.pizza_capacity_per_window %}
-                    Full
-                    {% else %}
-                    {{ service.pizza_capacity_per_window - window.pizza_units }} pizza space{% if service.pizza_capacity_per_window - window.pizza_units != 1 %}s{% endif %} open
-                    {% endif %}
-                </span>
-                {% if service.walk_in_orders %}
-                <span class="walk-in-drop-hint">Drop walk-in here</span>
                 {% endif %}
             </div>
         </article>
