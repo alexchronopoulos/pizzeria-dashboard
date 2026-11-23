@@ -542,7 +542,7 @@
 
     {% if service.walk_in_orders %}
     <section
-        class="unscheduled-lane{% if selected_date >= today %} unscheduled-lane--alert-safe{% endif %}{% if not service.unscheduled_orders %} unscheduled-lane--empty{% endif %}"
+        class="unscheduled-lane{% if not service.unscheduled_orders %} unscheduled-lane--empty{% endif %}"
         data-walk-in-drop-zone
         data-pickup-at=""
         aria-label="Unscheduled walk-in orders"
@@ -567,7 +567,7 @@
     {% endif %}
 
     {% if service.windows %}
-    <div class="window-list{% if selected_date >= today %} window-list--alert-safe{% endif %}">
+    <div class="window-list">
         {% for window in service.windows %}
         <article
             class="pickup-window{% if window.is_empty %} pickup-window--empty{% endif %}{% if window.pizza_units > service.pizza_capacity_per_window %} pickup-window--over{% elif window.pizza_units == service.pizza_capacity_per_window %} pickup-window--full{% endif %}"
