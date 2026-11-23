@@ -240,37 +240,6 @@
     </div>
     {% endif %}
     </div>
-    {% if selected_date >= today and order.pizza_units and not is_unpaid %}
-    <aside class="order-oven-panel" aria-label="Oven positions for {{ customer_label }}">
-        {% for item in order.card_items %}
-        {% set item_index = loop.index0 %}
-        {% if item.category == "pizza" %}
-        {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
-        {% for unit_index in range(item.quantity) %}
-        {% set pie_key = pie_base_key if unit_index == 0 else pie_base_key ~ '|' ~ unit_index %}
-        {% set pie_state = pie_states.get(pie_key) if pie_states else none %}
-        <div class="order-oven-entry">
-            {% if item.quantity > 1 %}<span class="oven-unit-label">{{ item.display_name }} {{ unit_index + 1 }}/{{ item.quantity }}</span>{% endif %}
-            <div
-                class="oven-position-selector"
-                data-oven-position
-                data-service-date="{{ selected_date.isoformat() }}"
-                data-oven-position-key="{{ pie_key }}"
-                data-selected-oven-position="{{ pie_state.oven_position if pie_state and pie_state.oven_position else '' }}"
-                role="group"
-                aria-label="Oven position for {{ item.display_name }}{% if item.quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ item.quantity }}{% endif %}"
-            >
-                <button type="button" draggable="false" data-oven-position-choice="top-left" aria-label="Assign {{ item.display_name }} to the top-left oven position" title="Top left"></button>
-                <button type="button" draggable="false" data-oven-position-choice="top-right" aria-label="Assign {{ item.display_name }} to the top-right oven position" title="Top right"></button>
-                <button type="button" draggable="false" data-oven-position-choice="bottom-left" aria-label="Assign {{ item.display_name }} to the bottom-left oven position" title="Bottom left"></button>
-                <button type="button" draggable="false" data-oven-position-choice="bottom-right" aria-label="Assign {{ item.display_name }} to the bottom-right oven position" title="Bottom right"></button>
-            </div>
-        </div>
-        {% endfor %}
-        {% endif %}
-        {% endfor %}
-    </aside>
-    {% endif %}
 </div>
 {%- endmacro %}
 

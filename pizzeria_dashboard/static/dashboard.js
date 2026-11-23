@@ -269,7 +269,6 @@
         if (
             !target
             || target.closest("[data-bake-timer]")
-            || target.closest("[data-oven-position]")
             || target.closest("[data-order-complete-button]")
             || target.closest("[data-order-boxed-button]")
         ) {
@@ -288,7 +287,7 @@
 
     document.addEventListener("keydown", (event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (!target || target.closest("[data-bake-timer]") || target.closest("[data-oven-position]")) {
+        if (!target || target.closest("[data-bake-timer]")) {
             return;
         }
         if (target.closest("button, a, input, select, textarea")) {
@@ -1129,7 +1128,6 @@
 (() => {
     const board = document.getElementById("production-board");
     const timers = Array.from(document.querySelectorAll("[data-bake-timer]"));
-    const selectors = Array.from(document.querySelectorAll("[data-oven-position]"));
     const orderRows = Array.from(document.querySelectorAll(".order-row[data-order-id]"));
     const countdown = document.querySelector("[data-pizza-countdown]");
     const pizzaBreakdownOverlay = document.querySelector("[data-pizza-breakdown-overlay]");
@@ -1143,7 +1141,7 @@
     const pieAllDayTotal = document.querySelector("[data-pie-all-day-total]");
     const modifierAllDayTotal = document.querySelector("[data-modifier-all-day-total]");
     const prepTimingButtons = Array.from(document.querySelectorAll("[data-prep-timing-toggle]"));
-    if (!board || (!timers.length && !selectors.length && !orderRows.length && !countdown && !prepTimingButtons.length)) {
+    if (!board || (!timers.length && !orderRows.length && !countdown && !prepTimingButtons.length)) {
         return;
     }
 
@@ -1179,15 +1177,8 @@
         }
     };
 
-    const POSITION_LABELS = {
-        "top-left": "Top left",
-        "top-right": "Top right",
-        "bottom-left": "Bottom left",
-        "bottom-right": "Bottom right",
-    };
     const DEFAULT_DURATION_MS = 8 * 60 * 1000;
     const timersByKey = new Map(timers.map((timer) => [timer.dataset.bakeTimerKey, timer]));
-    const selectorsByKey = new Map(selectors.map((selector) => [selector.dataset.ovenPositionKey, selector]));
     const rowsByOrderId = new Map(orderRows.map((row) => [row.dataset.orderId, row]));
     let serverOffsetMs = 0;
     let polling = false;
@@ -1205,15 +1196,14 @@
 
     const initialPieState = (key) => {
         const timer = timersByKey.get(key);
-        const selector = selectorsByKey.get(key);
         return {
             timer_status: timer?.dataset.timerStatus || "idle",
             timer_remaining_ms: Number(timer?.dataset.timerRemainingMs || DEFAULT_DURATION_MS),
             timer_end_at_ms: Number(timer?.dataset.timerEndAtMs || 0) || null,
-            oven_position: selector?.dataset.selectedOvenPosition || null,
+            oven_position: null,
         };
     };
-    new Set([...timersByKey.keys(), ...selectorsByKey.keys()]).forEach((key) => {
+    timersByKey.forEach((_timer, key) => {
         pieStates[key] = initialPieState(key);
     });
     orderRows.forEach((row) => {
@@ -1303,36 +1293,6 @@
                 display.textContent = formatRemaining(durationFor(timer));
                 toggle.disabled = false;
             }
-        });
-    };
-
-    const renderOven = () => {
-        const occupants = {};
-        Object.keys(pieStates).forEach((key) => {
-            const state = effectiveTimerState(key);
-            if (state.oven_position) {
-                occupants[state.oven_position] = key;
-            }
-        });
-        selectorsByKey.forEach((selector, key) => {
-            const selectedPosition = effectiveTimerState(key).oven_position || null;
-            selector.dataset.selectedOvenPosition = selectedPosition || "";
-            selector.classList.toggle("oven-position-selector--assigned", Boolean(selectedPosition));
-            selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
-                const position = button.dataset.ovenPositionChoice;
-                const occupant = occupants[position];
-                const selected = occupant === key;
-                const occupiedByAnother = Boolean(occupant) && !selected;
-                const label = POSITION_LABELS[position] || position;
-                button.classList.toggle("is-selected", selected);
-                button.classList.toggle("is-occupied", occupiedByAnother);
-                button.setAttribute("aria-pressed", selected ? "true" : "false");
-                button.title = selected
-                    ? `${label} · this pie`
-                    : occupiedByAnother
-                        ? `${label} · occupied by another pie`
-                        : `${label} · available`;
-            });
         });
     };
 
@@ -1796,7 +1756,6 @@
 
     const renderAll = () => {
         renderTimers();
-        renderOven();
         renderBoxedOrders();
         renderActiveTimerRail();
         renderPrepTimingCompletions();
@@ -1917,26 +1876,6 @@
         });
     });
 
-    selectorsByKey.forEach((selector, key) => {
-        selector.addEventListener("dragstart", (event) => event.preventDefault());
-        selector.querySelectorAll("[data-oven-position-choice]").forEach((button) => {
-            button.addEventListener("click", async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const requested = button.dataset.ovenPositionChoice;
-                const ovenPosition = pieStates[key]?.oven_position === requested ? null : requested;
-                selector.classList.add("is-saving");
-                try {
-                    await postPieUpdate(key, {oven_position: ovenPosition});
-                } catch (error) {
-                    window.alert(String(error));
-                } finally {
-                    selector.classList.remove("is-saving");
-                }
-            });
-        });
-    });
-
     orderRows.forEach((row) => {
         row.querySelector("[data-order-boxed-button]")?.addEventListener("click", async (event) => {
             event.preventDefault();
@@ -2050,7 +1989,6 @@
     poll();
     window.setInterval(() => {
         renderTimers();
-        renderOven();
         renderAllDayCounts();
         renderPizzaCountdown();
         renderActiveTimerRail();

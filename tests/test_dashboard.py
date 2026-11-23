@@ -1584,14 +1584,11 @@ def test_each_pizza_line_item_has_an_eight_minute_bake_timer_for_today(tmp_path:
 
     assert response.status_code == 200
     assert response.data.count(b"data-bake-timer-key=") == physical_pizzas
-    assert response.data.count(b"data-oven-position-key=") == physical_pizzas
-    assert response.data.count(b'data-oven-position-choice="top-left"') == physical_pizzas
-    assert response.data.count(b'data-oven-position-choice="top-right"') == physical_pizzas
-    assert response.data.count(b'data-oven-position-choice="bottom-left"') == physical_pizzas
-    assert response.data.count(b'data-oven-position-choice="bottom-right"') == physical_pizzas
     assert response.data.count(b'data-bake-duration-seconds="480"') == physical_pizzas
     assert b"data-bake-timer-toggle" in response.data
     assert b"data-bake-timer-reset" in response.data
+    assert b"data-oven-position" not in response.data
+    assert b"order-oven-panel" not in response.data
     assert b">8:00<" in response.data
 
 
@@ -1605,7 +1602,8 @@ def test_future_dates_show_bake_timers(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert b"data-bake-timer" in response.data
-    assert b"data-oven-position" in response.data
+    assert b"data-oven-position" not in response.data
+    assert b"order-oven-panel" not in response.data
     assert b"data-bake-timer-toggle" in response.data
 
 
@@ -1746,9 +1744,8 @@ def test_running_timer_survives_refresh_when_salad_precedes_pizza(
     first_board = client.get(f"/?date={selected.isoformat()}")
     first_html = first_board.get_data(as_text=True)
     pie_key = re.search(r'data-bake-timer-key="([^"]+)"', first_html).group(1)
-    oven_key = re.search(r'data-oven-position-key="([^"]+)"', first_html).group(1)
-    assert pie_key == oven_key
     assert pie_key.endswith("|plain-1|0")
+    assert "data-oven-position" not in first_html
 
     started = client.post(
         "/pie-production-state",
@@ -3500,20 +3497,19 @@ def test_service_tags_sizes_and_prep_times_render_on_board_and_kitchen_view(
     assert '<b>2×</b>' in html
     assert '>5:15 PM</time>' in html
     assert ".order-row--double-cut:not(.order-row--unpaid) .order-content" in css
-    assert ".order-row--double-cut:not(.order-row--unpaid) .order-oven-panel" in css
     assert "repeating-linear-gradient(" in css
     assert ".order-row--dont-cut:not(.order-row--unpaid) .order-content" in css
-    assert ".order-row--dont-cut:not(.order-row--unpaid) .order-oven-panel" in css
     assert "background-size: 68px 68px" in css
     assert ".badge--dining-in" in css
     assert ".order-row--dining-in:not(.order-row--unpaid) .order-content" in css
-    assert ".order-row--dining-in:not(.order-row--unpaid) .order-oven-panel" in css
     assert "--dining-in-chair-pattern: url(" in css
     assert "M20 15v20h24V15M20 27h24M24 35v15M40 35v15" in css
     assert "background-size: 64px 64px;" in css
     assert ".order-row--dining-in.order-row--double-cut" in css
     assert ".order-row--dining-in.order-row--dont-cut" in css
     assert ".badge--dining-in svg" not in css
+    assert ".order-oven-panel" not in css
+    assert ".oven-position-selector" not in css
     assert ".modifier-list .modifier--addition" in css
     assert "border-color: var(--brand-blue)" in css
 
@@ -4057,7 +4053,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.56' in html
+    assert 'style.css?v=0.5.57' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4075,7 +4071,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.42' in html
+    assert 'dashboard.js?v=0.5.43' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
