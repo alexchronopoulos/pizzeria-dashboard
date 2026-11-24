@@ -2014,11 +2014,14 @@ def update_slice_inventory():
     event_id = None
     if "delta" in payload:
         delta, name, request_id = payload["delta"], payload.get("name"), payload.get("request_id")
-        today = _now().date().isoformat()
-        if (payload.get("service_date") != today or type(delta) is not int or delta not in (-1, 1)
+        try:
+            service_date = date.fromisoformat(payload.get("service_date", ""))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="A valid service date is required."), 400
+        if (service_date < _now().date() or type(delta) is not int or delta not in (-1, 1)
             or not isinstance(name, str) or not isinstance(request_id, str)
             or not re.fullmatch(r"[0-9a-f]{32}", request_id)):
-            return jsonify(ok=False, error="Choose a current slice pie and a +1 or −1 adjustment."), 400
+            return jsonify(ok=False, error="Choose a slice pie on today’s or a future board and a +1 or −1 adjustment."), 400
         target = _slice_inventory_target(_slice_menu_cache(), name)
         if not target:
             return jsonify(ok=False, error="This pie needs one inventory-tracked Square variation at this location."), 409
@@ -2058,8 +2061,7 @@ def update_shared_pie_state():
             return jsonify(ok=False, error="Past slice pie boards are read-only."), 409
         if pie_key not in {_catalog_slice_key(selected_date, name) for name in _slice_menu_cache().get("names", [])}:
             return jsonify(ok=False, error="That pie is not in Round Slices."), 400
-        if selected_date == _now().date():
-            inventory_target = _slice_inventory_target(_slice_menu_cache(), pie_key.split("|", 3)[3])
+        inventory_target = _slice_inventory_target(_slice_menu_cache(), pie_key.split("|", 3)[3])
     action = str(payload.get("timer_action", "")).strip().lower() or None
     try:
         duration_ms = int(payload.get("duration_ms", 480_000))
