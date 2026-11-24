@@ -21,7 +21,7 @@ from .manual_payments import generate_match_token
 from .pickup_tracking import PICKUP_EVENTS, RECENT_ARRIVALS, PickupMark, arrival_pattern, timing_difference
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 _UNSCHEDULED_ASSIGNMENT = "__UNSCHEDULED__"
 
@@ -286,6 +286,18 @@ def initialize_database(path: Path) -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (service_date, pie_key)
             );
+
+            CREATE TABLE IF NOT EXISTS slice_inventory_bindings (
+                pie_key TEXT PRIMARY KEY, variation_id TEXT NOT NULL,
+                location_id TEXT NOT NULL, environment TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS slice_inventory_queue (
+                id TEXT PRIMARY KEY, variation_id TEXT NOT NULL, location_id TEXT NOT NULL,
+                environment TEXT NOT NULL, delta INTEGER NOT NULL, occurred_at TEXT NOT NULL,
+                retry_at INTEGER NOT NULL DEFAULT 0, sent INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_slice_inventory_pending
+                ON slice_inventory_queue(environment, retry_at) WHERE sent = 0;
 
             CREATE TABLE IF NOT EXISTS slice_bake_counts (
                 service_date TEXT NOT NULL,
@@ -2191,6 +2203,16 @@ def _expire_completed_pie_timers(
     that was already marked done. Clear both newly expired running timers and
     any legacy done rows so those positions can never block the next pie.
     """
+    connection.execute(
+        """
+        INSERT INTO slice_inventory_queue (id, variation_id, location_id, environment, delta, occurred_at)
+        SELECT lower(hex(randomblob(16))), b.variation_id, b.location_id, b.environment, 8,
+               strftime('%Y-%m-%dT%H:%M:%fZ', p.timer_end_at_ms / 1000.0, 'unixepoch')
+        FROM pie_production_states p JOIN slice_inventory_bindings b ON b.pie_key = p.pie_key
+        WHERE p.service_date = ? AND p.timer_status = 'running' AND p.timer_end_at_ms <= ?
+        """,
+        (service_date_key, _epoch_ms(now)),
+    )
     # This write and the transition to done share the same SQLite transaction.
     # Competing polls cannot count the same running -> done transition twice.
     connection.execute(
@@ -2302,6 +2324,54 @@ def prune_pie_production_states(
     return max(cursor.rowcount, 0)
 
 
+def queue_slice_inventory(path: Path, event_id: str, target: tuple[str, str, str], delta: int) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """INSERT INTO slice_inventory_queue (id, variation_id, location_id, environment, delta, occurred_at)
+               VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING""",
+            (event_id, *target, delta, _utc_now().isoformat()),
+        )
+
+
+def claim_slice_inventory(path: Path, environment: str, preferred_id: str | None = None) -> dict | None:
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        # Catch up bound timers from a closed tab or a prior service date.
+        for row in connection.execute(
+            """SELECT DISTINCT service_date FROM pie_production_states p
+               JOIN slice_inventory_bindings b ON b.pie_key = p.pie_key
+               WHERE p.timer_status = 'running' AND p.timer_end_at_ms <= ?""",
+            (_epoch_ms(now),),
+        ).fetchall():
+            _expire_completed_pie_timers(connection, row["service_date"], now=now)
+        change = connection.execute(
+            """SELECT * FROM slice_inventory_queue WHERE environment = ? AND sent = 0 AND retry_at <= ?
+               AND (? IS NULL OR id = ?) ORDER BY occurred_at, id LIMIT 1""",
+            (environment, _epoch_ms(now), preferred_id, preferred_id),
+        ).fetchone()
+        if change:
+            connection.execute(
+                "UPDATE slice_inventory_queue SET retry_at = ? WHERE id = ?",
+                (_epoch_ms(now) + 60_000, change["id"]),
+            )
+            return dict(change)
+    return None
+
+
+def mark_slice_inventory_sent(path: Path, event_id: str) -> None:
+    with _connect(path) as connection:
+        connection.execute("UPDATE slice_inventory_queue SET sent = 1 WHERE id = ?", (event_id,))
+
+
+def pending_slice_inventory(path: Path, environment: str) -> int:
+    with _connect(path) as connection:
+        return connection.execute(
+            "SELECT COUNT(*) FROM slice_inventory_queue WHERE environment = ? AND sent = 0",
+            (environment,),
+        ).fetchone()[0]
+
+
 def load_slice_bake_counts(path: Path, service_date: date) -> dict[str, int]:
     with _connect(path) as connection:
         return dict(connection.execute(
@@ -2344,6 +2414,7 @@ def update_pie_production_state(
     timer_action: str | None = None,
     duration_ms: int = 480_000,
     oven_position: str | None | object = ...,
+    slice_inventory_target: tuple[str, str, str] | None = None,
 ) -> PieProductionState:
     """Update one shared pie timer/oven state atomically.
 
@@ -2382,6 +2453,13 @@ def update_pie_production_state(
         selected_position = state.oven_position
 
         if normalized_action == "start":
+            if status not in {"running", "paused"}:
+                connection.execute("DELETE FROM slice_inventory_bindings WHERE pie_key = ?", (pie_key,))
+                if slice_inventory_target:
+                    connection.execute(
+                        "INSERT INTO slice_inventory_bindings VALUES (?, ?, ?, ?)",
+                        (pie_key, *slice_inventory_target),
+                    )
             if status == "paused" and remaining_ms > 0:
                 run_for_ms = remaining_ms
             else:

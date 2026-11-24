@@ -3070,12 +3070,85 @@
     const panel = document.querySelector("[data-round-slice-menu]");
     if (!panel) return;
     const status = panel.querySelector("[data-slice-menu-status]");
+    const inventoryUrl = panel.dataset.sliceInventory;
+    const inventoryStatus = panel.querySelector("[data-slice-inventory-status]");
+    const pendingStatus = panel.querySelector("[data-slice-inventory-pending]");
+    const choices = Array.from(panel.querySelectorAll('input[name="slice-inventory-pie"]'));
+    const adjustments = Array.from(panel.querySelectorAll("[data-slice-delta]"));
+    const selected = () => choices.find((choice) => choice.checked && !choice.disabled);
+    let adjusting = false;
+    let delivering = false;
+    let retry = null;
+    const updateButtons = () => adjustments.forEach((button) => {
+        button.disabled = adjusting || !selected() ||
+            (retry !== null && (retry.name !== selected().value || retry.delta !== Number(button.dataset.sliceDelta)));
+    });
+    choices.forEach((choice) => choice.addEventListener("change", () => {
+        if (!retry) inventoryStatus.textContent = `Adjusting Square stock for ${choice.value}.`;
+        updateButtons();
+    }));
+    const postInventory = async (payload) => {
+        const response = await fetch(inventoryUrl, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!result.ok && response.status >= 400 && response.status < 500) {
+            return result;
+        }
+        if (!response.ok || !result.ok) throw new Error("Square inventory service unavailable.");
+        pendingStatus.textContent = result.pending ? `${result.pending} Square inventory update(s) pending.` : "";
+        return result;
+    };
+    adjustments.forEach((button) => button.addEventListener("click", async () => {
+        const choice = selected();
+        if (!choice || adjusting) return;
+        adjusting = true;
+        updateButtons();
+        retry ||= {
+            name: choice.value,
+            delta: Number(button.dataset.sliceDelta),
+            service_date: document.getElementById("production-board").dataset.serviceDate,
+            request_id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        };
+        try {
+            const result = await postInventory(retry);
+            inventoryStatus.textContent = result.ok ? (result.pending ? "Adjustment queued." : "Square stock updated.") : result.error;
+            retry = null;
+        } catch {
+            inventoryStatus.textContent = "Couldn’t confirm the adjustment. Tap the same button to retry safely.";
+        } finally {
+            adjusting = false;
+            updateButtons();
+        }
+    }));
+    const deliver = async () => {
+        if (adjusting || delivering) return;
+        delivering = true;
+        try {
+            await postInventory({});
+        } catch {
+            pendingStatus.textContent = "Square inventory sync unavailable; retrying.";
+        } finally {
+            delivering = false;
+        }
+    };
+    if (inventoryUrl) {
+        deliver();
+        window.setInterval(deliver, 3_000);
+    }
     const current = JSON.stringify(Array.from(panel.querySelectorAll("[data-slice-name]"), row => row.dataset.sliceName));
     const load = async () => {
         try {
             const response = await fetch(panel.dataset.roundSliceMenu, {cache: "no-store"});
             if (!response.ok) throw new Error("Unable to load the slice menu.");
-            const {names, error} = await response.json();
+            const {names, error, inventory_names: inventoryNames = []} = await response.json();
+            if (inventoryUrl) {
+                for (const choice of choices) choice.disabled = !inventoryNames.includes(choice.value);
+                if (!inventoryNames.length && !retry) inventoryStatus.textContent = "No single, inventory-tracked Square variations found.";
+                updateButtons();
+            }
             const key = JSON.stringify(names);
             if (key !== current && !document.querySelector("dialog[open], [data-pizza-breakdown-overlay]:not([hidden])")
                 && !document.body.classList.contains("walk-in-assignment-pending")) {
