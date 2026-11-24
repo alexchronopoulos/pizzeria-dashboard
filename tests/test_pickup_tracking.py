@@ -282,6 +282,6 @@ def test_schema_upgrade_does_not_turn_existing_boxed_times_into_pickups(tmp_path
     initialize_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT order_id FROM order_ready_states").fetchall() == [("A",)]
-        assert db.execute("SELECT value FROM app_metadata WHERE key='schema_version'").fetchone() == ("19",)
+        assert db.execute("SELECT value FROM app_metadata WHERE key='schema_version'").fetchone() == ("20",)
     assert load_pickup_marks(path, DAY) == {}
 

@@ -1178,6 +1178,33 @@ h2 {
 .slice-bake-row > strong { flex: 1; }
 .slice-bake-controls { display: flex; align-items: stretch; gap: 5px; }
 .slice-bake-status { align-self: center; }
+.slice-inventory-choice {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 7px;
+    min-height: 44px;
+    cursor: pointer;
+}
+.slice-inventory-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+.slice-inventory-actions button {
+    min-width: 44px;
+    min-height: 44px;
+    border: 2px solid var(--black);
+    border-radius: 9px;
+    color: white;
+    font-weight: 900;
+    cursor: pointer;
+}
+.slice-inventory-actions [data-slice-delta="1"] { background: var(--brand-green); }
+.slice-inventory-actions [data-slice-delta="-1"] { background: var(--brand-red); }
+.slice-inventory-actions button:disabled { opacity: 0.5; cursor: default; }
 .slice-bake-count {
     display: grid;
     place-items: center;

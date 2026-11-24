@@ -766,6 +766,21 @@ class SquareClient:
         return tuple(payments)
 
 
+    def adjust_slice_inventory(self, change: Mapping[str, object]) -> None:
+        delta = int(change["delta"])
+        adjustment = {
+            "catalog_object_id": change["variation_id"],
+            "location_id": change["location_id"],
+            "from_state": "NONE" if delta > 0 else "IN_STOCK",
+            "to_state": "IN_STOCK" if delta > 0 else "WASTE",
+            "quantity": str(abs(delta)),
+            "occurred_at": change["occurred_at"],
+        }
+        self._request("POST", "/v2/inventory/changes/batch-create", {
+            "idempotency_key": change["id"],
+            "changes": [{"type": "ADJUSTMENT", "adjustment": adjustment}],
+        })
+
     def list_catalog_items_and_categories(self) -> tuple[Mapping[str, object], ...]:
         objects = []
         query = {"types": "ITEM,CATEGORY"}

@@ -23,6 +23,10 @@ from flask import (
 )
 
 from .database import (
+    claim_slice_inventory,
+    mark_slice_inventory_sent,
+    pending_slice_inventory,
+    queue_slice_inventory,
     load_slice_bake_counts,
     change_pickup_mark,
     delete_order_slot_assignment,
@@ -1900,13 +1904,12 @@ def _slice_pie_name(name: str) -> str:
     return " ".join(re.sub(r"\bslices?\b", "", name, flags=re.IGNORECASE).split()).strip(" -–—")
 
 
-def _round_slice_names(objects) -> list[str]:
+def _round_slice_items(objects):
     category_ids = {
         obj["id"] for obj in objects
         if obj.get("type") == "CATEGORY" and obj.get("id")
         and str((obj.get("category_data") or {}).get("name", "")).strip().casefold() == "round slices"
     }
-    names = {}
     for obj in objects:
         if obj.get("type") != "ITEM" or obj.get("is_deleted"):
             continue
@@ -1916,8 +1919,48 @@ def _round_slice_names(objects) -> list[str]:
         if not item.get("is_archived") and category_ids & categories:
             name = _slice_pie_name(str(item.get("name") or ""))
             if 0 < len(name) <= 100:
-                names.setdefault(name.casefold(), name)
+                yield name, obj, item
+
+
+def _round_slice_names(objects) -> list[str]:
+    names = {}
+    for name, _, _ in _round_slice_items(objects):
+        names.setdefault(name.casefold(), name)
     return [names[key] for key in sorted(names)]
+
+
+def _round_slice_variations(objects, location: str) -> dict[str, str]:
+    def is_available(obj):
+        if obj.get("present_at_all_locations", True):
+            return location not in (obj.get("absent_at_location_ids") or [])
+        return location in (obj.get("present_at_location_ids") or [])
+
+    by_name = {}
+    for name, obj, item in _round_slice_items(objects):
+        if not is_available(obj):
+            continue
+        variants = by_name.setdefault(name.casefold(), [])
+        for variant in item.get("variations") or []:
+            if not variant.get("id") or variant.get("is_deleted") or not is_available(variant):
+                continue
+            data = variant.get("item_variation_data") or {}
+            track = next((override["track_inventory"] for override in data.get("location_overrides") or []
+                          if override.get("location_id") == location and "track_inventory" in override),
+                         data.get("track_inventory", False))
+            variants.append(str(variant["id"]) if track else None)
+    return {name: variants[0] for name, variants in by_name.items() if len(variants) == 1 and variants[0]}
+
+
+def _slice_inventory_target(cache, name: str) -> tuple[str, str, str] | None:
+    variation = cache.get("inventory", {}).get(name.casefold())
+    location, environment = cache.get("location"), cache.get("environment")
+    current_environment = current_app.config.get("SQUARE_ENVIRONMENT", "production").lower()
+    configured_location = current_app.config.get("SQUARE_LOCATION_ID")
+    if (variation and location and environment == current_environment
+        and (not configured_location or location == configured_location)
+        and current_app.config.get("SQUARE_ACCESS_TOKEN")):
+        return variation, location, environment
+    return None
 
 
 def _catalog_slice_key(selected: date, name: str) -> str:
@@ -1932,20 +1975,64 @@ def _slice_menu_cache() -> dict:
 def round_slice_menu():
     cached = _slice_menu_cache()
     now = _now().timestamp()
-    if now < cached.get("retry_at", 0):
-        return jsonify(names=cached["names"], error=cached.get("error"))
+    if "inventory" in cached and now < cached.get("retry_at", 0):
+        return jsonify(names=cached["names"], error=cached.get("error"),
+                       inventory_names=[name for name in cached["names"] if _slice_inventory_target(cached, name)])
     if not str(current_app.config.get("SQUARE_ACCESS_TOKEN") or "").strip():
         return jsonify(names=cached.get("names", []), error="Connect Square to refresh Round Slices.")
     try:
-        client = SquareClient(SquareSettings.from_mapping(current_app.config))
-        names = _round_slice_names(client.list_catalog_items_and_categories())
+        settings = SquareSettings.from_mapping(current_app.config)
+        client = SquareClient(settings)
+        objects = client.list_catalog_items_and_categories()
+        names = _round_slice_names(objects)
+        location = settings.location_id
+        if not location and any(item.get("variations") for _, _, item in _round_slice_items(objects)):
+            location = str(client.resolve_location()["id"])
+        inventory = _round_slice_variations(objects, location) if location else {}
     except SquareError:
-        result = dict(names=cached.get("names", []), retry_at=now + 60,
+        result = dict(cached, inventory=cached.get("inventory", {}), names=cached.get("names", []), retry_at=now + 60,
                       error="Square is unavailable. Showing the last loaded list, if available.")
     else:
-        result = dict(names=names, retry_at=now + 300)
+        result = dict(names=names, inventory=inventory, location=location, environment=settings.environment, retry_at=now + 300)
     save_app_metadata(_database_path(), "round_slice_catalog", json.dumps(result))
-    return jsonify(names=result["names"], error=result.get("error"))
+    return jsonify(names=result["names"], error=result.get("error"),
+                   inventory_names=[name for name in result["names"] if _slice_inventory_target(result, name)])
+
+
+@blueprint.post("/slice-inventory")
+def update_slice_inventory():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    try:
+        settings = SquareSettings.from_mapping(current_app.config)
+    except SquareError:
+        return jsonify(ok=False, error="Check the dashboard's Square configuration."), 503
+    if not settings.access_token:
+        return jsonify(ok=False, error="Square is not connected."), 503
+    path = _database_path()
+    event_id = None
+    if "delta" in payload:
+        delta, name, request_id = payload["delta"], payload.get("name"), payload.get("request_id")
+        today = _now().date().isoformat()
+        if (payload.get("service_date") != today or type(delta) is not int or delta not in (-1, 1)
+            or not isinstance(name, str) or not isinstance(request_id, str)
+            or not re.fullmatch(r"[0-9a-f]{32}", request_id)):
+            return jsonify(ok=False, error="Choose a current slice pie and a +1 or −1 adjustment."), 400
+        target = _slice_inventory_target(_slice_menu_cache(), name)
+        if not target:
+            return jsonify(ok=False, error="This pie needs one inventory-tracked Square variation at this location."), 409
+        event_id = f"manual-{request_id}"
+        queue_slice_inventory(path, event_id, target, delta)
+    change = claim_slice_inventory(path, settings.environment, event_id)
+    if change:
+        try:
+            SquareClient(replace(settings, timeout_seconds=min(settings.timeout_seconds, 4))).adjust_slice_inventory(change)
+        except SquareError:
+            current_app.logger.warning("Square slice inventory adjustment pending: %s", change["id"])
+        else:
+            mark_slice_inventory_sent(path, change["id"])
+    return jsonify(ok=True, pending=pending_slice_inventory(path, settings.environment))
 
 
 @blueprint.get("/live-production-state")
@@ -1965,11 +2052,14 @@ def update_shared_pie_state():
         return jsonify(ok=False, error="A valid pie key is required."), 400
     if not pie_key.startswith(f"{selected_date.isoformat()}|"):
         return jsonify(ok=False, error="The pie key is for another service date."), 400
+    inventory_target = None
     if pie_key.startswith(f"{selected_date.isoformat()}|slice-bake|"):
         if selected_date < _now().date():
             return jsonify(ok=False, error="Past slice pie boards are read-only."), 409
         if pie_key not in {_catalog_slice_key(selected_date, name) for name in _slice_menu_cache().get("names", [])}:
             return jsonify(ok=False, error="That pie is not in Round Slices."), 400
+        if selected_date == _now().date():
+            inventory_target = _slice_inventory_target(_slice_menu_cache(), pie_key.split("|", 3)[3])
     action = str(payload.get("timer_action", "")).strip().lower() or None
     try:
         duration_ms = int(payload.get("duration_ms", 480_000))
@@ -1978,6 +2068,7 @@ def update_shared_pie_state():
     kwargs: dict[str, object] = {
         "timer_action": action,
         "duration_ms": duration_ms,
+        "slice_inventory_target": inventory_target,
     }
     if "oven_position" in payload:
         raw_position = payload.get("oven_position")

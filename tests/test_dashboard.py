@@ -1103,6 +1103,64 @@ def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypa
     assert f'data-slice-bake-count="{first}">1</b>' in historical
 
 
+def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, monkeypatch):
+    from pizzeria_dashboard import dashboard, database
+    from pizzeria_dashboard.square_api import SquareError
+
+    now = datetime(2026, 7, 31, 16, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr(dashboard, "_now", lambda: now)
+    monkeypatch.setattr(database, "_utc_now", lambda: now.astimezone(ZoneInfo("UTC")))
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False, SQUARE_ACCESS_TOKEN="test-token",
+                    SQUARE_LOCATION_ID="shop")
+    catalog = [
+        {"type": "CATEGORY", "id": "round", "category_data": {"name": "Round Slices"}},
+        {"type": "ITEM", "item_data": {"name": "Plain Slice", "category_id": "round", "variations": [
+            {"id": "plain-id", "item_variation_data": {"track_inventory": True}},
+        ]}},
+        {"type": "ITEM", "item_data": {"name": "Ambiguous Slice", "category_id": "round", "variations": [
+            {"id": "ambiguous-1", "item_variation_data": {"track_inventory": True}},
+            {"id": "ambiguous-2", "item_variation_data": {"track_inventory": True}},
+        ]}},
+    ]
+    monkeypatch.setattr(dashboard.SquareClient, "list_catalog_items_and_categories", lambda _: catalog)
+    requests = []
+    fail = False
+    def square_call(self, method, path, payload):
+        requests.append((method, path, payload))
+        if fail:
+            raise SquareError("Network down")
+        return {}
+    monkeypatch.setattr(dashboard.SquareClient, "_request", square_call)
+    client = app.test_client()
+    assert client.get("/round-slice-menu").get_json()["inventory_names"] == ["Plain"]
+    assert b'data-slice-delta="-1"' in client.get(f"/?date={now.date()}").data
+    base = {"service_date": now.date().isoformat(), "name": "Plain", "delta": 1, "request_id": "a" * 32}
+    assert client.post("/slice-inventory", json=dict(base, name="Ambiguous")).status_code == 409
+    for _ in range(2):
+        assert client.post("/slice-inventory", json=base).get_json()["pending"] == 0
+    client.post("/slice-inventory", json=dict(base, delta=-1, request_id="b" * 32))
+    key = f"{now.date()}|slice-bake|catalog|Plain"
+    timer = {"service_date": now.date().isoformat(), "pie_key": key, "timer_action": "start"}
+    client.post("/pie-production-state", json=timer)
+    assert len(requests) == 2
+    now += timedelta(minutes=8)
+    fail = True
+    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 1
+    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 1
+    fail = False
+    now += timedelta(minutes=1)
+    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 0
+    client.post("/pie-production-state", json=dict(timer, timer_action="reset"))
+    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 0
+    assert len(requests) == 4 and requests[2] == requests[3]
+    assert all(method == "POST" and path == "/v2/inventory/changes/batch-create" for method, path, _ in requests)
+    changes = [payload["changes"][0]["adjustment"] for _, _, payload in requests]
+    assert [c["quantity"] for c in changes] == ["1", "1", "8", "8"]
+    assert all(c["catalog_object_id"] == "plain-id" and c["location_id"] == "shop" for c in changes)
+    assert changes[1]["from_state"] == "IN_STOCK" and changes[1]["to_state"] == "WASTE"
+    assert changes[-1]["from_state"] == "NONE" and changes[-1]["to_state"] == "IN_STOCK"
+
+
 def test_round_slice_catalog_excludes_other_categories_and_cleans_names():
     from pizzeria_dashboard.dashboard import _round_slice_names
 
@@ -4177,7 +4235,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.69' in html
+    assert 'style.css?v=0.5.70' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4195,7 +4253,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.51' in html
+    assert 'dashboard.js?v=0.5.52' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
