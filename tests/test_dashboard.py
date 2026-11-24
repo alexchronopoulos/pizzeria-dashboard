@@ -1104,6 +1104,9 @@ def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypa
 
 
 def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Barrier, Event
+
     from pizzeria_dashboard import dashboard, database
     from pizzeria_dashboard.square_api import SquareError
 
@@ -1125,8 +1128,11 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     monkeypatch.setattr(dashboard.SquareClient, "list_catalog_items_and_categories", lambda _: catalog)
     requests = []
     fail = False
+    release_square = None
     def square_call(self, method, path, payload):
         requests.append((method, path, payload))
+        if release_square is not None:
+            assert release_square.wait(timeout=5)
         if fail:
             raise SquareError("Network down")
         return {}
@@ -1145,11 +1151,31 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     assert len(requests) == 2
     now += timedelta(minutes=8)
     fail = True
-    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 1
+    def poll_three_screens(expected_after_send):
+        nonlocal release_square
+        ready = Barrier(3, timeout=5)
+        release_square = Event()
+        def poll():
+            ready.wait()
+            with app.test_client() as screen:
+                response = screen.post("/slice-inventory", json={})
+                assert response.status_code == 200
+                return response.get_json()["pending"]
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = as_completed([pool.submit(poll) for _ in range(3)], timeout=5)
+            try:
+                # The other two screens can finish while the claimant is still in Square.
+                assert [next(results).result(), next(results).result()] == [1, 1]
+            finally:
+                release_square.set()
+            assert next(results).result() == expected_after_send
+        release_square = None
+
+    poll_three_screens(1)
     assert client.post("/slice-inventory", json={}).get_json()["pending"] == 1
     fail = False
     now += timedelta(minutes=1)
-    assert client.post("/slice-inventory", json={}).get_json()["pending"] == 0
+    poll_three_screens(0)
     client.post("/pie-production-state", json=dict(timer, timer_action="reset"))
     assert client.post("/slice-inventory", json={}).get_json()["pending"] == 0
     assert len(requests) == 4 and requests[2] == requests[3]
