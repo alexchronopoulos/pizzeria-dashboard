@@ -1165,6 +1165,15 @@ h2 {
     display: none;
 }
 
+.slice-bake-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.75rem;
+    font-weight: 900;
+}
+
 .slice-bake-row {
     display: flex;
     flex-wrap: wrap;

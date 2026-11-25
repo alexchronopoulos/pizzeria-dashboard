@@ -338,7 +338,10 @@
     <article class="operations-card operations-card--release" id="slice-pies"
              {% if selected_date >= today and square_configured %}data-slice-inventory="{{ url_for('dashboard.update_slice_inventory') }}"{% endif %}
              {% if bake_timers_enabled %}data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}"{% endif %}>
-        <span class="summary-label">Slice pies</span>
+        <div class="slice-bake-heading">
+            <span class="summary-label">Slice pies</span>
+            <span>Pies prepared</span>
+        </div>
         {% if bake_timers_enabled %}
         <span role="status" data-slice-menu-status>{% if not slice_bakes %}Loading Round Slices…{% endif %}</span>
         {% endif %}
