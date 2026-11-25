@@ -340,7 +340,7 @@
              {% if bake_timers_enabled %}data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}"{% endif %}>
         <div class="slice-bake-heading">
             <span class="summary-label">Slice pies</span>
-            <span class="slice-bake-count-heading"><span class="summary-label">#<br>Prepared</span></span>
+            <span class="slice-bake-count-heading"><span class="summary-label" aria-label="Pies prepared">#</span></span>
         </div>
         {% if bake_timers_enabled %}
         <span role="status" data-slice-menu-status>{% if not slice_bakes %}Loading Round Slices…{% endif %}</span>
