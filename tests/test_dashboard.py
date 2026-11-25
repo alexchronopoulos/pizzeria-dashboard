@@ -1148,7 +1148,7 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     assert b'data-slice-delta="8"' in page
     assert b"change stock immediately" not in page
     assert b'class="visually-hidden" type="checkbox" name="slice-inventory-pie"' in page
-    assert b'class="summary-label">#<br>Prepared' in page
+    assert b'class="summary-label" aria-label="Pies prepared">#</span>' in page
     assert b'Select a pie to adjust Square stock.' not in page
     past = (now.date() - timedelta(days=1)).isoformat()
     assert b'data-slice-delta="-1"' not in client.get(f"/?date={past}").data
