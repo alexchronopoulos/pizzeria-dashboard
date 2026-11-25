@@ -1213,7 +1213,7 @@ h2 {
     font-weight: 900;
     cursor: pointer;
 }
-.slice-inventory-actions [data-slice-delta="1"] { background: var(--brand-green); }
+.slice-inventory-actions [data-slice-delta="8"] { background: var(--brand-green); }
 .slice-inventory-actions [data-slice-delta="-1"] { background: var(--brand-red); }
 .slice-inventory-actions button:disabled { opacity: 0.5; cursor: default; }
 .slice-bake-count {

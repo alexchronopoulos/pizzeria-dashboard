@@ -1145,11 +1145,12 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     selected = now.date() + timedelta(days=days_ahead)
     page = client.get(f"/?date={selected}").data
     assert b'data-slice-delta="-1"' in page
+    assert b'data-slice-delta="8"' in page
     assert b"change stock immediately" not in page
     assert b'class="visually-hidden" type="radio" name="slice-inventory-pie"' in page
     past = (now.date() - timedelta(days=1)).isoformat()
     assert b'data-slice-delta="-1"' not in client.get(f"/?date={past}").data
-    base = {"service_date": selected.isoformat(), "name": "Plain", "delta": 1, "request_id": "a" * 32}
+    base = {"service_date": selected.isoformat(), "name": "Plain", "delta": 8, "request_id": "a" * 32}
     assert client.post("/slice-inventory", json=dict(base, service_date=past)).status_code == 400
     assert client.post("/slice-inventory", json=dict(base, name="Ambiguous")).status_code == 409
     for _ in range(2):
@@ -1191,7 +1192,7 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     assert len(requests) == 4 and requests[2] == requests[3]
     assert all(method == "POST" and path == "/v2/inventory/changes/batch-create" for method, path, _ in requests)
     changes = [payload["changes"][0]["adjustment"] for _, _, payload in requests]
-    assert [c["quantity"] for c in changes] == ["1", "1", "8", "8"]
+    assert [c["quantity"] for c in changes] == ["8", "1", "8", "8"]
     assert all(c["catalog_object_id"] == "plain-id" and "location_id" not in c
                and c["from_location_id"] == c["to_location_id"] == "shop" for c in changes)
     assert changes[1]["from_state"] == "IN_STOCK" and changes[1]["to_state"] == "WASTE"
@@ -4272,7 +4273,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.71' in html
+    assert 'style.css?v=0.5.72' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4290,7 +4291,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.53' in html
+    assert 'dashboard.js?v=0.5.54' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html

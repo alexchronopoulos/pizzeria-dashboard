@@ -209,7 +209,7 @@ for slices. The dashboard automatically loads Square's **Round Slices**
 category, dropping “Slice” from the names. Each listed pie has a shared
 eight-minute timer that staff can start and reset directly. These
 timers do not create Square orders or change the dashboard's dough or order counts.
-On today's or a future board, select a slice pie and tap **+1** or **−1** to adjust the
+On today's or a future board, select a slice pie and tap **+8** or **−1** to adjust the
 in-stock count in Square. −1 is recorded as waste, not as a sale. An elapsed
 timer adds eight slices for the same Square variation; pausing or resetting
 before expiry does not add inventory. Stock updates require Square inventory
