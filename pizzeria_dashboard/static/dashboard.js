@@ -3089,6 +3089,9 @@
             (retry !== null && (retry.name !== selected().value || retry.delta !== Number(button.dataset.sliceDelta)));
     });
     choices.forEach((choice) => choice.addEventListener("change", () => {
+        if (choice.checked) {
+            choices.forEach((other) => { if (other !== choice) other.checked = false; });
+        }
         if (!retry) inventoryStatus.textContent = "";
         updateButtons();
     }));
