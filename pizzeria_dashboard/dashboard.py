@@ -726,14 +726,16 @@ def index() -> str:
         and selected_date >= now.date()
     )
     prep_timing_columns = _prep_timing_rows(service)
+    prep_marks = load_prep_timing_completions(database_path, selected_date)
     prep_timing_rows = _prep_timing_matrix_rows(
         prep_timing_columns,
-        load_prep_timing_completions(database_path, selected_date),
+        prep_marks,
     )
 
     return render_template(
         "dashboard.html",
         service=service,
+        refire_order_ids={key.removeprefix("refire:") for key in prep_marks if key.startswith("refire:")},
         inventory=inventory,
         selected_date=selected_date,
         previous_service_date=selected_date - timedelta(days=1),
@@ -1309,6 +1311,27 @@ def update_prep_timing_completion():
         completed=bool(payload["completed"]),
     )
     return jsonify(_live_production_payload(selected_date))
+
+
+@blueprint.post("/order-refire")
+def update_order_refire():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        return jsonify(ok=False, error="Expected a JSON request."), 400
+    try:
+        selected = date.fromisoformat(payload.get("service_date", ""))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="A valid service date is required."), 400
+    order_id, enabled = payload.get("order_id"), payload.get("refire")
+    if selected < _now().date() or not isinstance(order_id, str) or not isinstance(enabled, bool):
+        return jsonify(ok=False, error="Refire requires an order on an editable service date."), 400
+    path = _database_path()
+    order = load_order_for_date(path, selected, order_id)
+    if order is None or order.is_paid is False or not order.requires_preparation:
+        return jsonify(ok=False, error="This order is not eligible for refire."), 409
+    # Refire is a shared prep mark, with a namespace distinct from hashed matrix cells.
+    save_prep_timing_completion(path, selected, f"refire:{order_id}", completed=enabled)
+    return jsonify(ok=True, refire=enabled)
 
 
 @blueprint.get("/prep-list")
