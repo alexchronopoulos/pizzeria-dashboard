@@ -1178,12 +1178,23 @@ h2 {
 .slice-bake-row > strong { flex: 1; }
 .slice-bake-controls { display: flex; align-items: stretch; gap: 5px; }
 .slice-bake-status { align-self: center; }
+.slice-bake-row:has(.slice-inventory-choice input:checked) {
+    background: var(--soft-blue);
+    box-shadow: inset 0 0 0 2px var(--brand-blue);
+    border-radius: 8px;
+}
+.slice-bake-row:has(.slice-inventory-choice input:focus-visible) {
+    outline: 2px solid var(--brand-blue);
+    outline-offset: 2px;
+}
+.slice-bake-row:has(.slice-inventory-choice input:enabled) { cursor: pointer; }
 .slice-inventory-choice {
     display: flex;
     flex: 1;
     align-items: center;
     gap: 7px;
     min-height: 44px;
+    padding-inline: 6px;
     cursor: pointer;
 }
 .slice-inventory-actions {
