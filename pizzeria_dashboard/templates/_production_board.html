@@ -345,7 +345,7 @@
         {% for key, name, state in slice_bakes %}
         <div class="slice-bake-row" data-slice-name="{{ name }}">
             {% if selected_date >= today and square_configured %}
-            <label class="slice-inventory-choice"><input type="radio" name="slice-inventory-pie" value="{{ name }}" disabled><strong>{{ name }}</strong></label>
+            <label class="slice-inventory-choice"><input class="visually-hidden" type="radio" name="slice-inventory-pie" value="{{ name }}" disabled><strong>{{ name }}</strong></label>
             {% else %}
             <strong>{{ name }}</strong>
             {% endif %}
@@ -365,9 +365,6 @@
         {% if not bake_timers_enabled %}<p class="availability-empty">No slice pies recorded.</p>{% endif %}
         {% endfor %}
         {% if selected_date >= today and square_configured %}
-        {% if selected_date > today %}
-        <p><strong>Square inventory:</strong> These buttons and completed timers change stock immediately, even on a future date.</p>
-        {% endif %}
         <div class="slice-inventory-actions" aria-label="Square slice inventory">
             <button type="button" data-slice-delta="1" aria-label="Add one slice to Square inventory" disabled>+1</button>
             <button type="button" data-slice-delta="-1" aria-label="Remove one slice from Square inventory" disabled>−1</button>

@@ -3074,6 +3074,11 @@
     const inventoryStatus = panel.querySelector("[data-slice-inventory-status]");
     const pendingStatus = panel.querySelector("[data-slice-inventory-pending]");
     const choices = Array.from(panel.querySelectorAll('input[name="slice-inventory-pie"]'));
+    choices.forEach((choice) => {
+        choice.closest(".slice-bake-row").addEventListener("click", (event) => {
+            if (!choice.disabled && !event.target.closest("button, label, input")) choice.click();
+        });
+    });
     const adjustments = Array.from(panel.querySelectorAll("[data-slice-delta]"));
     const selected = () => choices.find((choice) => choice.checked && !choice.disabled);
     let adjusting = false;
