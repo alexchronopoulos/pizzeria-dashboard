@@ -271,6 +271,7 @@
             || target.closest("[data-bake-timer]")
             || target.closest("[data-order-complete-button]")
             || target.closest("[data-order-boxed-button]")
+            || target.closest("[data-order-refire]")
             || target.closest("[data-pickup-event]")
         ) {
             return;
@@ -1206,6 +1207,15 @@
     const DEFAULT_DURATION_MS = 8 * 60 * 1000;
     const timersByKey = new Map(timers.map((timer) => [timer.dataset.bakeTimerKey, timer]));
     const rowsByOrderId = new Map(orderRows.map((row) => [row.dataset.orderId, row]));
+    const refireButtons = new Map(orderRows.flatMap((row) => {
+        const button = row.querySelector("[data-order-refire]");
+        return button ? [[row.dataset.orderId, button]] : [];
+    }));
+    const lastRefireSave = new Map();
+    const renderRefire = (orderId, button, enabled) => {
+        rowsByOrderId.get(orderId).toggleAttribute("data-refire-active", enabled);
+        button.setAttribute("aria-pressed", String(enabled));
+    };
     let serverOffsetMs = 0;
     let polling = false;
     let pieStates = {};
@@ -1863,6 +1873,13 @@
         }
         if (Array.isArray(payload.prep_timing_completions)) {
             prepTimingCompletions = new Set(payload.prep_timing_completions.map(String));
+            if (pollStartedAt !== undefined) {
+                refireButtons.forEach((button, orderId) => {
+                    if (!button.disabled && pollStartedAt > (lastRefireSave.get(orderId) ?? -Infinity)) {
+                        renderRefire(orderId, button, prepTimingCompletions.has(`refire:${orderId}`));
+                    }
+                });
+            }
         }
         const viewportSnapshot = window.PizzeriaDashboardViewport?.capture();
         if (pollStartedAt !== undefined && payload.pickup_marks) {
@@ -1954,6 +1971,30 @@
                 }
             } catch (error) {
                 renderBoxedOrders();
+                window.alert(String(error));
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+
+    refireButtons.forEach((button, orderId) => {
+        button.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                const response = await fetch(board.dataset.orderRefireUrl, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({service_date: serviceDate, order_id: orderId,
+                                          refire: button.getAttribute("aria-pressed") !== "true"}),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) throw new Error(result.error || "Could not save Refire.");
+                lastRefireSave.set(orderId, performance.now());
+                renderRefire(orderId, button, result.refire);
+            } catch (error) {
                 window.alert(String(error));
             } finally {
                 button.disabled = false;
