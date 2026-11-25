@@ -1191,7 +1191,8 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     assert all(method == "POST" and path == "/v2/inventory/changes/batch-create" for method, path, _ in requests)
     changes = [payload["changes"][0]["adjustment"] for _, _, payload in requests]
     assert [c["quantity"] for c in changes] == ["1", "1", "8", "8"]
-    assert all(c["catalog_object_id"] == "plain-id" and c["location_id"] == "shop" for c in changes)
+    assert all(c["catalog_object_id"] == "plain-id" and "location_id" not in c
+               and c["from_location_id"] == c["to_location_id"] == "shop" for c in changes)
     assert changes[1]["from_state"] == "IN_STOCK" and changes[1]["to_state"] == "WASTE"
     assert changes[-1]["from_state"] == "NONE" and changes[-1]["to_state"] == "IN_STOCK"
 
