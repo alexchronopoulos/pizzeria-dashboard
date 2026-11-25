@@ -2194,6 +2194,34 @@ def _epoch_ms(value: datetime | None = None) -> int:
     return int((value or _utc_now()).timestamp() * 1000)
 
 
+def save_pie_refire(path: Path, service_date: date, pie_key: str, *, enabled: bool) -> None:
+    day = service_date.isoformat()
+    now = _utc_now()
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if enabled:
+            inserted = connection.execute(
+                """INSERT INTO prep_timing_completions (service_date, cell_key, completed_at)
+                   VALUES (?, ?, ?) ON CONFLICT(service_date, cell_key) DO NOTHING""",
+                (day, f"refire-pie:{pie_key}", now.isoformat()),
+            )
+            if inserted.rowcount == 0:
+                return
+            connection.execute(
+                """UPDATE pie_production_states
+                   SET timer_status = 'idle', timer_remaining_ms = 480000,
+                       timer_end_at_ms = NULL, oven_position = NULL, updated_at = ?
+                   WHERE service_date = ? AND pie_key = ?
+                     AND (timer_status = 'paused' OR (timer_status = 'running' AND timer_end_at_ms > ?))""",
+                (now.isoformat(), day, pie_key, _epoch_ms(now)),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM prep_timing_completions WHERE service_date = ? AND cell_key = ?",
+                (day, f"refire-pie:{pie_key}"),
+            )
+
+
 def _expire_completed_pie_timers(
     connection: sqlite3.Connection, service_date_key: str, *, now: datetime
 ) -> int:

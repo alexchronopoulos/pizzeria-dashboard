@@ -1,4 +1,4 @@
-{% macro render_bake_timer(pie_key, name, pie_state, order_id="", line_key="", quantity=1, customer_label="", pickup_label="", unit_index=0) -%}
+{% macro render_bake_timer(pie_key, name, pie_state, order_id="", line_key="", quantity=1, customer_label="", pickup_label="", unit_index=0, refire=false) -%}
 <div
     class="bake-timer"
     data-bake-timer
@@ -31,5 +31,10 @@
         aria-label="Reset bake timer for {{ name }}{% if quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ quantity }}{% endif %}"
         title="Reset timer"
     >↺</button>
+    {% if order_id %}
+    <button class="order-refire-button" type="button" data-pie-refire draggable="false"
+            aria-label="Refire {{ name }}{% if quantity > 1 %}, pizza {{ unit_index + 1 }} of {{ quantity }}{% endif %}"
+            aria-pressed="{{ 'true' if refire else 'false' }}">Refire</button>
+    {% endif %}
 </div>
 {%- endmacro %}

@@ -70,6 +70,7 @@ from .database import (
     save_prep_recipe,
     save_prep_task,
     save_prep_timing_completion,
+    save_pie_refire,
     save_service_note,
     save_square_customer_profiles,
     save_vip_customer,
@@ -735,7 +736,7 @@ def index() -> str:
     return render_template(
         "dashboard.html",
         service=service,
-        refire_order_ids={key.removeprefix("refire:") for key in prep_marks if key.startswith("refire:")},
+        refire_pie_keys={key.removeprefix("refire-pie:") for key in prep_marks if key.startswith("refire-pie:")},
         inventory=inventory,
         selected_date=selected_date,
         previous_service_date=selected_date - timedelta(days=1),
@@ -1313,8 +1314,8 @@ def update_prep_timing_completion():
     return jsonify(_live_production_payload(selected_date))
 
 
-@blueprint.post("/order-refire")
-def update_order_refire():
+@blueprint.post("/pie-refire")
+def update_pie_refire():
     payload = request.get_json(silent=True)
     if not isinstance(payload, Mapping):
         return jsonify(ok=False, error="Expected a JSON request."), 400
@@ -1322,16 +1323,17 @@ def update_order_refire():
         selected = date.fromisoformat(payload.get("service_date", ""))
     except (TypeError, ValueError):
         return jsonify(ok=False, error="A valid service date is required."), 400
-    order_id, enabled = payload.get("order_id"), payload.get("refire")
-    if selected < _now().date() or not isinstance(order_id, str) or not isinstance(enabled, bool):
-        return jsonify(ok=False, error="Refire requires an order on an editable service date."), 400
+    order_id, pie_key, enabled = payload.get("order_id"), payload.get("pie_key"), payload.get("refire")
+    if (selected < _now().date() or not isinstance(order_id, str)
+        or not isinstance(pie_key, str) or not isinstance(enabled, bool)):
+        return jsonify(ok=False, error="Refire requires a pie on an editable service date."), 400
     path = _database_path()
     order = load_order_for_date(path, selected, order_id)
-    if order is None or order.is_paid is False or not order.requires_preparation:
-        return jsonify(ok=False, error="This order is not eligible for refire."), 409
-    # Refire is a shared prep mark, with a namespace distinct from hashed matrix cells.
-    save_prep_timing_completion(path, selected, f"refire:{order_id}", completed=enabled)
-    return jsonify(ok=True, refire=enabled)
+    if (order is None or order.is_paid is False or not order.requires_preparation
+        or pie_key not in _production_pie_keys(selected, (order,))):
+        return jsonify(ok=False, error="This pie is not eligible for refire."), 409
+    save_pie_refire(path, selected, pie_key, enabled=enabled)
+    return jsonify(refire=enabled, **_live_production_payload(selected))
 
 
 @blueprint.get("/prep-list")

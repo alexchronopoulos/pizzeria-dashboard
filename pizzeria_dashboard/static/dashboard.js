@@ -271,7 +271,7 @@
             || target.closest("[data-bake-timer]")
             || target.closest("[data-order-complete-button]")
             || target.closest("[data-order-boxed-button]")
-            || target.closest("[data-order-refire]")
+            || target.closest("[data-pie-refire]")
             || target.closest("[data-pickup-event]")
         ) {
             return;
@@ -1207,13 +1207,12 @@
     const DEFAULT_DURATION_MS = 8 * 60 * 1000;
     const timersByKey = new Map(timers.map((timer) => [timer.dataset.bakeTimerKey, timer]));
     const rowsByOrderId = new Map(orderRows.map((row) => [row.dataset.orderId, row]));
-    const refireButtons = new Map(orderRows.flatMap((row) => {
-        const button = row.querySelector("[data-order-refire]");
-        return button ? [[row.dataset.orderId, button]] : [];
+    const refireButtons = new Map(timers.flatMap((timer) => {
+        const button = timer.querySelector("[data-pie-refire]");
+        return button ? [[timer.dataset.bakeTimerKey, button]] : [];
     }));
     const lastRefireSave = new Map();
-    const renderRefire = (orderId, button, enabled) => {
-        rowsByOrderId.get(orderId).toggleAttribute("data-refire-active", enabled);
+    const renderRefire = (button, enabled) => {
         button.setAttribute("aria-pressed", String(enabled));
     };
     let serverOffsetMs = 0;
@@ -1857,7 +1856,11 @@
                 return;
             }
         }
-        pieStates = {...pieStates, ...(payload.pies || {})};
+        Object.entries(payload.pies || {}).forEach(([key, state]) => {
+            if (pollStartedAt === undefined || pollStartedAt > (lastRefireSave.get(key) ?? -Infinity)) {
+                pieStates[key] = state;
+            }
+        });
         Object.entries(payload.pies || {}).forEach(([key, state]) => {
             if (state?.timer_status !== "done") {
                 completionPosts.delete(key);
@@ -1874,9 +1877,9 @@
         if (Array.isArray(payload.prep_timing_completions)) {
             prepTimingCompletions = new Set(payload.prep_timing_completions.map(String));
             if (pollStartedAt !== undefined) {
-                refireButtons.forEach((button, orderId) => {
-                    if (!button.disabled && pollStartedAt > (lastRefireSave.get(orderId) ?? -Infinity)) {
-                        renderRefire(orderId, button, prepTimingCompletions.has(`refire:${orderId}`));
+                refireButtons.forEach((button, pieKey) => {
+                    if (!button.disabled && pollStartedAt > (lastRefireSave.get(pieKey) ?? -Infinity)) {
+                        renderRefire(button, prepTimingCompletions.has(`refire-pie:${pieKey}`));
                     }
                 });
             }
@@ -1978,22 +1981,24 @@
         });
     });
 
-    refireButtons.forEach((button, orderId) => {
+    refireButtons.forEach((button, pieKey) => {
         button.addEventListener("click", async (event) => {
             event.stopPropagation();
             if (button.disabled) return;
             button.disabled = true;
             try {
-                const response = await fetch(board.dataset.orderRefireUrl, {
+                const response = await fetch(board.dataset.pieRefireUrl, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({service_date: serviceDate, order_id: orderId,
+                    body: JSON.stringify({service_date: serviceDate, pie_key: pieKey,
+                                          order_id: timersByKey.get(pieKey).dataset.timerOrderId,
                                           refire: button.getAttribute("aria-pressed") !== "true"}),
                 });
                 const result = await response.json();
                 if (!response.ok || !result.ok) throw new Error(result.error || "Could not save Refire.");
-                lastRefireSave.set(orderId, performance.now());
-                renderRefire(orderId, button, result.refire);
+                lastRefireSave.set(pieKey, performance.now());
+                applyPayload(result);
+                renderRefire(button, result.refire);
             } catch (error) {
                 window.alert(String(error));
             } finally {

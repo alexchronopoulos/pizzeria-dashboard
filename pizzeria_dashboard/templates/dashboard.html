@@ -253,7 +253,7 @@
     data-live-production-state-url="{{ url_for('dashboard.live_production_state') }}"
     data-pie-production-state-url="{{ url_for('dashboard.update_shared_pie_state') }}"
     data-prep-timing-completion-url="{{ url_for('dashboard.update_prep_timing_completion') }}"
-    data-order-refire-url="{{ url_for('dashboard.update_order_refire') }}"
+    data-pie-refire-url="{{ url_for('dashboard.update_pie_refire') }}"
     data-order-ready-url="{{ url_for('dashboard.update_order_ready') }}"
     data-pickup-event-url="{{ url_for('dashboard.update_order_pickup_event') }}"
     data-board-content-revision="{{ board_content_revision }}"
@@ -338,5 +338,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='pickup-tracking.js', v='2') }}" defer></script>
-<script src="{{ url_for('static', filename='dashboard.js', v='0.5.56') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='0.5.57') }}" defer></script>
 {% endblock %}

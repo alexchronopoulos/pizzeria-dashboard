@@ -51,12 +51,10 @@
 {% set original_pickup_at = original_pickup_times.get(order.order_id) if original_pickup_times else order.pickup_at %}
 {% set event_at = (order.source_closed_at or order.source_created_at or order.pickup_at).astimezone(service_timezone) %}
 {% set is_unpaid = order.is_paid is sameas false or (order.is_pmoc_order and order.is_paid is not sameas true) %}
-{% set is_refire = not is_unpaid and order.order_id in refire_order_ids %}
 {% set is_vip = vip_order_ids and order.order_id in vip_order_ids %}
 {% set manual_payment = manual_payment_matches.get(order.order_id) if manual_payment_matches and order.is_manual else none %}
 <div
     class="order-row{% if order.has_salad %} order-row--salad{% endif %}{% if order.has_side %} order-row--side{% endif %}{% if order.has_cookie %} order-row--cookie{% endif %}{% if order.has_dining_in %} order-row--dining-in{% endif %}{% if order.has_double_cut %} order-row--double-cut{% endif %}{% if order.has_dont_cut %} order-row--dont-cut{% endif %}{% if order.is_walk_in %} order-row--walk-in{% endif %}{% if is_unpaid %} order-row--unpaid{% endif %}{% if boxed_at %} order-row--boxed{% endif %}"
-    {% if is_refire %}data-refire-active{% endif %}
     role="button"
     data-order-id="{{ order.order_id }}"
     data-order-created-at="{{ (order.source_created_at or order.source_closed_at or order.pickup_at).timestamp() }}"
@@ -110,12 +108,6 @@
                 draggable="false"
                 aria-label="View details for {{ customer_label }}"
             >Details</button>
-            {% if selected_date >= today and not is_unpaid %}
-            <button class="order-refire-button" type="button" data-order-refire
-                    aria-pressed="{{ 'true' if is_refire else 'false' }}" draggable="false">Refire</button>
-            {% elif is_refire %}
-            <span class="order-refire-button">Refire</span>
-            {% endif %}
         </div>
         {% if selected_date >= today and not is_unpaid %}
         {{ render_order_actions(order, boxed_at, selected_date, marks) }}
@@ -194,7 +186,7 @@
         {% for item in order.card_items %}
         {% set item_index = loop.index0 %}
         {% set pie_base_key = selected_date.isoformat() ~ '|' ~ (order.square_order_id or order.order_id) ~ '|' ~ (item.catalog_object_id or item.name) ~ '|' ~ item_index %}
-        <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}">
+        <li class="item-row{% if item.is_cookie %} item-row--cookie{% endif %}" data-pie-quantity="{{ item.quantity }}">
             <div class="item-main">
                 <div class="item-label" aria-label="{{ item.quantity }}× {{ item.display_name }}">
                     <span class="item-quantity">{{ item.quantity }}×</span>
@@ -209,7 +201,7 @@
                     <div class="pizza-bake-unit">
                         {% if item.quantity > 1 %}<span class="pizza-unit-label">{{ unit_index + 1 }}/{{ item.quantity }}</span>{% endif %}
                         {% set pickup_label %}{% if unscheduled %}Unscheduled{% elif window %}{{ window.pickup_at.strftime('%-I:%M %p') }}{% else %}{{ order.pickup_at.strftime('%-I:%M %p') }}{% endif %}{% endset %}
-                        {{ render_bake_timer(pie_key, item.display_name, pie_state, order.order_id, pie_base_key, item.quantity, customer_label, pickup_label, unit_index) }}
+                        {{ render_bake_timer(pie_key, item.display_name, pie_state, order.order_id, pie_base_key, item.quantity, customer_label, pickup_label, unit_index, pie_key in refire_pie_keys) }}
                     </div>
                     {% endfor %}
                     </div>

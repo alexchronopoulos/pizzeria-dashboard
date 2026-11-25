@@ -6019,15 +6019,11 @@ html {
 button.order-refire-button { cursor: pointer; min-height: 36px; }
 .order-refire-button[aria-pressed="true"] { background: #732118; }
 .order-refire-button:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
-.order-row[data-refire-active] { border-left-color: var(--brand-red); }
-.order-row[data-refire-active] > .order-content { position: relative; }
-.order-row[data-refire-active] > .order-content::after {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    box-shadow: inset 0 0 0 3px var(--brand-red);
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 52 52'%3E%3Cpath fill='%23a5301f' fill-opacity='.16' d='M26 8c4 9-3 12 3 17 4-2 5-5 5-8 8 7 10 20 2 26-6 5-18 4-23-2-6-7-4-14 2-21 0 5 2 8 5 9-1-8 5-12 6-21z'/%3E%3C/svg%3E") 0 0 / 52px 52px;
+.item-row[data-pie-quantity="1"]:has([data-pie-refire][aria-pressed="true"]),
+.item-row:not([data-pie-quantity="1"]) .pizza-bake-unit:has([data-pie-refire][aria-pressed="true"]) {
+    outline: 2px solid var(--brand-red);
+    outline-offset: 2px;
+    border-radius: 7px;
 }
 
 .modifier-list .modifier--addition {
