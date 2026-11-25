@@ -4104,30 +4104,42 @@ def test_primary_salad_gets_same_green_card_behavior_as_salad_modifier_and_drink
     assert "1× Sparkling Water" in detail_html
 
 
-def test_refire_toggles_on_shared_card_without_reloading_board(tmp_path, monkeypatch):
+def test_refire_marks_and_resets_only_the_selected_pie(tmp_path, monkeypatch):
     from pizzeria_dashboard import dashboard
     from pizzeria_dashboard.domain import Item, Order
 
     at = datetime(2026, 7, 31, 17, tzinfo=ZoneInfo("America/New_York"))
     monkeypatch.setattr(dashboard, "_now", lambda: at)
     app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False)
-    order = Order("ticket", "Guest", at, (Item("Plain Pie", 1, "pizza"),), is_paid=True)
+    order = Order("ticket", "Guest", at, (Item("Plain Pie", 2, "pizza"),), is_paid=True)
     replace_orders_for_date(Path(app.config["DATABASE_PATH"]), at.date(), (order,), source="square")
     first, second = app.test_client(), app.test_client()
     day = at.date().isoformat()
     live_url = f"/live-production-state?date={day}"
+    page = second.get(f"/?date={day}").get_data(as_text=True)
+    keys = re.findall(r'data-bake-timer-key="([^"]+)"', page)
+    assert len(keys) == 2
+    for key in keys:
+        assert first.post("/pie-production-state", json={
+            "service_date": day, "pie_key": key, "timer_action": "start",
+        }).status_code == 200
     baseline = second.get(live_url).get_json()
     for enabled in (True, False):
-        assert first.post("/order-refire", json={
-            "service_date": day, "order_id": "ticket", "refire": enabled,
+        assert first.post("/pie-refire", json={
+            "service_date": day, "order_id": "ticket", "pie_key": keys[1], "refire": enabled,
         }).status_code == 200
         page = second.get(f"/?date={day}").data
-        assert b"data-order-refire" in page
-        assert (b"data-refire-active" in page) == enabled
+        assert page.count(b"data-pie-refire draggable") == 2
+        assert b"data-refire-active" not in page
         live = second.get(live_url).get_json()
-        assert ("refire:ticket" in live["prep_timing_completions"]) == enabled
+        assert (f"refire-pie:{keys[1]}" in live["prep_timing_completions"]) == enabled
+        assert f"refire-pie:{keys[0]}" not in live["prep_timing_completions"]
         assert live["board_content_revision"] == baseline["board_content_revision"]
-        assert live["pies"] == baseline["pies"] and live["boxed_orders"] == baseline["boxed_orders"]
+        assert live["pies"][keys[0]]["timer_status"] == "running"
+        assert live["pies"][keys[0]]["timer_end_at_ms"] == baseline["pies"][keys[0]]["timer_end_at_ms"]
+        assert live["pies"][keys[1]]["timer_status"] == "idle"
+        assert live["pies"][keys[1]]["timer_remaining_ms"] == 480000
+        assert live["boxed_orders"] == baseline["boxed_orders"]
 
 
 def test_pickup_cards_render_in_prep_priority_within_their_slot(tmp_path, monkeypatch):
@@ -4301,7 +4313,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.75' in html
+    assert 'style.css?v=0.5.76' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4319,7 +4331,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.56' in html
+    assert 'dashboard.js?v=0.5.57' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
