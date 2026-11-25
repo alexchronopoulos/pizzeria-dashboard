@@ -209,13 +209,14 @@ for slices. The dashboard automatically loads Square's **Round Slices**
 category, dropping “Slice” from the names. Each listed pie has a shared
 eight-minute timer that staff can start and reset directly. These
 timers do not create Square orders or change the dashboard's dough or order counts.
-On today's board, select a slice pie and tap **+1** or **−1** to adjust the
+On today's or a future board, select a slice pie and tap **+1** or **−1** to adjust the
 in-stock count in Square. −1 is recorded as waste, not as a sale. An elapsed
 timer adds eight slices for the same Square variation; pausing or resetting
 before expiry does not add inventory. Stock updates require Square inventory
 write access and one inventory-tracked variation at the service location.
-The dashboard retries queued updates while today's board is open and catches
-up when it reopens. Future-date timers do not change live stock.
+The dashboard retries queued updates while a current or future board is open
+and catches up when it reopens. Picking a future date does not sandbox or
+schedule changes: they apply to the connected Square inventory immediately.
 
 Use **Mark Boxed** when the complete order is packed. Eligible Square pickup orders are completed in Square before the dashboard saves the boxed state; if Square rejects the update, the order remains unboxed. Walk-ins that are already completed in Square and dashboard-only manual orders keep their local-only boxed behavior. **Undo boxed** clears only the dashboard status and never reopens a completed Square order. Every display will gray a boxed card, show **BOXED & READY**, and record the timestamp. Staff-note changes made on one device are included in the next incremental or automatic refresh on the other device.
 

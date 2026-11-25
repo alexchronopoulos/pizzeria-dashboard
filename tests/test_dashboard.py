@@ -8,6 +8,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from pizzeria_dashboard import create_app
 from pizzeria_dashboard.database import (
     link_manual_order_square_payment,
@@ -1103,7 +1105,8 @@ def test_slice_bakes_are_shared_independent_and_survive_reset(tmp_path, monkeypa
     assert f'data-slice-bake-count="{first}">1</b>' in historical
 
 
-def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, monkeypatch):
+@pytest.mark.parametrize("days_ahead", [0, 3])
+def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, monkeypatch, days_ahead):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Barrier, Event
 
@@ -1139,14 +1142,20 @@ def test_slice_inventory_adjusts_selected_variant_and_retries_expiry(tmp_path, m
     monkeypatch.setattr(dashboard.SquareClient, "_request", square_call)
     client = app.test_client()
     assert client.get("/round-slice-menu").get_json()["inventory_names"] == ["Plain"]
-    assert b'data-slice-delta="-1"' in client.get(f"/?date={now.date()}").data
-    base = {"service_date": now.date().isoformat(), "name": "Plain", "delta": 1, "request_id": "a" * 32}
+    selected = now.date() + timedelta(days=days_ahead)
+    page = client.get(f"/?date={selected}").data
+    assert b'data-slice-delta="-1"' in page
+    assert (b"change stock immediately" in page) == bool(days_ahead)
+    past = (now.date() - timedelta(days=1)).isoformat()
+    assert b'data-slice-delta="-1"' not in client.get(f"/?date={past}").data
+    base = {"service_date": selected.isoformat(), "name": "Plain", "delta": 1, "request_id": "a" * 32}
+    assert client.post("/slice-inventory", json=dict(base, service_date=past)).status_code == 400
     assert client.post("/slice-inventory", json=dict(base, name="Ambiguous")).status_code == 409
     for _ in range(2):
         assert client.post("/slice-inventory", json=base).get_json()["pending"] == 0
     client.post("/slice-inventory", json=dict(base, delta=-1, request_id="b" * 32))
-    key = f"{now.date()}|slice-bake|catalog|Plain"
-    timer = {"service_date": now.date().isoformat(), "pie_key": key, "timer_action": "start"}
+    key = f"{selected}|slice-bake|catalog|Plain"
+    timer = {"service_date": selected.isoformat(), "pie_key": key, "timer_action": "start"}
     client.post("/pie-production-state", json=timer)
     assert len(requests) == 2
     now += timedelta(minutes=8)
