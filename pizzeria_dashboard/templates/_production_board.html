@@ -340,7 +340,7 @@
              {% if bake_timers_enabled %}data-round-slice-menu="{{ url_for('dashboard.round_slice_menu') }}"{% endif %}>
         <div class="slice-bake-heading">
             <span class="summary-label">Slice pies</span>
-            <span>Pies prepared</span>
+            <span class="slice-bake-count-heading">Pies<br>Prepared</span>
         </div>
         {% if bake_timers_enabled %}
         <span role="status" data-slice-menu-status>{% if not slice_bakes %}Loading Round Slices…{% endif %}</span>
@@ -348,7 +348,7 @@
         {% for key, name, state in slice_bakes %}
         <div class="slice-bake-row" data-slice-name="{{ name }}">
             {% if selected_date >= today and square_configured %}
-            <label class="slice-inventory-choice"><input class="visually-hidden" type="radio" name="slice-inventory-pie" value="{{ name }}" disabled><strong>{{ name }}</strong></label>
+            <label class="slice-inventory-choice"><input class="visually-hidden" type="checkbox" name="slice-inventory-pie" value="{{ name }}" disabled><strong>{{ name }}</strong></label>
             {% else %}
             <strong>{{ name }}</strong>
             {% endif %}
@@ -371,7 +371,7 @@
         <div class="slice-inventory-actions" aria-label="Square slice inventory">
             <button type="button" data-slice-delta="8" aria-label="Add eight slices to Square inventory" disabled>+8</button>
             <button type="button" data-slice-delta="-1" aria-label="Remove one slice from Square inventory" disabled>−1</button>
-            <span role="status" data-slice-inventory-status>Select a pie to adjust Square stock.</span>
+            <span role="status" data-slice-inventory-status></span>
             <span role="status" data-slice-inventory-pending></span>
         </div>
         {% endif %}

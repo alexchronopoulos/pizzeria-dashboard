@@ -1174,6 +1174,14 @@ h2 {
     font-weight: 900;
 }
 
+.slice-bake-count-heading {
+    inline-size: 44px;
+    flex: 0 0 44px;
+    text-align: center;
+    line-height: 1.05;
+    font-size: 0.64rem;
+}
+
 .slice-bake-row {
     display: flex;
     flex-wrap: wrap;
@@ -1182,12 +1190,14 @@ h2 {
     gap: 8px;
     border-top: 1px solid var(--muted);
     padding-block: 5px;
+    padding-inline: 5px;
+    margin-inline: -5px;
 }
 
 .slice-bake-row > strong { flex: 1; }
-.slice-bake-controls { display: flex; align-items: stretch; gap: 5px; }
+.slice-bake-controls { display: flex; align-items: stretch; gap: 5px; margin-inline-start: auto; }
 .slice-bake-status { align-self: center; }
-.slice-bake-row:has(.slice-inventory-choice input:checked) {
+.slice-bake-row:has(.slice-inventory-choice input:checked:enabled) {
     background: var(--soft-blue);
     box-shadow: inset 0 0 0 2px var(--brand-blue);
     border-radius: 8px;
