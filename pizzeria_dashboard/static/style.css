@@ -1165,6 +1165,15 @@ h2 {
     display: none;
 }
 
+.slice-bake-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.75rem;
+    font-weight: 900;
+}
+
 .slice-bake-row {
     display: flex;
     flex-wrap: wrap;
@@ -1213,7 +1222,7 @@ h2 {
     font-weight: 900;
     cursor: pointer;
 }
-.slice-inventory-actions [data-slice-delta="1"] { background: var(--brand-green); }
+.slice-inventory-actions [data-slice-delta="8"] { background: var(--brand-green); }
 .slice-inventory-actions [data-slice-delta="-1"] { background: var(--brand-red); }
 .slice-inventory-actions button:disabled { opacity: 0.5; cursor: default; }
 .slice-bake-count {

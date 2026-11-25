@@ -2018,10 +2018,10 @@ def update_slice_inventory():
             service_date = date.fromisoformat(payload.get("service_date", ""))
         except (TypeError, ValueError):
             return jsonify(ok=False, error="A valid service date is required."), 400
-        if (service_date < _now().date() or type(delta) is not int or delta not in (-1, 1)
+        if (service_date < _now().date() or type(delta) is not int or delta not in (-1, 8)
             or not isinstance(name, str) or not isinstance(request_id, str)
             or not re.fullmatch(r"[0-9a-f]{32}", request_id)):
-            return jsonify(ok=False, error="Choose a slice pie on today’s or a future board and a +1 or −1 adjustment."), 400
+            return jsonify(ok=False, error="Choose a slice pie on today’s or a future board and a +8 or −1 adjustment."), 400
         target = _slice_inventory_target(_slice_menu_cache(), name)
         if not target:
             return jsonify(ok=False, error="This pie needs one inventory-tracked Square variation at this location."), 409

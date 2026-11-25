@@ -3089,7 +3089,7 @@
             (retry !== null && (retry.name !== selected().value || retry.delta !== Number(button.dataset.sliceDelta)));
     });
     choices.forEach((choice) => choice.addEventListener("change", () => {
-        if (!retry) inventoryStatus.textContent = `Adjusting Square stock for ${choice.value}.`;
+        if (!retry) inventoryStatus.textContent = "";
         updateButtons();
     }));
     const postInventory = async (payload) => {
