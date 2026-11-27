@@ -3917,6 +3917,17 @@ button.badge--order-action:focus-visible {
     pointer-events: none;
 }
 
+.new-order-toast-region.is-expanded {
+    max-height: calc(100vh - 36px);
+    max-height: calc(100dvh - 36px);
+}
+
+@media (min-width: 640px) {
+    body:has(.new-order-toast-region.is-expanded) .active-timer-rail {
+        right: 410px;
+    }
+}
+
 .new-order-toast-clear {
     min-height: 36px;
     justify-self: end;

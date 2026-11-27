@@ -4313,7 +4313,7 @@ def test_ipad_toolbars_render_compact_labels_and_new_stylesheet_version(tmp_path
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'style.css?v=0.5.77' in html
+    assert 'style.css?v=0.5.78' in html
     assert 'class="toolbar-label toolbar-label--compact"' in html
     assert '>Add</span>' in html
     assert '>Notes</span>' in html
@@ -4331,7 +4331,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.57' in html
+    assert 'dashboard.js?v=0.5.58' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
@@ -4390,6 +4390,8 @@ def test_boxed_and_notification_updates_are_layout_stable(tmp_path: Path) -> Non
     assert "grid-template-rows: auto minmax(0, 1fr);" in toast_rules
     assert "grid-auto-flow: row;" in toast_rules
     assert "max-height: calc(50dvh - 18px);" in toast_rules
+    assert ".new-order-toast-region.is-expanded {" in css
+    assert 'toast.addEventListener("click", dismiss);' in dashboard_javascript
     assert ".new-order-toast-list.is-stacked > .new-order-toast" in css
     assert 'toggle.setAttribute("aria-expanded", String(expanded));' in dashboard_javascript
     assert "grid-template-columns: minmax(0, 1fr);" in toast_list_rules
