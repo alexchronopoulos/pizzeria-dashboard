@@ -1116,7 +1116,6 @@
                 toggleStack();
             });
             hint.append(toggle);
-            toast.addEventListener("click", () => { if (!expanded) toggleStack(); });
         }
         toast.append(heading, customer, items, hint);
 
@@ -1126,6 +1125,7 @@
             dismissOrder(orderId);
         };
         close.addEventListener("click", dismiss);
+        toast.addEventListener("click", dismiss);
         return toast;
     };
 
