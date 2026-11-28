@@ -53,6 +53,7 @@ class ServiceConfiguration:
     side_types: tuple[str, ...] = ()
     slot_minutes: int = 15
     online_order_reserve: int = 32
+    prep_timing_items: tuple[str, ...] = ()
 
     def hours_for_date(self, service_date: date) -> DayHours:
         return self.days[service_date.weekday()]
@@ -166,6 +167,7 @@ def _configuration_from_payload(raw: object) -> ServiceConfiguration:
         side_types=side_types,
         slot_minutes=slot_minutes,
         online_order_reserve=online_order_reserve,
+        prep_timing_items=_deduplicate_names(raw.get("prep_timing_items")),
     )
 
 
@@ -194,6 +196,7 @@ def save_configuration(path: Path, configuration: ServiceConfiguration) -> None:
         "side_types": list(configuration.side_types),
         "slot_minutes": configuration.slot_minutes,
         "online_order_reserve": configuration.online_order_reserve,
+        "prep_timing_items": list(configuration.prep_timing_items),
     }
     save_app_metadata(
         path,
@@ -245,4 +248,5 @@ def configuration_from_form(
         side_types=side_types,
         slot_minutes=defaults.slot_minutes,
         online_order_reserve=online_order_reserve,
+        prep_timing_items=defaults.prep_timing_items,
     )

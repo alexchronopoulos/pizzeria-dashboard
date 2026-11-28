@@ -91,6 +91,7 @@ from .domain import (
     ServiceBoard,
     build_service_board,
     parse_ticket_pickup_time,
+    production_display_name,
     sort_pickup_orders,
 )
 from .customer_history import build_customer_visit_summary
@@ -441,9 +442,10 @@ def _online_order_reserve(
     return max(remaining_allocation - active_online_pizzas, 0)
 
 
-def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
-    """Group scheduled salad and Industrie Pie quantities by pickup time."""
+def _prep_timing_rows(service: ServiceBoard, extra_items: tuple[str, ...] = ()) -> tuple[dict[str, object], ...]:
+    """Group scheduled finishing work by pickup time."""
     grouped: dict[tuple[int, str], dict[str, object]] = {}
+    extra_names = {" ".join(name.casefold().split()) for name in extra_items}
 
     def add(name: str, pickup_at: datetime | None, quantity: int, *, rank: int) -> None:
         if quantity <= 0:
@@ -455,13 +457,19 @@ def _prep_timing_rows(service: ServiceBoard) -> tuple[dict[str, object], ...]:
             counts[pickup_at] = int(counts.get(pickup_at, 0)) + quantity
 
     def add_order(order: Order, pickup_at: datetime | None) -> None:
-        if not order.requires_preparation:
+        if not order.requires_preparation or order.is_paid is False:
             return
         for salad_name, quantity in order.salad_summary:
             add(salad_name, pickup_at, quantity, rank=0)
         for item in order.production_items:
-            if item.category == "pizza" and item.display_name.casefold() == "industrie pie":
+            item_name = " ".join(item.display_name.casefold().split())
+            if item.category == "pizza" and item_name == "industrie pie":
                 add(item.display_name, pickup_at, item.quantity, rank=1)
+            elif not item.is_salad and item_name in extra_names:
+                add(item.display_name, pickup_at, item.quantity, rank=3)
+            for modifier in item.modifiers:
+                if not modifier.is_removal and re.search(r"\bprosciutto\b", modifier.display_name, re.IGNORECASE):
+                    add("Prosciutto", pickup_at, modifier.quantity * item.quantity, rank=2)
 
     for window in service.windows:
         for order in window.orders:
@@ -726,7 +734,7 @@ def index() -> str:
         square_refresh_controls_visible
         and selected_date >= now.date()
     )
-    prep_timing_columns = _prep_timing_rows(service)
+    prep_timing_columns = _prep_timing_rows(service, service_configuration.prep_timing_items)
     prep_marks = load_prep_timing_completions(database_path, selected_date)
     prep_timing_rows = _prep_timing_matrix_rows(
         prep_timing_columns,
@@ -2308,11 +2316,52 @@ def update_inventory():
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)
 
 
+@blueprint.get("/prep-timing-catalog")
+def prep_timing_catalog():
+    groups = {"seasonal special pies": {}, "salads": {}}
+    try:
+        client = SquareClient(SquareSettings.from_mapping(current_app.config))
+        objects = client.list_catalog_items_and_categories()
+    except SquareError:
+        return jsonify(ok=False, error="Couldn’t load Square prep items. Saved selections are still available."), 503
+    categories = {
+        str(obj["id"]): str((obj.get("category_data") or {}).get("name", "")).strip().casefold()
+        for obj in objects if obj.get("type") == "CATEGORY" and obj.get("id")
+    }
+    for obj in objects:
+        if obj.get("type") != "ITEM" or obj.get("is_deleted"):
+            continue
+        item = obj.get("item_data") or {}
+        if item.get("is_archived"):
+            continue
+        name = " ".join(production_display_name(str(item.get("kitchen_name") or item.get("name") or "")).split())
+        if not name:
+            continue
+        category_ids = {entry.get("id") for entry in item.get("categories") or []}
+        category_ids.add(item.get("category_id"))
+        category_ids.add((item.get("reporting_category") or {}).get("id"))
+        for category_id in category_ids:
+            category = categories.get(str(category_id))
+            if category in groups:
+                groups[category][name.casefold()] = name
+    return jsonify(ok=True, groups=[
+        {"name": label, "items": sorted(groups[label.casefold()].values(), key=str.casefold)}
+        for label in ("Seasonal Special Pies", "Salads")
+    ])
+
+
 @blueprint.post("/settings")
 def update_settings():
     selected_date = _parse_service_date(request.form.get("service_date"))
     current_configuration = load_configuration(_database_path())
     configuration = configuration_from_form(request.form, current_configuration)
+    if "prep_timing_items_present" in request.form:
+        items = {}
+        for value in request.form.getlist("prep_timing_item"):
+            name = " ".join(value.split())
+            if 0 < len(name) <= 200:
+                items.setdefault(name.casefold(), name)
+        configuration = replace(configuration, prep_timing_items=tuple(items.values()))
     save_configuration(_database_path(), configuration)
     flash("Service setup saved.", "success")
     return redirect(url_for("dashboard.index", date=selected_date.isoformat()), code=303)

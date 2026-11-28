@@ -2968,6 +2968,50 @@
         return;
     }
 
+    const catalog = dialog.querySelector("[data-prep-timing-catalog]");
+    let catalogLoaded = false;
+    let catalogLoading = false;
+    const loadPrepCatalog = async () => {
+        if (!catalog || catalogLoaded || catalogLoading) return;
+        catalogLoading = true;
+        const status = catalog.querySelector("[data-prep-catalog-status]");
+        status.textContent = "Loading Square items…";
+        try {
+            const response = await fetch(catalog.dataset.prepTimingCatalog);
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.error || "Unable to load Square items.");
+            const seen = new Set(Array.from(catalog.querySelectorAll('[name="prep_timing_item"]'),
+                (input) => input.value.toLowerCase()));
+            const fragment = document.createDocumentFragment();
+            for (const group of result.groups) {
+                const fieldset = document.createElement("fieldset");
+                const legend = document.createElement("legend");
+                legend.textContent = group.name;
+                fieldset.append(legend);
+                for (const name of group.items) {
+                    const key = name.toLowerCase();
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const label = document.createElement("label");
+                    const checkbox = document.createElement("input");
+                    checkbox.type = "checkbox";
+                    checkbox.name = "prep_timing_item";
+                    checkbox.value = name;
+                    label.append(checkbox, ` ${name}`);
+                    fieldset.append(label, document.createElement("br"));
+                }
+                if (fieldset.children.length > 1) fragment.append(fieldset);
+            }
+            catalog.querySelector("[data-prep-catalog-options]").replaceChildren(fragment);
+            status.textContent = seen.size ? "" : "No eligible Square items found.";
+            catalogLoaded = true;
+        } catch (error) {
+            status.textContent = error.message;
+        } finally {
+            catalogLoading = false;
+        }
+    };
+
     const openDialog = () => {
         if (typeof dialog.showModal === "function") {
             dialog.showModal();
@@ -2976,6 +3020,7 @@
         }
         const firstInput = dialog.querySelector("input, textarea, select, button");
         firstInput?.focus();
+        void loadPrepCatalog();
     };
 
     const closeDialog = () => {

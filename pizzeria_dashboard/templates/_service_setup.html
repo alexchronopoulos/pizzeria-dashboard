@@ -46,6 +46,18 @@
                     <textarea name="side_types" rows="5" aria-label="Available side names">{{ service_configuration.side_types | join('\n') }}</textarea>
                 </div>
             </div>
+            <div class="setup-section" data-prep-timing-catalog="{{ url_for('dashboard.prep_timing_catalog') }}">
+                <div class="setup-section-heading">
+                    <strong>À la minute matrix</strong>
+                    <span>Choose additional items from Square. Salads, Industrie Pie, and prosciutto modifiers are included automatically.</span>
+                </div>
+                <input type="hidden" name="prep_timing_items_present" value="1">
+                {% for name in service_configuration.prep_timing_items %}
+                <label><input type="checkbox" name="prep_timing_item" value="{{ name }}" checked> {{ name }}</label><br>
+                {% endfor %}
+                <div data-prep-catalog-options></div>
+                <p role="status" data-prep-catalog-status></p>
+            </div>
             <button class="save-settings-button" type="submit">Save service settings</button>
         </form>
 
