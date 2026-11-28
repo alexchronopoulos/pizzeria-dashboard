@@ -3769,6 +3769,49 @@ def test_prep_timing_table_aligns_shared_rows_and_omits_unscheduled(
     assert 'data-order-id="unscheduled-cuke"' in html
 
 
+def test_prep_timing_catalog_configuration_and_prosciutto(tmp_path, monkeypatch):
+    from pizzeria_dashboard import dashboard
+    from pizzeria_dashboard.domain import Item, Modifier, Order
+
+    at = datetime(2026, 8, 13, 17)
+    selected = at.date()
+    app = _test_app(tmp_path, AUTO_SEED_SAMPLE_DATA=False, SQUARE_ACCESS_TOKEN="test-token")
+    objects = [
+        {"type": "CATEGORY", "id": "s", "category_data": {"name": "Seasonal Special Pies"}},
+        {"type": "CATEGORY", "id": "a", "category_data": {"name": "Salads"}},
+        {"type": "ITEM", "item_data": {"name": "Special", "kitchen_name": "Delicata Pie", "categories": [{"id": "s"}]}},
+        {"type": "ITEM", "item_data": {"name": "Caesar Salad", "category_id": "a"}},
+        {"type": "ITEM", "item_data": {"name": "Hidden", "category_id": "a", "is_archived": True}},
+        {"type": "ITEM", "item_data": {"name": "Plain Pie"}},
+    ]
+    monkeypatch.setattr(dashboard.SquareClient, "list_catalog_items_and_categories", lambda _: objects)
+    client = app.test_client()
+    assert client.get("/prep-timing-catalog").get_json()["groups"] == [
+        {"name": "Seasonal Special Pies", "items": ["Delicata Pie"]},
+        {"name": "Salads", "items": ["Caesar Salad"]},
+    ]
+    path = Path(app.config["DATABASE_PATH"])
+    data = {"service_date": selected.isoformat(), "prep_timing_items_present": "1", "day_3_enabled": "on"}
+    assert client.post("/settings", data=dict(data, prep_timing_item=["Delicata Pie", "Caesar Salad"])).status_code == 303
+    config = load_configuration(path)
+    assert config.prep_timing_items == ("Delicata Pie", "Caesar Salad")
+    orders = (Order("prep", "Guest", at, (
+        Item("Delicata Pie", 2, "pizza", modifiers=(Modifier("Prosciutto", quantity=2), Modifier("No Prosciutto"))),
+        Item("Caesar Salad", 1, "salad"),
+    )),)
+    board = dashboard.build_service_board(selected, orders, pickup_times=(at,))
+    columns = dashboard._prep_timing_rows(board, config.prep_timing_items)
+    assert {col["name"]: col["entries"][0]["quantity"] for col in columns} == {
+        "Caesar Salad": 1, "Prosciutto": 4, "Delicata Pie": 2,
+    }
+    replace_orders_for_date(path, selected, orders, source="square")
+    page = client.get(f"/?date={selected}").data
+    assert b'<th scope="col">Prosciutto</th>' in page
+    assert b'<th scope="col">Delicata Pie</th>' in page
+    client.post("/settings", data=data)
+    assert load_configuration(path).prep_timing_items == ()
+
+
 def test_prep_timing_cell_completion_persists_and_updates_live_without_reload(
     tmp_path: Path,
 ) -> None:
@@ -4331,7 +4374,7 @@ def test_notifications_have_device_local_clear_all_control(tmp_path: Path) -> No
     css = Path("pizzeria_dashboard/static/style.css").read_text()
 
     assert response.status_code == 200
-    assert 'dashboard.js?v=0.5.58' in html
+    assert 'dashboard.js?v=0.5.59' in html
     assert "force_reconcile: manual" in javascript
     assert 'data-new-order-toast-clear' in html
     assert 'data-new-order-toast-list' in html
